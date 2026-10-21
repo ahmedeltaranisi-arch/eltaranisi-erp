@@ -4,12 +4,71 @@ from __future__ import annotations
 import os
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = Path(os.environ.get("ERP_DB", BASE_DIR / "data" / "erp.db"))
 SCHEMA_PATH = BASE_DIR / "schema.sql"
+
+
+# Directories that are wiped when the host recycles the instance (Vercel /
+# Lambda put the writable filesystem in /tmp). A database living there is
+# *temporary*: it is re-seeded from scratch on the next cold start.
+EPHEMERAL_ROOTS = ("/tmp", "/var/tmp", "/dev/shm", "/run")
+
+
+def is_ephemeral() -> bool:
+    try:
+        path = str(DB_PATH.resolve())
+    except Exception:
+        path = str(DB_PATH)
+    return any(path == root or path.startswith(root + os.sep) for root in EPHEMERAL_ROOTS)
+
+
+def storage_info() -> dict:
+    """Where the data lives and whether it survives a restart."""
+    info = {
+        "path": str(DB_PATH),
+        "durable": not is_ephemeral(),
+        "engine": "sqlite",
+        "exists": DB_PATH.exists(),
+    }
+    try:
+        if DB_PATH.exists():
+            stat = DB_PATH.stat()
+            info["size_bytes"] = stat.st_size
+            info["modified_at"] = datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+    except OSError:
+        pass
+    try:
+        conn = connect()
+        info["counts"] = {
+            table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in ("journal_entries", "sales_invoices", "purchase_invoices",
+                          "debt_items", "debt_payments", "users")
+        }
+        conn.close()
+    except sqlite3.Error:
+        info["counts"] = {}
+    return info
+
+
+def snapshot(target_path) -> str:
+    """Consistent copy of the live database (safe while the server is running)."""
+    target_path = Path(target_path)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    src = connect()
+    try:
+        dst = sqlite3.connect(str(target_path))
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+    finally:
+        src.close()
+    return str(target_path)
 
 
 def connect() -> sqlite3.Connection:

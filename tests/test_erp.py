@@ -1384,6 +1384,54 @@ class ERPTestCase(unittest.TestCase):
         self.assertLessEqual(pdf.measure(txt, size, False), 52)
         self.assertTrue(txt.endswith("…"))
 
+    def test_B137_dates_are_day_month_year_in_exports_and_storage_is_reported(self):
+        """Day/month/year everywhere the user reads a date; storage mode exposed."""
+        import exporter
+        self.assertEqual(exporter.fmt_date_ui("2026-12-08"), "08/12/2026")
+        self.assertEqual(exporter.fmt_date_ui("2026-01-31"), "31/01/2026")
+        self.assertEqual(exporter.fmt_date_ui(None), "\u2014")
+        # the machine formats stay ISO (e-invoicing payload / sorting)
+        self.assertEqual(exporter.fmt_date("2026-12-08"), "2026-12-08")
+
+        status, health = self.owner.get("/api/health")
+        self.assertEqual(status, 200)
+        self.assertIn("storage", health)
+        self.assertIn("durable", health["storage"])
+
+        status, info = self.owner.get("/api/admin/storage")
+        self.assertEqual(status, 200, info)
+        self.assertIn("durable", info)
+        self.assertIn("counts", info)
+        self.assertGreaterEqual(info["counts"]["users"], 2)
+
+        # a sales user may not download the whole database
+        self.assertEqual(self.sales.get("/api/admin/storage")[0], 403)
+        self.assertEqual(self.sales.get("/api/admin/backup")[0], 403)
+
+    def test_B138_database_backup_downloads_a_restorable_snapshot(self):
+        status, body, ctype = self._raw_get("/api/admin/backup")
+        self.assertEqual(status, 200)
+        self.assertTrue(body.startswith(b"SQLite format 3"), "must be a real SQLite database")
+        # the snapshot is complete: it carries the users, the chart of accounts
+        # and the posted ledger, so restoring it brings the system back as it was
+        import sqlite3, tempfile, os
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        try:
+            with open(path, "wb") as fh:
+                fh.write(body)
+            conn = sqlite3.connect(path)
+            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            self.assertTrue({"users", "accounts", "journal_entries", "journal_lines"} <= tables)
+            users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+            self.assertGreaterEqual(users, 2)
+            debit, credit = conn.execute(
+                "SELECT COALESCE(SUM(debit_cents),0), COALESCE(SUM(credit_cents),0) FROM journal_lines").fetchone()
+            self.assertEqual(debit, credit, "the snapshot keeps a balanced ledger")
+            conn.close()
+        finally:
+            os.unlink(path)
+
     def test_B126_debt_permissions_are_enforced_server_side(self):
         acc = self._debt_account()
         status, _ = self.sales.get("/api/debt/summary")

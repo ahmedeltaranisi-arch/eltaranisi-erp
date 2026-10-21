@@ -35,9 +35,116 @@ function moneyText(cents) {
 function fmtNum(n, digits = 0) {
   return (Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
 }
+/* Dates are stored as ISO (YYYY-MM-DD) everywhere in the API and the database.
+   They are *shown* and *typed* as day/month/year: 08/12/2026 = 8 December 2026. */
+function isoToDmy(iso) {
+  if (!iso) return "";
+  const m = String(iso).trim().slice(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : String(iso);
+}
+function dmyToIso(input) {
+  if (input === null || input === undefined) return "";
+  const s = String(input).trim().replace(/[.\-\s]/g, "/");
+  if (!s) return "";
+  let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);          // d/m/Y  (the default)
+  if (m) {
+    const d = +m[1], mo = +m[2];
+    if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31)
+      return `${m[3]}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    return "";
+  }
+  m = s.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);              // Y/m/d  (legacy / ISO)
+  if (m) return `${m[1]}-${String(m[2]).padStart(2, "0")}-${String(m[3]).padStart(2, "0")}`;
+  return "";
+}
+/** Accepts either 08/12/2026 or 2026-12-08 and always returns the ISO day. */
+function dateVal(v) {
+  if (!v) return "";
+  const iso = dmyToIso(v);
+  return iso || String(v).trim();
+}
 function fmtDate(d) {
   if (!d) return "—";
-  return String(d).slice(0, 10);
+  return isoToDmy(String(d).slice(0, 10)) || String(d).slice(0, 10);
+}
+
+/* --- date inputs: typing mask, validation and a native calendar popup ------ */
+(function wireDateInputs() {
+  if (typeof document === "undefined" || !document.addEventListener) return;
+  const guard = (t) => (t && t.matches && t.matches("input[data-date]")) ? t : null;
+
+  document.addEventListener("input", (e) => {
+    const el = guard(e.target);
+    if (!el) return;
+    const digits = el.value.replace(/\D/g, "").slice(0, 8);
+    let out = digits;
+    if (digits.length > 4) out = `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+    else if (digits.length > 2) out = `${digits.slice(0, 2)}/${digits.slice(2)}`;
+    if (out !== el.value) el.value = out;
+    el.classList.remove("invalid");
+    el.removeAttribute("aria-invalid");
+  });
+
+  document.addEventListener("blur", (e) => {
+    const el = guard(e.target);
+    if (!el) return;
+    const raw = el.value.trim();
+    if (!raw) return;
+    const iso = dmyToIso(raw);
+    if (iso) {
+      el.value = isoToDmy(iso);
+      el.classList.remove("invalid");
+      el.removeAttribute("aria-invalid");
+    } else {
+      el.classList.add("invalid");
+      el.setAttribute("aria-invalid", "true");
+    }
+  }, true);
+
+  let picker = null;
+  document.addEventListener("click", (e) => {
+    const btn = e.target && e.target.closest ? e.target.closest("[data-date-pick]") : null;
+    if (!btn) return;
+    e.preventDefault();
+    const target = document.getElementById(btn.dataset.datePick);
+    if (!target) return;
+    if (!picker) {
+      picker = document.createElement("input");
+      picker.type = "date";
+      picker.id = "native-date-picker";
+      picker.style.cssText = "position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0";
+      document.body.appendChild(picker);
+    }
+    picker.value = dateVal(target.value) || ((typeof today === "function") ? today() : "");
+    picker.onchange = () => {
+      if (picker.value) target.value = isoToDmy(picker.value);
+      target.classList.remove("invalid");
+      target.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+    if (typeof picker.showPicker === "function") {
+      try { picker.showPicker(); return; } catch (err) { /* fall through */ }
+    }
+    picker.click();
+  });
+})();
+
+/** day/month/year text field with a calendar button (native picker on demand). */
+function dateField(id, value, opts = {}) {
+  const iso = dateVal(value || "");
+  const attrs = [
+    opts.name ? `name="${ESC(opts.name)}"` : "",
+    opts.required ? "required" : "",
+    opts.disabled ? "disabled" : "",
+    opts.cls ? `class="${opts.cls}"` : "",
+  ].filter(Boolean).join(" ");
+  const label = (typeof L === "function")
+    ? L("اختيار من التقويم", "Pick a date")
+    : "Pick a date";
+  return `<span class="date-field">
+      <input id="${id}" type="text" inputmode="numeric" autocomplete="off" spellcheck="false"
+             placeholder="يوم/شهر/سنة" value="${ESC(isoToDmy(iso))}" data-date ${attrs}/>
+      <button type="button" class="date-pick" data-date-pick="${id}" aria-label="${ESC(label)}" title="${ESC(label)}">${icon("calendar")}</button>
+    </span>`;
 }
 function pct(part, whole) {
   if (!whole) return "0%";
@@ -281,6 +388,14 @@ function openForm({ title, fields, submitLabel, onSubmit, wide, extraHtml = "" }
           const el = form.querySelector(`[name="${f.name}"]`);
           if (!el) continue;
           let v = f.type === "checkbox" ? el.checked : el.value;
+          if (f.type === "date") {
+            v = dateVal(v);
+            if (f.required && !v) {
+              showErr(root, `${f.label}: ${t("common.required")}`);
+              el.focus();
+              return;
+            }
+          }
           if (f.required && (v === "" || v === null || v === undefined)) {
             showErr(root, `${f.label}: ${t("common.required")}`);
             el.focus();
@@ -327,6 +442,11 @@ function fieldHtml(f) {
   } else if (f.type === "checkbox") {
     input = `<label class="checkbox"><input type="checkbox" ${common} ${val ? "checked" : ""}/> ${ESC(f.label)}</label>`;
     return `<div class="field" style="grid-column:span 2">${input}${f.hint ? `<div class="field-hint">${ESC(f.hint)}</div>` : ""}</div>`;
+  } else if (f.type === "date") {
+    return `<div class="field" style="${f.span === 2 ? "grid-column:span 2" : ""}">
+      <span>${ESC(f.label)}${f.required ? " *" : ""}</span>
+      ${dateField(`fld-${f.name}`, val, { name: f.name, required: f.required, disabled: f.disabled })}
+      ${f.hint ? `<div class="field-hint">${ESC(f.hint)}</div>` : ""}</div>`;
   } else {
     input = `<input ${common} type="${f.type || "text"}" value="${ESC(val)}" ${f.step ? `step="${f.step}"` : ""} ${f.min !== undefined ? `min="${f.min}"` : ""} ${f.placeholder ? `placeholder="${ESC(f.placeholder)}"` : ""}/>`;
   }
@@ -597,6 +717,7 @@ const ICONS = {
   undo: '<path d="M4 10h9a5.5 5.5 0 0 1 0 11H8"/><path d="M8 6l-4 4 4 4"/>',
   bank: '<path d="M3 9.5 12 4l9 5.5"/><path d="M5 10v8M10 10v8M14 10v8M19 10v8"/><path d="M3 21h18"/>',
   sparkle: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/>',
+  calendar: '<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/><path d="M8 14h2M14 14h2M8 17.5h2M14 17.5h2"/>',
 };
 
 function icon(name, cls = "") {
@@ -692,6 +813,38 @@ async function loadNotifications() {
     const readAll = $("#read-all");
     if (readAll) readAll.onclick = async () => { await api("/api/notifications/read-all", { method: "POST" }); loadNotifications(); };
   } catch (e) { /* silently ignore */ }
+}
+
+/* --------------------------- storage safety --------------------------- */
+/* A serverless deployment keeps its SQLite file in /tmp: the file is wiped when
+   the instance is recycled, so anything typed in would be lost without a trace.
+   The banner makes that impossible to miss and offers a full database backup. */
+async function checkStorage() {
+  try {
+    const health = await api("/api/health");
+    APP.storage = (health && health.storage) || { durable: true };
+  } catch (e) {
+    APP.storage = { durable: true };
+    return;
+  }
+  const box = $("#storage-warning");
+  if (!box) return;
+  if (APP.storage.durable) { box.classList.add("hidden"); box.innerHTML = ""; return; }
+  const ar = APP.lang === "ar";
+  const canBackup = typeof can === "function" && can("settings.manage");
+  box.innerHTML = `<div class="storage-warning-inner">
+      ${icon("alert")}
+      <div>
+        <strong>${ar ? "تنبيه: هذا النشر لا يحفظ البيانات بشكل دائم" : "Warning: this deployment does not persist data"}</strong>
+        <div class="small">${ar
+          ? "بيانات هذا الرابط مؤقتة على السيرفر وتُفقد عند إعادة النشر أو إعادة تشغيل النسخة. لعمل نظام دائم، اربط قاعدة بيانات مستمرة (انظر docs/deployment/PERSISTENCE.md)."
+          : "Data on this URL is temporary and is lost when the deployment restarts. To keep it, connect a persistent database (see docs/deployment/PERSISTENCE.md)."}</div>
+      </div>
+      ${canBackup ? `<button class="btn btn-sm" id="storage-backup">${icon("download")} ${ar ? "نسخة احتياطية" : "Backup"}</button>` : ""}
+    </div>`;
+  box.classList.remove("hidden");
+  const btn = $("#storage-backup");
+  if (btn) btn.onclick = () => downloadApi("/api/admin/backup", "eltaranisi-erp-backup.db");
 }
 
 /* ------------------------------ router ------------------------------ */
@@ -925,6 +1078,7 @@ async function bootApp() {
   $("#login-screen").classList.add("hidden");
   $("#app").classList.remove("hidden");
   renderShell();
+  await checkStorage();
   setupCompanySwitcher();
   renderBottomNav();
   setupSearch();

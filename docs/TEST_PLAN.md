@@ -181,3 +181,19 @@ Visual verification: every PDF (sales invoice, purchase invoice, debt statement,
 debt summary AR + EN, بيان الفواتير, trial balance) was rendered with PyMuPDF at
 150–400 dpi and inspected for clipping, joined letters, misplaced punctuation and
 column overflow before release.
+
+### Round k+2 — day/month/year dates + durable storage
+
+| Test | What it proves |
+|---|---|
+| `test_B137_dates_are_day_month_year_in_exports_and_storage_is_reported` | every user-facing date is `DD/MM/YYYY` (`fmt_date_ui("2026-12-08") == "08/12/2026"`) while machine formats stay ISO for e-invoicing; `/api/health` and `/api/admin/storage` report the storage mode, and a sales user cannot read them (403) |
+| `test_B138_database_backup_downloads_a_restorable_snapshot` | `GET /api/admin/backup` streams a real `SQLite format 3` database that contains users, accounts and the posted ledger, with a balanced trial balance — i.e. the file can be restored into a fresh deployment |
+
+Manual checks in this round:
+
+- typed a debt line, signed out, signed back in, restarted the server → the line
+  and its balance were still there (log file `/tmp/dt.db`);
+- production Vercel shows `storage.durable = false` and the red banner explains
+  that the file there is temporary (see `docs/deployment/PERSISTENCE.md`);
+- the date control was rendered on every page — 0 native `type="date"` inputs
+  remain, 16/16 JS assertions pass (`/tmp/date_test.js`).

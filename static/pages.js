@@ -378,8 +378,8 @@
             </div>
             <div style="flex:1"></div>
             <input id="je-q" placeholder="${ESC(t("common.search"))}" />
-            <input id="je-from" type="date" value="" />
-            <input id="je-to" type="date" value="" />
+            ${dateField("je-from", "")}
+            ${dateField("je-to", "")}
           </div>
           <div id="je-table">${renderTable([{ key: "entry_no", label: L("الرمز التعريفي", "Reference ID") }], [], {})}</div>
         </div>`;
@@ -422,8 +422,8 @@
         load();
       });
       $("#je-q").oninput = (e) => { state.q = e.target.value; clearTimeout(window.__jt); window.__jt = setTimeout(load, 250); };
-      $("#je-from").onchange = (e) => { state.from = e.target.value; load(); };
-      $("#je-to").onchange = (e) => { state.to = e.target.value; load(); };
+      $("#je-from").onchange = (e) => { state.from = dateVal(e.target.value); load(); };
+      $("#je-to").onchange = (e) => { state.to = dateVal(e.target.value); load(); };
       if (can("journal.create")) $("#new-je").onclick = () => PAGES.journal.newEntry();
     },
 
@@ -533,7 +533,7 @@
         title: t("journal.new"), wide: true,
         body: `
           <div class="grid cols-2" style="gap:0 16px">
-            <div class="field"><span>${ESC(t("common.date"))} *</span><input type="date" id="je-date" value="${today()}"/></div>
+            <div class="field"><span>${ESC(t("common.date"))} *</span>${dateField("je-date", today(), { required: true })}</div>
             <div class="field"><span>${ESC(t("journal.memo"))} *</span><input id="je-memo" placeholder="${ESC(L("مثال: قيد تسوية مصروفات مستحقة", "e.g. Accrued expenses adjustment"))}"/></div>
           </div>
           <div class="table-wrap" style="border:1px solid var(--border);border-radius:12px">
@@ -597,7 +597,7 @@
             const c = lines.reduce((s, l) => s + l.credit, 0);
             if (Math.abs(d - c) > 0.005) { showErr(root, t("common.unbalanced")); return; }
             try {
-              const res = await api("/api/journal-entries", { method: "POST", body: { entry_date: $("#je-date", root).value, memo, lines } });
+              const res = await api("/api/journal-entries", { method: "POST", body: { entry_date: dateVal($("#je-date", root).value), memo, lines } });
               if ($("#submit-now", root).checked) {
                 try { await api(`/api/journal-entries/${res.id}/submit`, { method: "POST", body: {} }); } catch (e) { /* requires another user */ }
               }
@@ -667,8 +667,8 @@
           <div class="grid cols-3" style="gap:0 16px">
             <div class="field"><span>${ESC(t("common.customer"))} *</span>
               <select id="si-cust">${customers.map(c => `<option value="${c.id}">${ESC(c.code)} — ${ESC(APP.lang === "ar" ? c.name_ar : c.name_en)}</option>`).join("")}</select></div>
-            <div class="field"><span>${ESC(t("sales.invoiceDate"))}</span><input type="date" id="si-date" value="${today()}"/></div>
-            <div class="field"><span>${ESC(t("common.dueDate"))}</span><input type="date" id="si-due" value="${today()}"/></div>
+            <div class="field"><span>${ESC(t("sales.invoiceDate"))}</span>${dateField("si-date", today())}</div>
+            <div class="field"><span>${ESC(t("common.dueDate"))}</span>${dateField("si-due", today())}</div>
             <div class="field"><span>${ESC(t("common.warehouse"))}</span>
               <select id="si-wh">${meta.warehouses.map(w => `<option value="${w.id}">${ESC(w.name_ar)}</option>`).join("")}</select></div>
             <div class="field" style="grid-column:span 2"><span>${ESC(t("common.notes"))}</span><input id="si-notes"/></div>
@@ -734,8 +734,8 @@
               const res = await api("/api/sales-invoices", {
                 method: "POST", body: {
                   customer_id: Number($("#si-cust", root).value),
-                  invoice_date: $("#si-date", root).value,
-                  due_date: $("#si-due", root).value,
+                  invoice_date: dateVal($("#si-date", root).value),
+                  due_date: dateVal($("#si-due", root).value),
                   warehouse_id: Number($("#si-wh", root).value),
                   notes: $("#si-notes", root).value,
                   lines, post: $("#si-post", root).checked,
@@ -891,8 +891,8 @@
             <div class="field" id="pi-wh-field"><span>${ESC(t("common.warehouse"))}</span>
               <select id="pi-wh"><option value="">${ESC(L("بدون مخزن (خدمات)", "No warehouse (services)"))}</option>
                 ${meta.warehouses.map(w => `<option value="${w.id}">${ESC(w.name_ar)}</option>`).join("")}</select></div>
-            <div class="field"><span>${ESC(t("sales.invoiceDate"))}</span><input type="date" id="pi-date" value="${today()}"/></div>
-            <div class="field"><span>${ESC(t("common.dueDate"))}</span><input type="date" id="pi-due" value="${today()}"/></div>
+            <div class="field"><span>${ESC(t("sales.invoiceDate"))}</span>${dateField("pi-date", today())}</div>
+            <div class="field"><span>${ESC(t("common.dueDate"))}</span>${dateField("pi-due", today())}</div>
             <div class="field"><span>${ESC(t("purchases.po"))}</span><input id="pi-po"/></div>
             <div class="field"><span>${ESC(t("purchases.grn"))}</span><input id="pi-grn"/></div>
           </div>
@@ -992,8 +992,8 @@
                 method: "POST", body: {
                   vendor_id: Number($("#pi-vend", root).value),
                   supplier_ref: $("#pi-ref", root).value,
-                  invoice_date: $("#pi-date", root).value,
-                  due_date: $("#pi-due", root).value,
+                  invoice_date: dateVal($("#pi-date", root).value),
+                  due_date: dateVal($("#pi-due", root).value),
                   po_number: $("#pi-po", root).value,
                   grn_number: $("#pi-grn", root).value,
                   warehouse_id: warehouseId || null,
@@ -1172,7 +1172,7 @@
                 <option value="receipt" ${type === "receipt" ? "selected" : ""}>${ESC(t("payments.receipt"))}</option>
                 <option value="payment" ${type === "payment" ? "selected" : ""}>${ESC(t("payments.payment"))}</option>
               </select></div>
-            <div class="field"><span>${ESC(t("common.date"))}</span><input type="date" id="pv-date" value="${today()}"/></div>
+            <div class="field"><span>${ESC(t("common.date"))}</span>${dateField("pv-date", today())}</div>
             <div class="field"><span>${ESC(L("طريقة الدفع", "Payment method"))}</span>
               <select id="pv-method">
                 <option value="cash">${ESC(L("نقدًا", "Cash"))}</option>
@@ -1241,7 +1241,7 @@
               await api("/api/payments", {
                 method: "POST", body: {
                   payment_type: kind,
-                  payment_date: $("#pv-date", root).value,
+                  payment_date: dateVal($("#pv-date", root).value),
                   party_type: kind === "receipt" ? "customer" : "vendor",
                   party_id: Number($("#pv-party", root).value),
                   method: $("#pv-method", root).value,
@@ -2586,8 +2586,8 @@
       view.innerHTML = `${pageHead("reports.title", "reports.subtitle", printBtn())}
         <div class="tabs">${tabs.map(([k, l]) => `<button class="tab ${tab === k ? "active" : ""}" data-tab="${k}">${ESC(t(l))}</button>`).join("")}</div>
         <div class="filters">
-          <div class="field"><span>${ESC(t("common.from"))}</span><input type="date" id="r-from" value="${from}"/></div>
-          <div class="field"><span>${ESC(t("common.to"))}</span><input type="date" id="r-to" value="${to}"/></div>
+          <div class="field"><span>${ESC(t("common.from"))}</span>${dateField("r-from", from)}</div>
+          <div class="field"><span>${ESC(t("common.to"))}</span>${dateField("r-to", to)}</div>
           <button class="btn btn-sm btn-primary" id="r-apply">${ESC(t("common.filter"))}</button>
           <div style="flex:1"></div>
           <span id="r-export"></span>
@@ -2597,7 +2597,7 @@
 
       const body = $("#report-body");
       const load = async () => {
-        const f = $("#r-from").value, t2 = $("#r-to").value;
+        const f = dateVal($("#r-from").value), t2 = dateVal($("#r-to").value);
         body.innerHTML = `<div class="skeleton"></div>`;
         if (tab === "trial-balance") {
           $("#r-export").innerHTML = reportExports("trial-balance", { from: f, to: t2 });

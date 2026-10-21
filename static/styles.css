@@ -208,6 +208,37 @@ code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-si
 }
 .field textarea { min-height: 74px; resize: vertical; }
 .field-hint { font-size: 11.5px; color: var(--text-3); }
+/* ---------------- Storage / durability banner ---------------- */
+.storage-warning {
+  margin: 14px 22px 0; padding: 12px 14px; border-radius: 12px;
+  background: color-mix(in srgb, var(--danger) 8%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--danger) 28%, transparent);
+  color: var(--text);
+}
+.storage-warning-inner { display: flex; align-items: center; gap: 12px; }
+.storage-warning-inner > svg { width: 22px; height: 22px; flex: none; color: var(--danger); }
+.storage-warning-inner > div { flex: 1; }
+.storage-warning-inner strong { font-size: 13px; }
+.storage-warning-inner .small { font-size: 12px; color: var(--text-2); margin-top: 2px; }
+
+/* ---------------- Date field (day/month/year + calendar) ---------------- */
+.date-field { position: relative; display: block; }
+.date-field input {
+  width: 100%; padding-inline-end: 40px; font-variant-numeric: tabular-nums;
+  letter-spacing: .4px; direction: ltr; text-align: start;
+}
+[dir="rtl"] .date-field input { text-align: right; }
+.date-field .date-pick {
+  position: absolute; inset-inline-end: 6px; top: 50%; transform: translateY(-50%);
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; padding: 0; border: 0; border-radius: 8px;
+  background: transparent; color: var(--text-3); cursor: pointer;
+}
+.date-field .date-pick:hover { background: color-mix(in srgb, var(--brand) 10%, transparent); color: var(--brand); }
+.date-field .date-pick svg { width: 16px; height: 16px; }
+.date-field input.invalid { border-color: var(--danger); }
+.date-field input.invalid:focus { outline-color: color-mix(in srgb, var(--danger) 30%, transparent); }
+
 .form-error { background: color-mix(in srgb, var(--danger) 10%, transparent); color: var(--danger); border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent); padding: 9px 12px; border-radius: 10px; font-size: 12.5px; margin-bottom: 12px; }
 .checkbox { display: flex; align-items: center; gap: 9px; font-size: 13px; }
 .checkbox input { width: 16px; height: 16px; }

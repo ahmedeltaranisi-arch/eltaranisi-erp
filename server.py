@@ -22,6 +22,7 @@ import deletion
 import documents
 import editing
 import reports
+import db
 from db import BASE_DIR, connect, from_cents, money_str, read, to_cents, to_milli, transaction
 from security import (AuthError, PermissionError_, audit, has, issue_token, load_user, sync_system_roles,
                       new_session_token, public_user, require, role_can, token_hash, utcnow,
@@ -34,6 +35,25 @@ from security import (AuthError, PermissionError_, audit, has, issue_token, load
 EPHEMERAL_AUTH = os.environ.get("ERP_EPHEMERAL_AUTH", "").strip().lower() in ("1", "true", "yes", "on")
 
 STATIC_DIR = BASE_DIR / "static"
+def _pick_backup_dir() -> Path:
+    """A writable place for database snapshots (serverless hosts are read-only
+    except /tmp, so the directory is probed instead of assumed)."""
+    for candidate in (os.environ.get("BACKUP_DIR"), BASE_DIR / "backups", Path("/tmp/eltaranisi-backups")):
+        if not candidate:
+            continue
+        try:
+            path = Path(candidate)
+            path.mkdir(parents=True, exist_ok=True)
+            probe = path / ".write-test"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink()
+            return path
+        except OSError:
+            continue
+    return Path("/tmp")
+
+
+BACKUP_DIR = _pick_backup_dir()
 PORT = int(os.environ.get("PORT", "8000"))
 MAX_BODY = 8 * 1024 * 1024
 
@@ -393,7 +413,48 @@ def health(ctx):
     dev_mode = os.environ.get("ERP_SEED_DEMO_DATA", "true").lower() not in ("0", "false", "no")
     return {"status": "ok", "time": utcnow(), "version": "1.1.0",
             "features": {"pdf": True, "xlsx": True, "einvoice": True},
-            "dev_mode": dev_mode}
+            "dev_mode": dev_mode,
+            "storage": {"durable": db.storage_info()["durable"]}}
+
+
+# -------------------------- storage / backups ------------------------------
+@route("GET", r"/api/admin/storage", "settings.manage")
+def admin_storage(ctx):
+    """Where the database lives, whether it survives a restart, row counts."""
+    info = db.storage_info()
+    info["backup_dir"] = str(BACKUP_DIR)
+    try:
+        files = sorted(BACKUP_DIR.glob("erp-*.db"), key=lambda f: f.stat().st_mtime, reverse=True)[:10]
+        info["backups"] = [{"name": f.name, "size_bytes": f.stat().st_size,
+                            "created_at": datetime.fromtimestamp(f.stat().st_mtime).isoformat(timespec="seconds")}
+                           for f in files]
+    except OSError:
+        info["backups"] = []
+    return info
+
+
+@route("GET", r"/api/admin/backup", "settings.manage")
+def admin_backup(ctx):
+    """Download a consistent snapshot of the whole database (audited)."""
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    tmp = BACKUP_DIR / f"erp-{stamp}.db"
+    db.snapshot(tmp)
+    audit(ctx.conn, ctx.user, "admin.backup", "database", 0,
+          {"file": tmp.name, "size": tmp.stat().st_size}, company_id=ctx.user["company_id"])
+    return {"__file__": True, "content": tmp.read_bytes(), "content_type": "application/x-sqlite3",
+            "filename": f"eltaranisi-erp-backup-{stamp}.db"}
+
+
+@route("POST", r"/api/admin/backup", "settings.manage")
+def admin_backup_now(ctx):
+    """Take a server-side snapshot into BACKUP_DIR without downloading it."""
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    tmp = BACKUP_DIR / f"erp-{stamp}.db"
+    db.snapshot(tmp)
+    audit(ctx.conn, ctx.user, "admin.backup.server", "database", 0,
+          {"file": tmp.name, "size": tmp.stat().st_size}, company_id=ctx.user["company_id"])
+    return {"ok": True, "file": tmp.name, "size_bytes": tmp.stat().st_size,
+            "backup_dir": str(BACKUP_DIR)}
 
 
 # ---------------------------- dashboard -----------------------------------
@@ -1273,7 +1334,7 @@ def debt_invoices_xlsx(ctx):
             "Amount due", "Vessel", "Client", "Report no."]
     rows = [head]
     for it in sorted(data["items"], key=lambda x: (x["doc_date"], x["id"])):
-        rows.append([it["doc_date"], it["account_name"], it["description"], it["operation"] or "",
+        rows.append([exporter.fmt_date_ui(it["doc_date"]), it["account_name"], it["description"], it["operation"] or "",
                      f"{it['qty_milli'] / 1000:g}" if it["qty_milli"] else "",
                      it["unit_label_ar"] if ar else it["unit_label_en"],
                      money_str(it["unit_rate_cents"]) if it["unit_rate_cents"] else "",
@@ -1305,7 +1366,7 @@ def debt_invoices_pdf(ctx):
     rows = []
     for it in sorted(data["items"], key=lambda x: (x["doc_date"], x["id"])):
         qty = f"{it['qty_milli'] / 1000:g}" if it["qty_milli"] else ""
-        rows.append([it["doc_date"], it["account_name"], it["description"],
+        rows.append([exporter.fmt_date_ui(it["doc_date"]), it["account_name"], it["description"],
                      f"{qty} {it['unit_label_ar'] if ar else it['unit_label_en']}".strip(),
                      money_str(it["unit_rate_cents"]) if it["unit_rate_cents"] else "",
                      money_str(it["amount_cents"])])
@@ -1313,7 +1374,7 @@ def debt_invoices_pdf(ctx):
                  money_str(data["totals"]["amount_cents"])])
     company = exporter.company_block(ctx.conn, cid)
     out = exporter.report_pdf("بيان الفواتير", "Invoice statement", cols, rows, company=company, lang=lang,
-                              subtitle_ar=f"من {data['range']['from'] or 'البداية'} إلى {data['range']['to'] or 'اليوم'}",
+                              subtitle_ar=f"من {exporter.fmt_date_ui(data['range']['from']) if data['range']['from'] else 'البداية'} إلى {exporter.fmt_date_ui(data['range']['to']) if data['range']['to'] else 'اليوم'}",
                               subtitle_en=f"{data['range']['from'] or 'start'} — {data['range']['to'] or 'today'}")
     audit(ctx.conn, ctx.user, "debt_invoices.pdf", "debt_invoice_statement", None, {}, company_id=cid)
     return {"__file__": True, "content": out, "content_type": "application/pdf",
@@ -1394,7 +1455,7 @@ def debt_summary_pdf(ctx):
                  money_str(t["advance_cents"]), money_str(t["net_cents"])])
     company = exporter.company_block(ctx.conn, cid)
     out = exporter.report_pdf("حساب المديونية", "Debt summary", cols, rows, company=company, lang=lang,
-                              subtitle_ar=f"من {d1 or 'البداية'} إلى {d2 or 'اليوم'}",
+                              subtitle_ar=f"من {exporter.fmt_date_ui(d1) if d1 else 'البداية'} إلى {exporter.fmt_date_ui(d2) if d2 else 'اليوم'}",
                               subtitle_en=f"{d1 or 'start'} — {d2 or 'today'}")
     audit(ctx.conn, ctx.user, "debt_summary.pdf", "debt_summary", None, {}, company_id=cid)
     return {"__file__": True, "content": out, "content_type": "application/pdf",
@@ -1458,7 +1519,7 @@ def debt_statement_xlsx(ctx, account_id):
     rows.append(["اذن صرف", "التاريخ", "المبلغ", "البيان", "طريقة السداد", "المستلم/الصارف"] if ar else
                 ["Voucher", "Date", "Amount", "Statement", "Method", "Payee"])
     for p in sorted(st["payments"], key=lambda x: (x["pay_date"], x["id"])):
-        rows.append([p["voucher_no"] or p["payment_no"], p["pay_date"], money_str(p["amount_cents"]),
+        rows.append([p["voucher_no"] or p["payment_no"], exporter.fmt_date_ui(p["pay_date"]), money_str(p["amount_cents"]),
                      p["description"] or ("دفعة مقدمة" if p["advance_cents"] else ""),
                      p["method_label_ar"], p["payee"] or ""])
     rows.append(["", "اجمالي الدفعات المستلمة" if ar else "Total paid", money_str(st["totals"]["paid_cents"]), "", "", ""])
@@ -1489,7 +1550,7 @@ def debt_statement_pdf(ctx, account_id):
     for it in sorted(st["items"], key=lambda x: (x["doc_date"], x["id"])):
         qty = f"{it['qty_milli'] / 1000:g}" if it["qty_milli"] else ""
         unit = (it["unit_label_ar"] if ar else it["unit_label_en"])
-        rows.append([it["doc_date"], it["description"] + (f" — {it['vessel']}" if it["vessel"] else ""),
+        rows.append([exporter.fmt_date_ui(it["doc_date"]), it["description"] + (f" — {it['vessel']}" if it["vessel"] else ""),
                      f"{qty} {unit}".strip(), money_str(it["unit_rate_cents"]) if it["unit_rate_cents"] else "",
                      money_str(it["amount_cents"])])
     rows.append(["", "إجمالي المستحق" if ar else "Total due", "", "", money_str(st["totals"]["due_cents"])])
@@ -1498,7 +1559,7 @@ def debt_statement_pdf(ctx, account_id):
         voucher = f"اذن صرف {p['voucher_no']}" if p["voucher_no"] else p["payment_no"]
         if p["description"]:
             voucher += f" — {p['description']}"
-        rows.append([p["pay_date"], voucher, "", p["method_label_ar"], money_str(p["amount_cents"])])
+        rows.append([exporter.fmt_date_ui(p["pay_date"]), voucher, "", p["method_label_ar"], money_str(p["amount_cents"])])
     if st["totals"]["advance_cents"]:
         rows.append(["", "دفعات مقدمة (لم تُقابلها فاتورة)", "", "",
                      money_str(st["totals"]["advance_cents"])])
@@ -1506,7 +1567,7 @@ def debt_statement_pdf(ctx, account_id):
     company = exporter.company_block(ctx.conn, cid)
     out = exporter.report_pdf(f"كشف حساب — {acc['name_ar']}", f"Statement — {acc['name_en'] or acc['name_ar']}",
                               cols, rows, company=company, lang=lang,
-                              subtitle_ar=f"{acc['code']} • {acc['kind_label_ar']} • من {st['range']['from'] or 'البداية'} إلى {st['range']['to'] or 'اليوم'}",
+                              subtitle_ar=f"{acc['code']} • {acc['kind_label_ar']} • من {exporter.fmt_date_ui(st['range']['from']) if st['range']['from'] else 'البداية'} إلى {exporter.fmt_date_ui(st['range']['to']) if st['range']['to'] else 'اليوم'}",
                               subtitle_en=f"{acc['code']} • {acc['kind_label_en']} • {st['range']['from'] or 'start'} — {st['range']['to'] or 'today'}")
     audit(ctx.conn, ctx.user, "debt_statement.pdf", "debt_account", int(account_id), {}, company_id=cid)
     return {"__file__": True, "content": out, "content_type": "application/pdf",
@@ -2312,7 +2373,7 @@ def report_pdf_route(ctx):
     else:
         raise ApiError("INVALID_INPUT: نوع التقرير غير مدعوم / Unsupported report kind", 400)
 
-    subtitle_ar = f"الفترة {d1} إلى {d2} · {company.get('name_ar', '')}"
+    subtitle_ar = f"الفترة {exporter.fmt_date_ui(d1)} إلى {exporter.fmt_date_ui(d2)} · {company.get('name_ar', '')}"
     subtitle_en = f"Period {d1} to {d2} · {company.get('name_en', '')}"
     pdf_bytes = exporter.report_pdf(title_ar, title_en, cols, rows, company, lang,
                                     subtitle_ar, subtitle_en, notes)

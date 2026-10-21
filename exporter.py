@@ -113,9 +113,18 @@ def money(cents) -> str:
 
 
 def fmt_date(value) -> str:
+    """ISO day of a stored date (machine format: e-invoicing payloads, sorting)."""
     if not value:
         return "—"
     return str(value)[:10]
+
+
+def fmt_date_ui(value) -> str:
+    """User facing date — day/month/year: 2026-12-08 -> 08/12/2026."""
+    iso = fmt_date(value)
+    if len(iso) == 10 and iso[4] == "-" and iso[7] == "-":
+        return f"{iso[8:10]}/{iso[5:7]}/{iso[0:4]}"
+    return iso
 
 
 def _rstrip_zero(qty_milli) -> str:
@@ -371,8 +380,8 @@ def invoice_pdf(conn, company_id: int, kind: str, invoice_id: int, lang: str = "
     fx = M + 14
     facts = [
         ((T("رقم الفاتورة", "Invoice No.")), str(inv.get("invoice_no") or "")),
-        ((T("التاريخ", "Invoice date")), fmt_date(inv.get("invoice_date"))),
-        ((T("تاريخ الاستحقاق", "Due date")), fmt_date(inv.get("due_date"))),
+        ((T("التاريخ", "Invoice date")), fmt_date_ui(inv.get("invoice_date"))),
+        ((T("تاريخ الاستحقاق", "Due date")), fmt_date_ui(inv.get("due_date"))),
     ]
     if kind == "purchase":
         facts.append((T("مرجع المورد", "Supplier ref"), str(inv.get("supplier_ref") or "—")))
@@ -499,7 +508,7 @@ def invoice_pdf(conn, company_id: int, kind: str, invoice_id: int, lang: str = "
         pdf.text(W - M, notes_y, T("الدفعات المسجلة", "Recorded payments"), 8, MUTED, align="right", rtl=rtl)
         py = notes_y - 13
         for a in data["allocations"][:3]:
-            txt = f'{a["payment_no"]} · {fmt_date(a["payment_date"])} · {money(a["amount_cents"])}'
+            txt = f'{a["payment_no"]} · {fmt_date_ui(a["payment_date"])} · {money(a["amount_cents"])}'
             pdf.text(W - M, py, txt, 8, INK, align="right", rtl=False)
             py -= 12
     if inv.get("notes"):
