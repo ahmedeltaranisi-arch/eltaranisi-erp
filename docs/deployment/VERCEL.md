@@ -52,6 +52,12 @@ vercel            # معاينة
 vercel --prod     # إنتاج
 ```
 
+### الطريقة ج — بسكربت جاهز (يشغّل الفحوصات قبل النشر)
+```bash
+VERCEL_TOKEN=... ./scripts/deploy-vercel.sh            # إنتاج
+VERCEL_TOKEN=... ./scripts/deploy-vercel.sh --preview  # رابط معاينة
+```
+
 ### متغيرات البيئة (اختيارية — لكلها قيم افتراضية تعمل)
 | المتغير | الافتراضي على Vercel | المعنى |
 |---|---|---|
@@ -138,6 +144,7 @@ file invoice.pdf                          # PDF document, version 1.7
 |---|---|---|
 | `500 INTERNAL_ERROR` مع `serverless bridge failed` | ملف ناقص في الحزمة | تأكد أن `includeFiles` في `vercel.json` يضم `*.py` و`schema.sql` و`assets/**` |
 | `/api/...` يعيد 404 لكل المسارات | إعادة الكتابة لم تُطبَّق | ضع `vercel.json` في **جذر** المستودع (وليس داخل مجلد فرعي) |
+| `502 ROUTE_NOT_FORWARDED` | الـ rewrite وصل الدالة لكن بدون `__p` | الجسر يشرح السبب في الاستجابة نفسها (هيدر `X-Route-Debug`) — تحقق أن `rewrites` كما في `vercel.json` ولا تستخدم `routes` القديمة |
 | الصفحة تفتح لكن بلا تنسيق | `outputDirectory` خاطئ | يجب أن يكون `static` |
 | الخط العربي غير محمّل | `fonts/` خارج مجلد الإخراج | الخطوط موجودة في `static/fonts/` — تأكد من وجودها في الريبو |
 | البيانات تعود لحالتها كل فترة | هذا هو القيد المذكور في القسم 4 | قاعدة بيانات دائمة |
