@@ -348,11 +348,27 @@ def _delete_document(ctx, fn, record_id, **kwargs):
     return result
 
 
+def demo_accounts_enabled() -> bool:
+    """Public demo credentials are a DEVELOPMENT convenience only.
+
+    They used to be served on any deployment that had demo data seeded — which
+    meant a public URL listed the owner's real password. Now they are off by
+    default on any hosted deployment (Vercel / ERP_ENV=production) and must be
+    switched on explicitly with ERP_SHOW_DEMO_ACCOUNTS=1.
+    """
+    flag = os.environ.get("ERP_SHOW_DEMO_ACCOUNTS")
+    if flag is not None:
+        return flag.strip().lower() in ("1", "true", "yes", "on")
+    if os.environ.get("VERCEL") or os.environ.get("ERP_ENV", "").strip().lower() in ("production", "prod"):
+        return False
+    return os.environ.get("ERP_SEED_DEMO_DATA", "true").lower() not in ("0", "false", "no")
+
+
 @route("GET", r"/api/dev/accounts", None)
 def dev_accounts(ctx):
     """DEMO ONLY — returns the seeded development logins so the login screen can
-    offer one-click sign-in. Disabled when ERP_SEED_DEMO_DATA=false."""
-    if os.environ.get("ERP_SEED_DEMO_DATA", "true").lower() in ("0", "false", "no"):
+    offer one-click sign-in. Off on hosted deployments (see demo_accounts_enabled)."""
+    if not demo_accounts_enabled():
         raise ApiError("NOT_FOUND: غير متاح / not available", 404)
     path = Path(os.environ.get("ERP_CREDENTIALS_FILE") or (BASE_DIR / "data" / "dev-credentials.txt"))
     conn = read()
@@ -410,7 +426,7 @@ def meta(ctx):
 @route("GET", r"/api/health")
 def health(ctx):
     # dev_mode tells the login screen it may show the demo accounts panel.
-    dev_mode = os.environ.get("ERP_SEED_DEMO_DATA", "true").lower() not in ("0", "false", "no")
+    dev_mode = demo_accounts_enabled()
     return {"status": "ok", "time": utcnow(), "version": "1.1.0",
             "features": {"pdf": True, "xlsx": True, "einvoice": True},
             "dev_mode": dev_mode,

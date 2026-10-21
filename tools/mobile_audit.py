@@ -89,6 +89,30 @@ async def audit(widths, langs, themes, shots, user, password):
                     got_theme = await page.evaluate("()=>document.documentElement.dataset.theme")
                     if got_theme != theme:
                         print(f"! theme mismatch: wanted {theme}, got {got_theme}")
+                    # --- login screen itself (it was invisible to earlier audits) ---
+                    login_info = await page.evaluate(PROBE)
+                    card = await page.evaluate(
+                        "()=>{const c=document.querySelector('.login-card');"
+                        "if(!c) return null; const r=c.getBoundingClientRect();"
+                        "return {w:Math.round(r.width), l:Math.round(r.left), r:Math.round(r.right), vw:innerWidth};}")
+                    login_bad = []
+                    if login_info["sw"] > login_info["vw"] + 1 or login_info["bad"]:
+                        login_bad.append(("login-overflow", login_info))
+                    # the card must use most of a phone screen, not be squeezed into a sliver
+                    # a healthy card fills >=75% of the phone width (the bug this
+                    # guard was written for left it at ~36% of a 360px screen)
+                    if card and (card["w"] < card["vw"] * 0.75 or card["w"] < 240):
+                        login_bad.append(("login-card-too-narrow", card))
+                    if shots:
+                        os.makedirs(shots, exist_ok=True)
+                        await page.screenshot(
+                            path=os.path.join(shots, f"{lang}-{theme}-{width}-login.png"))
+                    if login_bad:
+                        problems += len(login_bad)
+                        print(f"✗ {lang}/{theme}/{width}px login screen:")
+                        for tag, info in login_bad:
+                            print(f"    {tag}: {info}")
+
                     await page.fill("#login-username", user)
                     await page.fill("#login-password", password)
                     await page.click("#login-form button[type=submit]")
@@ -113,7 +137,7 @@ async def audit(widths, langs, themes, shots, user, password):
                             for b in info["bad"]:
                                 print(f"       {b}")
                     else:
-                        print(f"✓ {label}: {len(PAGES)} pages, no horizontal scroll, "
+                        print(f"✓ {label}: login + {len(PAGES)} pages, no horizontal scroll, "
                               f"{len(errors)} JS errors")
                     await ctx.close()
         await browser.close()
