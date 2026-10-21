@@ -167,6 +167,15 @@ def _next_joiner(text, i):
 # and "دفعة 350,000.00 ج.م" come out right instead of being chopped into
 # isolated runs.
 
+# Characters that no shipped face can draw are replaced (never shown as tofu).
+GLYPH_FALLBACK = {
+    "\u2705": "", "\u2714": "", "\u2713": "", "\u2611": "",      # ✅ ✔ ✓ ☑
+    "\u26A0": "!", "\u2757": "!", "\u2755": "!",                   # ⚠ ❗ ❕
+    "\u274C": "\u00D7", "\u2717": "\u00D7", "\u2718": "\u00D7",  # ❌ ✗ ✘
+    "\u2B06": "^", "\u2B07": "v", "\u2191": "^", "\u2193": "v",
+    "\u2022": "-", "\u25CF": "-", "\u25AA": "-",
+}
+
 RTL_NEUTRALS = set(" !\"'()[]{}<>|/\\.,:;-_—–ـ*+=%&#@~^$\u00A0\u060C\u061B\u061F\u066B\u066C\u2010\u2011\u2012\u2013\u2014\u2015\u2022\u2026\u00AB\u00BB")
 MIRROR = {"(": ")", ")": "(", "[": "]", "]": "[", "{": "}", "}": "{",
           "<": ">", ">": "<", "\u00AB": "\u00BB", "\u00BB": "\u00AB"}
@@ -458,10 +467,23 @@ class PDF:
         return is_arabic(ch) or ch in TRANSPARENT
 
     def _split_font(self, chunk: str):
-        """[(substring, font_index)] - Arabic picks the Arabic face."""
+        """[(substring, font_index)] - Arabic picks the Arabic face.
+
+        A character the chosen face cannot draw (an emoji, a tick, a rare
+        symbol) is re-routed to the other face and finally replaced by a safe
+        equivalent - never drawn as a blank "tofu" box.
+        """
         out = []
         for ch in chunk:
             fi = self.ar_font if self._is_arabic_char(ch) else self.la_font
+            if self.fonts[fi].gid(ch) == 0:
+                other = self.la_font if fi == self.ar_font else self.ar_font
+                if other != fi and self.fonts[other].gid(ch) != 0:
+                    fi = other
+                else:
+                    ch = GLYPH_FALLBACK.get(ch, "")
+                    if ch == "":
+                        continue
             if out and out[-1][1] == fi:
                 out[-1][0] += ch
             else:

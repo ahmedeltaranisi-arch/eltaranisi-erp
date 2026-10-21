@@ -2240,7 +2240,7 @@ def report_pdf_route(ctx):
                  exporter.money(r["period_debit"]), exporter.money(r["period_credit"]),
                  exporter.money(r["closing"])] for r in data["rows"]]
         title_ar, title_en = "ميزان المراجعة", "Trial balance"
-        notes = [("الإجمالي: مدين %s / دائن %s — متوازن ✅" if ar else "Totals: debit %s / credit %s — balanced")
+        notes = [("الإجمالي: مدين %s / دائن %s — متوازن" if ar else "Totals: debit %s / credit %s — balanced")
                  % (exporter.money(data["totals"]["period_debit"]), exporter.money(data["totals"]["period_credit"]))]
     elif kind == "income-statement":
         data = reports.income_statement(ctx.conn, cid, d1, d2)
@@ -2272,7 +2272,7 @@ def report_pdf_route(ctx):
                 rows.append([it.get("code", ""), (it.get("name_ar") if ar else it.get("name_en")) or "",
                              exporter.money(it.get("amount_cents", it.get("balance_cents", 0)))])
         title_ar, title_en = "المركز المالي", "Balance sheet"
-        notes = [("متوازن ✅" if data.get("balanced") else "غير متوازن ⚠")
+        notes = [("متوازن" if data.get("balanced") else "غير متوازن")
                  if ar else ("Balanced" if data.get("balanced") else "NOT balanced")]
     elif kind == "vendor-payables":
         data = reports.vendor_payables(ctx.conn, cid, ctx.qs.get("as_of") or d2)
