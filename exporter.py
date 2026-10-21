@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 from datetime import date, datetime
 from pathlib import Path
 
@@ -19,8 +20,18 @@ import pdfgen
 import xlsxgen
 
 BASE_DIR = Path(__file__).resolve().parent
-FONT_PATH = BASE_DIR / "assets" / "fonts" / "Amiri-Regular.ttf"
-LATIN_FONT_PATH = BASE_DIR / "assets" / "fonts" / "DejaVuSans.ttf"
+FONT_DIR = BASE_DIR / "assets" / "fonts"
+# Arabic typeface used in every PDF (statements, invoices, reports).  Swappable
+# without touching code:  ERP_PDF_FONT=NotoSansArabic.ttf
+ARABIC_FONT = os.environ.get("ERP_PDF_FONT") or "NotoSansArabic.ttf"
+FONT_DIR_FILES = ("NotoSansArabic.ttf", "Amiri-Regular.ttf", "DejaVuSans.ttf")
+_candidate = FONT_DIR / ARABIC_FONT
+if not _candidate.exists():                      # never break a report on config
+    _candidate = FONT_DIR / "NotoSansArabic.ttf"
+    if not _candidate.exists():
+        _candidate = FONT_DIR / "Amiri-Regular.ttf"
+FONT_PATH = _candidate
+LATIN_FONT_PATH = FONT_DIR / "DejaVuSans.ttf"
 
 # palette
 INK = (11, 47, 107)            # logo ink
@@ -313,25 +324,23 @@ def invoice_pdf(conn, company_id: int, kind: str, invoice_id: int, lang: str = "
     left_x = M + 40 + pdf.measure(doc_title, 14, ar) + 16
     right_x = W - M
     avail = right_x - left_x
-    lines, name_size = fit_name(pdf, name, avail, True, start=17.0, floor=10.0)
+    lines, name_size = fit_name(pdf, name, avail, ar, start=17.0, floor=10.0)
     ny = H - 44
     for line in lines:
-        pdf.text(right_x, ny, line, name_size, WHITE, align="right", rtl=True)
+        pdf.text(right_x, ny, line, name_size, WHITE, align="right", rtl=ar)
         ny -= 13
     sub = (company.get("name_en") if ar else company.get("name_ar")) or ""
     sub_size = 9.5
     while sub_size > 7.0 and pdf.measure(sub, sub_size, not ar) > avail:
         sub_size -= 0.4
     if sub:
-        pdf.text(right_x, ny + 1, sub, sub_size, (205, 200, 240), align="right",
-                 rtl=not ar if _has_ar(sub) else ar)
+        pdf.text(right_x, ny + 1, sub, sub_size, (205, 200, 240), align="right", rtl=ar)
     contact = " · ".join(x for x in [company.get("address"), company.get("phone"),
                                      f'{T("الرقم الضريبي", "Tax No.")}: {company.get("tax_number") or "—"}'] if x)
     c_size = 8.5
-    while c_size > 6.6 and pdf.measure(contact, c_size, True) > avail:
+    while c_size > 6.6 and pdf.measure(contact, c_size, ar) > avail:
         c_size -= 0.3
-    pdf.text(right_x, ny - 13, contact, c_size, (196, 191, 235), align="right",
-             rtl=True if _has_ar(contact) else False)
+    pdf.text(right_x, ny - 13, contact, c_size, (196, 191, 235), align="right", rtl=ar)
     brand_mark(pdf, M + 2, H - 62, 30)
     pdf.text(M + 40, H - 50, doc_title, 14, WHITE, align="left", rtl=ar)
     status = inv.get("status") or "draft"
@@ -376,7 +385,7 @@ def invoice_pdf(conn, company_id: int, kind: str, invoice_id: int, lang: str = "
     # ---------- items table ----------
     y = y - box_h - 26
     cols_ar = [
-        (T("الرمز التعريفي", "Reference ID"), 46, "center"),
+        (T("الرمز التعريفي", "Ref. ID"), 46, "center"),
         (T("الصنف / الوصف", "Item / description"), 0, "right"),
         (T("الكمية", "Qty"), 52, "center"),
         (T("السعر", "Price"), 66, "right"),
@@ -392,14 +401,15 @@ def invoice_pdf(conn, company_id: int, kind: str, invoice_id: int, lang: str = "
     x = W - M if rtl else M
     header_positions = []
     for label, width, align in cols_ar:
+        label, lsize = _fit_cell(pdf, label, width, 8.6, rtl=rtl)
         if rtl:
             cx = x - width / 2 if align == "center" else x - 8
-            pdf.text(cx, y - 15, label, 8.6, WHITE, align="center" if align == "center" else "right", rtl=rtl)
+            pdf.text(cx, y - 15, label, lsize, WHITE, align="center" if align == "center" else "right", rtl=rtl)
             header_positions.append((x - width, width, align))
             x -= width
         else:
             cx = x + width / 2 if align == "center" else x + 8
-            pdf.text(cx, y - 15, label, 8.6, WHITE, align="center" if align == "center" else "left", rtl=rtl)
+            pdf.text(cx, y - 15, label, lsize, WHITE, align="center" if align == "center" else "left", rtl=rtl)
             header_positions.append((x, width, align))
             x += width
     y -= row_h
@@ -624,6 +634,22 @@ def invoice_xlsx(conn, company_id: int, kind: str, invoice_id: int, lang: str = 
 
 
 # ---------------------------------------------------------------- reports
+def _fit_cell(pdf, text, width, size=8.4, rtl=True, floor=6.2):
+    """Shrink (then truncate) a cell so it can never bleed into its neighbour."""
+    text = "" if text is None else str(text)
+    if not text:
+        return text, size
+    avail = max(10.0, width - 10)
+    while size > floor and pdf.measure(text, size, rtl) > avail:
+        size -= 0.2
+    if pdf.measure(text, size, rtl) > avail:
+        cut = text
+        while cut and pdf.measure(cut + "…", size, rtl) > avail:
+            cut = cut[:-1]
+        text = (cut.rstrip() + "…") if cut else ""
+    return text, size
+
+
 def report_pdf(title_ar: str, title_en: str, columns, rows, company=None, lang="ar",
                subtitle_ar: str = "", subtitle_en: str = "", footnotes=()) -> bytes:
     """Generic landscape-free A4 report (auto page breaks, Arabic-first)."""
@@ -675,14 +701,15 @@ def report_pdf(title_ar: str, title_en: str, columns, rows, company=None, lang="
         x = W - M if ar else M
         for c, w in zip(columns, widths):
             label = c.get("ar") if ar else c.get("en")
+            label, lsize = _fit_cell(pdf, label, w, 8.4, rtl=ar)
             if ar:
                 cx = x - w / 2 if c.get("align") == "center" else x - 6
-                pdf.text(cx, yy - 15, label, 8.4, WHITE,
+                pdf.text(cx, yy - 15, label, lsize, WHITE,
                          align="center" if c.get("align") == "center" else "right", rtl=True)
                 x -= w
             else:
                 cx = x + w / 2 if c.get("align") == "center" else x + 6
-                pdf.text(cx, yy - 15, label, 8.4, WHITE,
+                pdf.text(cx, yy - 15, label, lsize, WHITE,
                          align="center" if c.get("align") == "center" else "left", rtl=False)
                 x += w
 
@@ -701,16 +728,16 @@ def report_pdf(title_ar: str, title_en: str, columns, rows, company=None, lang="
             pdf.rect(M, y - h, W - 2 * M, h, fill=(249, 249, 253))
         x = W - M if ar else M
         for c, w, value in zip(columns, widths, row):
-            text = "" if value is None else str(value)
+            text, size_c = _fit_cell(pdf, value, w, 8.4, rtl=c.get("rtl", ar))
             bold = False
             if ar:
                 cx = x - w / 2 if c.get("align") == "center" else x - 6
-                pdf.text(cx, y - 13, text, 8.4, INK,
+                pdf.text(cx, y - 13, text, size_c, INK,
                          align="center" if c.get("align") == "center" else "right", rtl=c.get("rtl", True))
                 x -= w
             else:
                 cx = x + w / 2 if c.get("align") == "center" else x + 6
-                pdf.text(cx, y - 13, text, 8.4, INK,
+                pdf.text(cx, y - 13, text, size_c, INK,
                          align="center" if c.get("align") == "center" else "left", rtl=c.get("rtl", False))
                 x += w
         y -= h
@@ -722,10 +749,15 @@ def report_pdf(title_ar: str, title_en: str, columns, rows, company=None, lang="
         pdf.text(W - M, yy, note, 8, MUTED, align="right" if ar else "left", rtl=ar)
         yy -= 13
     pdf.line(M, 58, W - M, 58, color=LINE)
-    pdf.text(W - M, 44, T("تم التوليد آلياً من نظام ELTARANISI ERP — بيانات من القيود المرحّلة فقط",
-                          "Generated by ELTARANISI ERP — posted ledger data only"), 7.6, MUTED,
-             align="right" if ar else "left", rtl=ar)
-    pdf.text(M, 44, f"{T('صفحة', 'Page')} {page_no}", 7.6, MUTED, align="left", rtl=ar)
+    note = T("تم التوليد آلياً من نظام ELTARANISI ERP — بيانات من القيود المرحّلة فقط",
+             "Generated by ELTARANISI ERP — posted ledger data only")
+    page = f"{T('صفحة', 'Page')} {page_no}"
+    if ar:
+        pdf.text(W - M, 44, note, 7.6, MUTED, align="right", rtl=True)
+        pdf.text(M, 44, page, 7.6, MUTED, align="left", rtl=False)
+    else:
+        pdf.text(M, 44, note, 7.6, MUTED, align="left", rtl=False)
+        pdf.text(W - M, 44, page, 7.6, MUTED, align="right", rtl=False)
     return pdf.to_bytes()
 
 

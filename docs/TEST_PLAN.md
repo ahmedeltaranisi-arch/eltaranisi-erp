@@ -169,3 +169,15 @@ Manual / headless: the settlement form shows the outstanding balance and the
 «no dues yet → recorded as an advance» hint; the statement shows the advances
 card and the «دفعة مقدمة» badge; `#/debt-invoices` renders the consolidated
 invoice statement.
+
+### Round k+1 — Arabic typography in every PDF (الخطوط)
+
+| Test | What it proves |
+|---|---|
+| `test_B135_pdf_reports_embed_the_arabic_typeface_and_never_overflow` | the statement PDF embeds **Noto Sans Arabic** (not Amiri) and the summary / invoice-statement / trial-balance PDFs are real files — the production build always carries the shipped face |
+| `test_B136_bidi_places_numbers_and_latin_inside_arabic_correctly` | the bidi pass keeps numbers and Latin codes in reading order inside Arabic (`اذن صرف DPV-2026-00002 — دفعة` → `دفعة — DPV-2026-00002 صرف اذن` visually), leaves English paragraphs untouched, and a long cell is shrunk/truncated with «…» instead of bleeding into the next column |
+
+Visual verification: every PDF (sales invoice, purchase invoice, debt statement,
+debt summary AR + EN, بيان الفواتير, trial balance) was rendered with PyMuPDF at
+150–400 dpi and inspected for clipping, joined letters, misplaced punctuation and
+column overflow before release.

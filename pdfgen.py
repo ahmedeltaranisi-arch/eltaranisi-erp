@@ -159,29 +159,98 @@ def _next_joiner(text, i):
     return ch if (ch in JOIN or ch == TATWEEL) else None
 
 
-def visual_runs(text: str):
-    """Split a logical string into runs, ready for right-to-left drawing.
+# --- lightweight bidi (UAX #9 subset) --------------------------------------
+# The generator draws left-to-right, so RTL text must be re-ordered by hand.
+# A character is classified R (Arabic), L (Latin), N (number, internally LTR)
+# or W (neutral: spaces, punctuation, separators).  Neutrals take the
+# direction of their neighbours, which is what makes "كشف حساب — ح / إبراهيم"
+# and "دفعة 350,000.00 ج.م" come out right instead of being chopped into
+# isolated runs.
 
-    Returns a list of (text, is_rtl). The caller reverses the run order and the
-    characters inside RTL runs to obtain visual order (LTR base direction).
+RTL_NEUTRALS = set(" !\"'()[]{}<>|/\\.,:;-_—–ـ*+=%&#@~^$\u00A0\u060C\u061B\u061F\u066B\u066C\u2010\u2011\u2012\u2013\u2014\u2015\u2022\u2026\u00AB\u00BB")
+MIRROR = {"(": ")", ")": "(", "[": "]", "]": "[", "{": "}", "}": "{",
+          "<": ">", ">": "<", "\u00AB": "\u00BB", "\u00BB": "\u00AB"}
+
+
+def _bidi_class(ch: str) -> str:
+    cp = ord(ch)
+    if is_arabic(ch):
+        return "R"
+    if ch.isdigit() or 0x0660 <= cp <= 0x0669 or 0x06F0 <= cp <= 0x06F9:
+        return "L"          # numbers are LTR and never joined to their neighbours
+    if ch.isalpha():
+        return "L"
+    return "W"
+
+
+def bidi_runs(text: str, base_rtl: bool = True):
+    """Split *text* into directional runs, in LOGICAL order.
+
+    Returns [(chunk, 'R' | 'L')].  Numbers stay 'L' (they are never reshaped or
+    reversed); everything Arabic - including the punctuation sitting between
+    two Arabic words - is 'R'.
     """
-    runs = []
-    for ch in text:
-        rtl = is_arabic(ch) or ch in TRANSPARENT
-        if runs and runs[-1][1] == rtl:
-            runs[-1][0].append(ch)
+    if not text:
+        return []
+    classes = [_bidi_class(c) for c in text]
+    base = "R" if base_rtl else "L"
+
+    def strong(idx, step):
+        j = idx + step
+        while 0 <= j < len(classes):
+            if classes[j] != "W":
+                return classes[j]
+            j += step
+        return base
+
+    resolved = []
+    for i, cls in enumerate(classes):
+        if cls != "W":
+            resolved.append(cls)
+            continue
+        before, after = strong(i, -1), strong(i, +1)
+        if before == after:                  # "a b", "برنامج كشف", "1,250.00"
+            resolved.append(before)
+        elif "R" in (before, after):         # Arabic wins a mixed sandwich
+            resolved.append("R")
         else:
-            runs.append([[ch], rtl])
-    return [("".join(r[0]), r[1]) for r in runs]
+            resolved.append(base)
+
+    runs, cur, cur_cls = [], [], None
+    for ch, cls in zip(text, resolved):
+        # blanks always form their own run: that keeps the gap *between* an
+        # Arabic word and a number instead of pushing it to the outer edge
+        this = "W" if ch == " " else cls
+        if cur and this != cur_cls:
+            runs.append(("".join(cur), cur_cls))
+            cur = []
+        cur.append(ch)
+        cur_cls = this
+    if cur:
+        runs.append(("".join(cur), cur_cls))
+    return runs
 
 
-def visual_order(text: str) -> str:
-    """Visual (left-to-right drawing) order for an RTL paragraph."""
-    parts = visual_runs(text)
+def visual_runs(text: str):
+    """Directional runs in VISUAL order (RTL base): (text, is_rtl)."""
     out = []
-    for chunk, rtl in reversed(parts):
-        out.append(chunk[::-1] if rtl else chunk)
-    return "".join(out)
+    for chunk, cls in reversed(bidi_runs(text, True)):
+        if cls == "R":
+            out.append(("".join(MIRROR.get(c, c) for c in reversed(chunk)), True))
+        else:
+            out.append((chunk, False))
+    return out
+
+
+def visual_order(text: str, base_rtl: bool = True) -> str:
+    """Visual (left-to-right drawing) order of *text* in a paragraph.
+
+    base_rtl=True for Arabic-first paragraphs (the default in this app),
+    False for an English/LTR paragraph or a bare Latin string.
+    """
+    if not base_rtl:
+        return "".join(chunk for chunk, _ in bidi_runs(text, False))
+    return "".join(chunk for chunk, _ in visual_runs(text))
 
 
 # --------------------------------------------------------------------------
@@ -308,6 +377,19 @@ def _u32(d, o):
 # --------------------------------------------------------------------------
 # PDF writer
 # --------------------------------------------------------------------------
+# Per-typeface optical scale (measured against Arabic x-height/cap-height).
+# Amiri is a naskh whose glyphs are small on the em square, so it needs +16%.
+OPTICAL_SCALE = {
+    "amiri-regular": 1.16,
+    "amiri": 1.16,
+}
+
+
+def _optical_scale(font_path: str) -> float:
+    stem = os.path.splitext(os.path.basename(str(font_path)))[0].lower()
+    return OPTICAL_SCALE.get(stem, 1.0)
+
+
 def _esc(text: str) -> bytes:
     return text.encode("latin-1")
 
@@ -316,12 +398,16 @@ class PDF:
     """Multi-font PDF writer: Amiri for Arabic, DejaVu Sans for Latin/digits."""
 
     def __init__(self, font_path: str, latin_font_path: str | None = None,
-                 width=595.28, height=841.89, compress=True):
+                 width=595.28, height=841.89, compress=True, ar_scale: float | None = None):
         self.fonts = [TrueType(font_path)]
         if latin_font_path and os.path.exists(latin_font_path):
             self.fonts.append(TrueType(latin_font_path))
         self.ar_font = 0
         self.la_font = 1 if len(self.fonts) > 1 else 0
+        # optical size correction: the typeface's glyphs sit high/low on the em
+        # square, so a nominal 10pt would not *look* like 10pt.
+        self.AR_SCALE = ar_scale if ar_scale else _optical_scale(font_path)
+        self.ar_scale = self.AR_SCALE
         self.W = width
         self.H = height
         self.compress = compress
@@ -371,34 +457,34 @@ class PDF:
     def _is_arabic_char(ch: str) -> bool:
         return is_arabic(ch) or ch in TRANSPARENT
 
-    def _runs(self, text: str, rtl: bool):
-        """Return [(chunk, font_index)] in *visual* (drawing) order."""
-        shaped = shape_arabic(text)
-        raw = []
-        for ch in shaped:
+    def _split_font(self, chunk: str):
+        """[(substring, font_index)] - Arabic picks the Arabic face."""
+        out = []
+        for ch in chunk:
             fi = self.ar_font if self._is_arabic_char(ch) else self.la_font
-            if raw and raw[-1][1] == fi:
-                raw[-1][0].append(ch)
+            if out and out[-1][1] == fi:
+                out[-1][0] += ch
             else:
-                raw.append([[ch], fi])
-        runs = []
-        for chars, fi in raw:
-            chunk = "".join(chars)
-            if fi == self.ar_font:
-                chunk = chunk[::-1]           # RTL glyphs drawn left-to-right
-            runs.append([chunk, fi])
-        if rtl:
-            runs.reverse()
-        # merge neighbours that share a font (happens after reversing)
-        merged = []
-        for chunk, fi in runs:
-            if merged and merged[-1][1] == fi:
-                merged[-1][0] += chunk
-            else:
-                merged.append([chunk, fi])
-        return [(c, f) for c, f in merged]
+                out.append([ch, fi])
+        return [(c, f) for c, f in out]
 
-    AR_SCALE = 1.16      # Amiri renders small on its em square; compensate optically
+    def _runs(self, text: str, rtl: bool):
+        """[(chunk, font_index)] in VISUAL (drawing) order."""
+        text = text.strip()                  # outer padding is layout, not content
+        shaped = shape_arabic(text)
+        chunks = bidi_runs(shaped, rtl)
+        if rtl:
+            chunks = list(reversed(chunks))      # RTL base: last run is drawn first
+        runs = []
+        for chunk, cls in chunks:
+            if cls == "R":
+                # Arabic inside an English line keeps its own right-to-left
+                # order; only the runs themselves follow the paragraph base
+                chunk = "".join(MIRROR.get(c, c) for c in reversed(chunk))
+            runs.extend(self._split_font(chunk))
+        return runs
+
+    AR_SCALE = 1.0       # filled per font in __init__ (see OPTICAL_SCALE)
 
     def _run_size(self, fi: int, size: float) -> float:
         return size * (self.AR_SCALE if fi == self.ar_font else 1.0)
@@ -525,8 +611,8 @@ class PDF:
 
         for i, font in enumerate(self.fonts):
             fo = font_objs[i]
-            names = {0: "Amiri", 1: "DejaVuSans"}
-            base = names.get(i, f"Font{i}")
+            stem = os.path.splitext(os.path.basename(font.path))[0]
+            base = "".join(ch for ch in stem if ch.isalnum()) or f"Font{i}"
             scale = 1000 / font.units_per_em
             widths = " ".join(f"{gid} [{font.width(gid) * scale:.0f}]"
                               for gid, _ in sorted(self.used[i].items()))

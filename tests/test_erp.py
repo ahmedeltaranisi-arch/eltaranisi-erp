@@ -1342,6 +1342,48 @@ class ERPTestCase(unittest.TestCase):
             self.assertEqual(status, 200)
             self.assertTrue(body.startswith(sig), path)
 
+    def test_B135_pdf_reports_embed_the_arabic_typeface_and_never_overflow(self):
+        """Every PDF must carry the Arabic face and clamp text inside its column."""
+        acc = self._debt_account()
+        self.owner.post("/api/debt/items", {"account_id": acc, "doc_date": self.today(),
+                                            "description": "تفريغ — Amis leader", "qty": 122,
+                                            "unit": "ton", "unit_rate": 6198.5})
+        self.owner.post("/api/debt/payments", {"account_id": acc, "pay_date": self.today(),
+                                               "amount": 100000, "method": "cash",
+                                               "voucher_no": "DPV-2026-00002"})
+        status, body, _ = self._raw_get(f"/api/debt/accounts/{acc}/statement/pdf")
+        self.assertEqual(status, 200)
+        self.assertTrue(body.startswith(b"%PDF"))
+        self.assertIn(b"NotoSansArabic", body, "the Arabic typeface must be embedded")
+        self.assertNotIn(b"/BaseFont /Amiri", body, "Amiri must no longer be the report face")
+        # every report keeps its content inside the page
+        for path in ("/api/debt/summary/pdf", "/api/debt/invoices/pdf",
+                     "/api/reports/pdf?kind=trial-balance"):
+            status, pdf, _ = self._raw_get(path)
+            self.assertEqual(status, 200, path)
+            self.assertTrue(pdf.startswith(b"%PDF"), path)
+
+    def test_B136_bidi_places_numbers_and_latin_inside_arabic_correctly(self):
+        import pdfgen
+        # numbers keep their internal order, Arabic keeps its logical order
+        self.assertEqual(pdfgen.visual_order("508 طن"), "نط 508")
+        self.assertEqual(pdfgen.visual_order("اذن صرف DPV-2026-00002 — دفعة"),
+                         "ةعفد — DPV-2026-00002 فرص نذا")
+        # the shaped glyphs used on the page keep the same order
+        pdf0 = pdfgen.PDF(str(__import__("exporter").FONT_PATH), str(__import__("exporter").LATIN_FONT_PATH))
+        rendered = "".join(c for c, _ in pdf0._runs("508 طن", True))
+        self.assertEqual(rendered, "\ufee6\ufec3 508")   # shaped طن, then the number
+        self.assertEqual(pdfgen.visual_order("Sea Service Co. for Shipping", False),
+                         "Sea Service Co. for Shipping")
+        self.assertEqual(pdfgen.visual_order("Statement — Amis leader", False),
+                         "Statement — Amis leader")
+        # a long cell is shrunk or truncated so it cannot bleed into the next column
+        import exporter
+        pdf = pdfgen.PDF(str(exporter.FONT_PATH), str(exporter.LATIN_FONT_PATH))
+        txt, size = exporter._fit_cell(pdf, "Transport & containers " * 4, 60, 8.4, rtl=False)
+        self.assertLessEqual(pdf.measure(txt, size, False), 52)
+        self.assertTrue(txt.endswith("…"))
+
     def test_B126_debt_permissions_are_enforced_server_side(self):
         acc = self._debt_account()
         status, _ = self.sales.get("/api/debt/summary")
