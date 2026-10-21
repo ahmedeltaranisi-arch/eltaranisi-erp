@@ -577,10 +577,10 @@
       const accOptions = postable.map(a => ({ value: a.id, label: `${a.code} — ${APP.lang === "ar" ? a.name_ar : a.name_en}` }));
       const rowHtml = () => `
         <tr>
-          <td><select class="input line-acc">${accOptions.map(o => `<option value="${o.value}">${ESC(o.label)}</option>`).join("")}</select></td>
-          <td><input class="input line-desc" placeholder="${ESC(t("common.description"))}"/></td>
-          <td><input class="input line-debit" type="number" step="0.01" min="0" placeholder="0.00"/></td>
-          <td><input class="input line-credit" type="number" step="0.01" min="0" placeholder="0.00"/></td>
+          <td data-label="${ESC(t("common.account"))}"><select class="input line-acc">${accOptions.map(o => `<option value="${o.value}">${ESC(o.label)}</option>`).join("")}</select></td>
+          <td data-label="${ESC(t("common.description"))}"><input class="input line-desc" placeholder="${ESC(t("common.description"))}"/></td>
+          <td data-label="${ESC(t("common.debit"))}"><input class="input line-debit" type="number" step="0.01" min="0" placeholder="0.00"/></td>
+          <td data-label="${ESC(t("common.credit"))}"><input class="input line-credit" type="number" step="0.01" min="0" placeholder="0.00"/></td>
           <td><button class="icon-btn rm-line" title="حذف">${icon("close")}</button></td>
         </tr>`;
       openModal({
@@ -709,11 +709,11 @@
       const customers = cust.customers.filter(c => c.is_active);
       const products = prods.products.filter(p => p.is_active);
       const rowHtml = () => `<tr>
-          <td><select class="input li-prod">${products.map(p => `<option value="${p.id}" data-price="${p.sale_price_cents}" data-tax="${p.tax_rate_bp}">${ESC(p.sku)} — ${ESC(p.name_ar)}</option>`).join("")}</select></td>
-          <td><input class="input li-qty" type="number" step="0.001" min="0" value="1"/></td>
-          <td><input class="input li-price" type="number" step="0.01" min="0"/></td>
-          <td><input class="input li-tax" type="number" step="0.01" min="0" value="14"/></td>
-          <td class="num li-total mono">0.00</td>
+          <td data-label="${ESC(L("الصنف", "Item"))}"><select class="input li-prod">${products.map(p => `<option value="${p.id}" data-price="${p.sale_price_cents}" data-tax="${p.tax_rate_bp}">${ESC(p.sku)} — ${ESC(p.name_ar)}</option>`).join("")}</select></td>
+          <td data-label="${ESC(t("common.qty"))}"><input class="input li-qty" type="number" step="0.001" min="0" value="1"/></td>
+          <td data-label="${ESC(t("common.price"))}"><input class="input li-price" type="number" step="0.01" min="0"/></td>
+          <td data-label="${ESC(t("common.tax"))}"><input class="input li-tax" type="number" step="0.01" min="0" value="14"/></td>
+          <td class="num li-total mono" data-label="${ESC(t("common.total"))}">0.00</td>
           <td><button class="icon-btn rm">${icon("close")}</button></td></tr>`;
       openModal({
         title: t("sales.new"), wide: true,
@@ -928,12 +928,12 @@
         `<option value="${p.id}" data-price="${p.purchase_price_cents}" data-tax="${p.tax_rate_bp}">${ESC(p.sku)} — ${ESC(p.name_ar)}</option>`).join("")
         + `<option value="${FREE}" data-price="0" data-tax="0">${ESC(L("＋ بند حر (خدمة / لا يوجد صنف)", "＋ Free line (service / no item)"))}</option>`;
       const rowHtml = () => `<tr>
-          <td><select class="input li-prod">${optionsHtml}</select>
+          <td data-label="${ESC(L("الصنف", "Item"))}"><select class="input li-prod">${optionsHtml}</select>
               <input class="input li-desc hidden" placeholder="${ESC(L("وصف البند", "Line description"))}" style="margin-top:6px"/></td>
-          <td><input class="input li-qty" type="number" step="0.001" min="0" value="1"/></td>
-          <td><input class="input li-price" type="number" step="0.01" min="0"/></td>
-          <td><input class="input li-tax" type="number" step="0.01" min="0" value="14"/></td>
-          <td class="num li-total mono">0.00</td>
+          <td data-label="${ESC(t("common.qty"))}"><input class="input li-qty" type="number" step="0.001" min="0" value="1"/></td>
+          <td data-label="${ESC(t("common.price"))}"><input class="input li-price" type="number" step="0.01" min="0"/></td>
+          <td data-label="${ESC(t("common.tax"))}"><input class="input li-tax" type="number" step="0.01" min="0" value="14"/></td>
+          <td class="num li-total mono" data-label="${ESC(t("common.total"))}">0.00</td>
           <td><button class="icon-btn rm">${icon("close")}</button></td></tr>`;
       openModal({
         title: t("purchases.new"), wide: true,

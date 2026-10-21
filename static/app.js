@@ -490,13 +490,18 @@ function card(title, bodyHtml, actionsHtml = "", extra = "") {
     </div>`;
 }
 function kpi({ label, value, sub, icon, tone = "", raw = false }) {
-  return `<div class="card kpi ${tone}">
-      <div class="kpi-ico">${icon}</div>
-      <div>
+  const body = `<div>
         <div class="kpi-label">${ESC(label)}</div>
         <div class="kpi-value">${raw ? value : fmtMoney(value)}</div>
         ${sub ? `<div class="kpi-sub">${sub}</div>` : ""}
-      </div>
+      </div>`;
+  // Mobile: very narrow cards become a compact "label → value" row so the
+  // numbers never get squeezed between the icon and the edge of the screen.
+  if (icon === null || icon === undefined || icon === "") {
+    return `<div class="card kpi kpi-compact ${tone}">${body}</div>`;
+  }
+  return `<div class="card kpi ${tone}">
+      <div class="kpi-ico">${icon}</div>${body}
     </div>`;
 }
 

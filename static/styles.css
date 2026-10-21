@@ -1020,3 +1020,348 @@ table.data td.act > * + * { margin-inline-start: 6px; }
 .readonly-money.pos { color: var(--ok, #1e8e5a); }
 .readonly-money.neg { color: var(--warn, #b7791f); }
 [dir="rtl"] .readonly-money { justify-content: flex-start; }
+
+/* ============================================================
+   v3 — MOBILE HARDENING
+   Goal: never a horizontal scrollbar on the page itself, at any
+   width down to 320 px, in Arabic and English, light and dark.
+   Wide data stays usable: tables become cards, long strings wrap,
+   and anything that truly must stay wide gets its own inner
+   scroller (never the page).
+   ============================================================ */
+
+/* 1) The page can never scroll sideways ------------------------------------ */
+html, body {
+  max-width: 100%;
+  overflow-x: hidden;          /* fallback for older engines */
+  overflow-x: clip;            /* no scroll container → keeps sticky working */
+  overscroll-behavior-x: none;
+}
+body { width: 100%; }
+*, *::before, *::after { min-width: 0; }
+img, svg, video, canvas, iframe { max-width: 100%; }
+.app, .main, .content, .page-head, .card, .card-body, .split, .split-3 { min-width: 0; }
+.content > *, .card-body > *, .grid > * { min-width: 0; }
+
+/* long unbroken strings (codes, IBANs, JSON, URLs) wrap instead of pushing */
+.card, .card-body, td, .page-head, .field, .modal-body, .msg, .notif-item {
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+code, .json-cell, .mono { overflow-wrap: anywhere; }
+
+/* inner scrollers are allowed — they never drag the page with them */
+.table-wrap, .tabs, .tab-scroll { max-width: 100%; overscroll-behavior-x: contain; }
+
+/* 2) Top bar: everything must fit at 320 px ------------------------------- */
+.topbar { flex-wrap: nowrap; }
+.page-title { min-width: 0; flex: 1 1 auto; overflow: hidden; }
+.page-title h2 {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+}
+.topbar-actions { flex: 0 0 auto; min-width: 0; }
+
+@media (max-width: 480px) {
+  .topbar { padding: 0 8px; gap: 4px; height: 56px; }
+  .topbar .icon-btn, .topbar .avatar { width: 34px; height: 34px; border-radius: 10px; }
+  .topbar .icon-btn .ico-svg, .topbar .avatar .ico-svg { width: 17px; height: 17px; }
+  .topbar-actions { gap: 3px; }
+  .page-title h2 { font-size: 14.5px; }
+  .badge-dot { font-size: 9px; min-width: 14px; height: 14px; top: -2px; inset-inline-end: -2px; }
+}
+@media (max-width: 360px) {
+  .topbar .icon-btn.theme-toggle, .topbar .icon-btn.lang-toggle { display: none; }
+}
+
+/* popovers / panels never poke out of the screen */
+.dropdown-panel, .notif-panel, .search-results {
+  max-width: calc(100vw - 16px) !important;
+}
+.notif-panel { width: min(370px, calc(100vw - 16px)); }
+.dropdown-panel { min-width: min(240px, calc(100vw - 16px)); }
+@media (max-width: 480px) {
+  .dropdown-panel, .notif-panel { inset-inline-end: -6px; }
+}
+
+/* toasts sit inside the screen and above the bottom bar */
+.toast-root { inset-inline: 10px; max-width: calc(100vw - 20px); }
+.toast { min-width: 0; max-width: 100%; }
+
+/* 3) Off-canvas sidebar must not widen the layout viewport ----------------- */
+@media (max-width: 900px) {
+  .sidebar {
+    width: min(86vw, 320px); max-width: 86vw;
+    visibility: hidden; pointer-events: none;
+    transition: transform .22s var(--ease), visibility .22s;
+  }
+  .sidebar.open { visibility: visible; pointer-events: auto; }
+  .bottom-nav { width: 100%; max-width: 100vw; left: 0; right: 0; }
+  .bottom-nav button { min-width: 0; overflow: hidden; }
+  .bottom-nav button .ico { max-width: 100%; }
+}
+
+/* 4) Cards, KPIs and toolbars reflow instead of overflowing --------------- */
+.grid.kpis { grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); }
+.kpi { overflow: hidden; }
+.kpi .kpi-value, .kpi .money { overflow-wrap: anywhere; }
+@media (max-width: 400px) {
+  .grid.kpis { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .kpi .kpi-value { font-size: 14px; }
+  .kpi-value .cur { font-size: 10px; }
+}
+.doc-toolbar, .toolbar, .page-head, .page-head .actions, .filters, .table-toolbar,
+.seg, .segmented, .row-actions, .modal-foot, .form-actions, .export-menu {
+  flex-wrap: wrap;
+}
+.page-head .actions .btn, .doc-toolbar .btn { max-width: 100%; }
+.filters { gap: 8px; }
+@media (max-width: 640px) {
+  .filters > * { flex: 1 1 100%; min-width: 0 !important; }
+  .page-head { flex-direction: column; align-items: stretch; gap: 10px; }
+  .page-head .actions .btn { flex: 1 1 auto; }
+  .modal { width: calc(100vw - 16px); max-width: calc(100vw - 16px); }
+  .modal-body { padding: 14px; }
+  .grid.cols-2, .grid.cols-3, .grid.cols-4 { grid-template-columns: 1fr; }
+  /* date fields + money inputs never force a min width */
+  .date-field, .field input, .field select, .field textarea { min-width: 0; width: 100%; }
+}
+
+/* 5) Data tables: real cards on phones (no inner horizontal scroll either) */
+@media (max-width: 640px) {
+  .table-wrap { overflow-x: visible; overflow-y: visible; }
+  table.data { width: 100%; }
+  table.data thead { display: none; }
+  table.data tbody, table.data tfoot { display: block; width: 100%; }
+  table.data tbody tr {
+    display: block; width: 100%; box-sizing: border-box;
+    border: 1px solid var(--border); border-radius: var(--r-md);
+    padding: 6px 12px; margin: 0 0 10px; background: var(--surface);
+    box-shadow: var(--shadow-sm);
+  }
+  table.data tbody td {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+    padding: 6px 0; border: 0; border-bottom: 1px dashed color-mix(in srgb, var(--border) 70%, transparent);
+    white-space: normal !important; text-align: end;
+    width: auto !important; max-width: 100%; min-width: 0;
+  }
+  table.data tbody tr td:last-child { border-bottom: 0; }
+  table.data tbody td::before {
+    content: attr(data-label);
+    flex: 0 0 40%; max-width: 40%;
+    color: var(--text-3); font-size: 11.5px; font-weight: 700; text-align: start;
+    overflow-wrap: anywhere;
+  }
+  table.data tbody td > * { min-width: 0; max-width: 100%; }
+  table.data tbody td .money, table.data tbody td.num {
+    white-space: normal; overflow-wrap: anywhere; text-align: end;
+  }
+  table.data tbody td:not(:has(> *)) { }              /* keep simple text cells */
+  table.data tbody td.act > .row-actions { margin-inline-start: auto; }
+  table.data tfoot tr, table.data tfoot td { display: block; width: 100%; }
+  table.data tfoot td { display: flex; justify-content: space-between; gap: 10px; white-space: normal; }
+  table.data tfoot td::before { content: attr(data-label); color: var(--text-3); font-weight: 700; }
+  /* nested tables (document line editors inside modals) stay compact */
+  .modal table.data tbody tr { padding: 4px 10px; }
+  .modal table.data tbody td { font-size: 12.5px; }
+  .empty { padding: 22px 12px; }
+}
+
+/* 6) Small-screen typography & spacing ----------------------------------- */
+@media (max-width: 420px) {
+  body { font-size: 14px; }
+  .content { padding: 12px 10px 92px; }
+  .card-head, .card-body { padding: 12px; }
+  .card-head h3 { font-size: 14.5px; }
+  .btn { padding: 9px 12px; font-size: 13px; }
+  .tabs { gap: 0; }
+  .tab { padding: 9px 12px; font-size: 12.5px; }
+  .kpi .kpi-label { font-size: 11.5px; }
+}
+
+/* 7) Login screen on tiny phones ----------------------------------------- */
+@media (max-width: 420px) {
+  .login-card { max-width: 100%; padding: 20px 16px; border-radius: 18px; }
+  .login-screen { padding: 12px; }
+}
+
+/* 8) Charts and report previews scale, never overflow -------------------- */
+.chart, .chart-box, .report-preview, .inv-preview-head { max-width: 100%; overflow: hidden; }
+.chart svg, .spark svg { width: 100%; height: auto; display: block; }
+.inv-preview-head { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* 9) Export dropdown: opens inside the screen on phones ------------------- */
+.export-menu .menu {
+  min-width: min(220px, calc(100vw - 16px));
+  max-width: calc(100vw - 16px);
+  overflow-wrap: anywhere;
+}
+@media (max-width: 480px) {
+  .export-menu { display: block; width: 100%; }
+  .export-menu summary { width: 100%; justify-content: center; }
+  .export-menu .menu { inset-inline: 0; width: 100%; min-width: 0; }
+  .export-menu .menu .hint { font-size: 10.2px; }
+}
+/* any absolute popover anchored to a right/left edge stays on screen */
+.popover, .menu-pop, .ctx-menu { max-width: calc(100vw - 16px); }
+
+/* 10) Tabs: wrap on phones (no sideways scrolling at all) ----------------- */
+.tabs { scrollbar-width: none; }
+.tabs::-webkit-scrollbar { height: 0; }
+.tab { flex: 0 0 auto; }
+@media (max-width: 640px) {
+  .tabs {
+    overflow: visible; flex-wrap: wrap; gap: 6px;
+    border-bottom: 0; margin-bottom: 14px;
+  }
+  .tab {
+    flex: 1 1 auto; white-space: normal; text-align: center; line-height: 1.25;
+    border: 1px solid var(--border); border-radius: 999px; padding: 8px 12px;
+    font-size: 12.2px; background: var(--surface); min-height: 38px;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .tab.active {
+    border-color: transparent; color: #fff;
+    background: linear-gradient(135deg, var(--brand), var(--brand-2));
+  }
+}
+
+/* 11) The "temporary storage" banner must stay small on phones ----------- */
+.storage-warning-inner { flex-wrap: wrap; }
+@media (max-width: 640px) {
+  .storage-warning { margin: 10px 10px 0; padding: 10px 12px; border-radius: 12px; }
+  .storage-warning-inner { gap: 8px; align-items: flex-start; }
+  .storage-warning-inner > svg { width: 18px; height: 18px; margin-top: 2px; }
+  .storage-warning-inner strong { font-size: 12.5px; display: block; line-height: 1.35; }
+  .storage-warning-inner .small { font-size: 11.5px; line-height: 1.45; }
+  .storage-warning-inner .btn {
+    margin-inline-start: 0; width: 100%; justify-content: center; padding: 8px 10px; font-size: 12px;
+  }
+}
+
+/* 12) Very small screens (≤ 520 px): the page title lives in the content,
+       so the bar is free for actions — nothing gets truncated or clipped. */
+@media (max-width: 520px) {
+  .topbar { justify-content: space-between; }
+  .topbar .page-title { display: none; }
+  .topbar-actions { margin-inline-start: 0; flex: 1 1 auto; justify-content: flex-end; }
+  .bottom-nav button { font-size: 10px; line-height: 1.15; padding: 5px 1px; gap: 3px; }
+  .bottom-nav button > span:last-child {
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden; text-align: center; overflow-wrap: anywhere;
+  }
+}
+@media (max-width: 360px) {
+  .topbar .icon-btn, .topbar .avatar { width: 32px; height: 32px; }
+  .bottom-nav button { font-size: 9.4px; }
+  .bottom-nav .fab { width: 48px; height: 48px; min-height: 48px; margin-top: -18px; }
+}
+
+/* 13) Tablets (641–860 px): same idea — the row becomes a card, and the
+       rows flow into a responsive grid. No sideways scrolling anywhere. */
+@media (min-width: 641px) and (max-width: 860px) {
+  .content .table-wrap { overflow-x: visible; overflow-y: visible; }
+  .content table.data { width: 100%; display: block; }
+  .content table.data thead { display: none; }
+  .content table.data tbody {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 10px;
+  }
+  .content table.data tbody tr {
+    display: block; width: auto; box-sizing: border-box;
+    border: 1px solid var(--border); border-radius: var(--r-md);
+    padding: 6px 12px; background: var(--surface); box-shadow: var(--shadow-sm);
+  }
+  .content table.data tbody td {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+    padding: 6px 0; border: 0;
+    border-bottom: 1px dashed color-mix(in srgb, var(--border) 70%, transparent);
+    white-space: normal !important; text-align: end; width: auto !important; max-width: 100%;
+  }
+  .content table.data tbody tr td:last-child { border-bottom: 0; }
+  .content table.data tbody td::before {
+    content: attr(data-label); flex: 0 0 40%; max-width: 40%;
+    color: var(--text-3); font-size: 11.5px; font-weight: 700; text-align: start;
+    overflow-wrap: anywhere;
+  }
+  .content table.data tbody td.act { justify-content: flex-end; }
+  .content table.data tbody td.act::before { flex: 0 0 auto; margin-inline-end: auto; }
+  .content table.data tfoot { display: block; }
+  .content table.data tfoot td { display: flex; justify-content: space-between; gap: 10px; white-space: normal; }
+  .content table.data tfoot td::before { content: attr(data-label); color: var(--text-3); font-weight: 700; }
+}
+
+/* 14) Remaining edge cases found by the automated sweep ---------------- */
+/* export dropdowns stay inside the screen up to tablet width */
+@media (max-width: 860px) {
+  .export-menu { display: block; width: 100%; }
+  .export-menu summary { width: 100%; justify-content: center; }
+  .export-menu .menu { inset-inline: 0; width: 100%; min-width: 0; max-width: 100%; }
+}
+/* action buttons inside a card wrap instead of pushing past the edge */
+@media (max-width: 860px) {
+  table.data tbody td.act .row-actions,
+  .content table.data tbody td.act .row-actions {
+    flex-wrap: wrap; justify-content: flex-end; gap: 6px; max-width: 100%;
+  }
+  table.data tbody td.act, .content table.data tbody td.act { flex-wrap: wrap; }
+}
+
+/* 15) Modals and top-bar popovers on phones: viewport-anchored sheets ---- */
+@media (max-width: 640px) {
+  .modal-root { padding: 8px; align-items: end; }
+  .modal {
+    width: 100% !important; max-width: 100% !important;
+    max-height: calc(100dvh - 16px);
+    border-radius: 18px;
+  }
+  .modal.wide, .modal.narrow { max-width: 100% !important; }
+  .modal-head { padding: 14px 14px; }
+  .modal-body { padding: 14px; }
+  .modal-foot { padding: 12px 14px; flex-wrap: wrap; }
+  .modal-foot .btn { flex: 1 1 auto; justify-content: center; }
+
+  /* dropdowns become full-width sheets under the bar (RTL-safe) */
+  .dropdown { position: static; }
+  .dropdown-panel, .notif-panel, .search-results {
+    position: fixed; top: 62px; inset-inline: 8px; inset-block-start: 62px;
+    width: auto; min-width: 0; max-width: none;
+    max-height: min(70vh, 460px); overflow-y: auto;
+  }
+  .notif-panel { width: auto; }
+}
+
+/* 16) Line editors inside modals: one labelled block per field on phones -- */
+@media (max-width: 640px) {
+  .modal table.data tbody tr {
+    padding: 8px 12px; background: var(--surface-2);
+    border: 1px solid var(--border); margin-bottom: 8px;
+  }
+  .modal table.data tbody td {
+    display: block; width: 100% !important; max-width: 100%;
+    padding: 4px 0; border-bottom: 0; text-align: start;
+  }
+  .modal table.data tbody td::before {
+    display: block; flex: none; max-width: none; margin-bottom: 3px;
+    font-size: 11px; letter-spacing: .2px;
+  }
+  .modal table.data tbody td > select,
+  .modal table.data tbody td > input,
+  .modal table.data tbody td .input { width: 100% !important; max-width: 100%; }
+  .modal table.data tbody td.num, .modal table.data tbody td.mono { font-weight: 700; }
+  .modal table.data tbody td.act > .row-actions { justify-content: flex-end; }
+  .modal table.data tbody td:nth-child(1)::before:empty { display: none; }
+  /* the remove-line button sits on its own compact row */
+  .modal table.data tbody td:last-child { padding-top: 0; }
+  .modal table.data tbody td:last-child:not(:has(.input)) { display: flex; justify-content: flex-end; }
+  .modal .table-wrap { border: 0 !important; }
+}
+
+/* 17) Compact KPIs (no icon) on phones ---------------------------------- */
+@media (max-width: 640px) {
+  .kpi { padding: 12px 14px; }
+  .kpi .kpi-value { font-size: 16.5px; letter-spacing: -.3px; }
+  .kpi-compact { padding: 11px 14px; }
+  .kpi-compact .kpi-label { font-size: 11.5px; }
+  .kpi-compact .kpi-value { font-size: 17px; margin-top: 1px; }
+  .kpi-compact .kpi-sub { font-size: 11px; }
+  .grid.kpis > .kpi { gap: 10px; }
+}
