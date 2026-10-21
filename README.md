@@ -52,7 +52,7 @@ PORT=8000 python3 server.py
 ```bash
 python3 seed.py && PORT=8000 python3 server.py &
 python3 tests/test_erp.py -v
-python3 tests/test_wsgi_bridge.py   # 19 فحصًا لمسار النشر على Vercel (بدون خادم)
+python3 tests/test_wsgi_bridge.py   # 20 فحصًا لمسار النشر على Vercel (بدون خادم)
 ```
 
 **28 اختبار تكامل** (20 للنواة المحاسبية + 8 للتصدير والإعدادات والحسابات التجريبية) تغطي: الحسابين المستقلين، سيناريو المبيعات الإلزامي (فاتورة → ترحيل → تحصيل جزئي →
@@ -161,7 +161,7 @@ npm i -g vercel && vercel --prod
 قبل الاعتماد على النشر، شغّل الفحص الآلي للجسر:
 
 ```bash
-python3 tests/test_wsgi_bridge.py     # 19/19 — يثبت المسار الكامل دون أي خادم HTTP (بما فيه الوضع المغلق)
+python3 tests/test_wsgi_bridge.py     # 20/20 — يثبت المسار الكامل دون أي خادم HTTP (بما فيه الوضع المغلق)
 ```
 
 ### سيناريو تجربة سريع (5 دقائق)
