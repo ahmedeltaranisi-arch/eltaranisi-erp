@@ -1141,8 +1141,13 @@ class ERPTestCase(unittest.TestCase):
         codes = {a["code"] for a in data["accounts"]}
         self.assertIn("DB-0003", codes)          # إبراهيم الحبشي — بالطن
         self.assertIn("DB-0006", codes)          # مكتب القدس — حاويات
-        seeded = [a for a in data["accounts"] if a["code"].startswith("DB-")]
-        self.assertEqual(len(seeded), 15, "the 15 accounts of the paper statement must exist")
+        # The 15 accounts of the paper statement are DB-0001 … DB-0015. Assert on the
+        # codes (not on the total count) so the test cannot be confused by extra
+        # accounts that other tests create during the same run.
+        expected = {f"DB-{i:04d}" for i in range(1, 16)}
+        self.assertTrue(expected <= codes, f"missing seeded accounts: {sorted(expected - codes)}")
+        seeded = [a for a in data["accounts"] if a["code"] in expected]
+        self.assertEqual(len(seeded), 15)
         for a in seeded:
             self.assertEqual(a["opening_balance_cents"], 0, "seeded balances must start at zero")
         acc = self._debt_account()

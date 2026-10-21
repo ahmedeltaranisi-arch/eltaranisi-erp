@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sqlite3
 import sys
@@ -49,6 +50,47 @@ def run_statement(path: Path, sql: str, params):
         }
     finally:
         conn.close()
+
+
+def split_sql(sql: str):
+    """Split a multi-statement string the way the real API accepts it."""
+    out, buf, i, n = [], [], 0, len(sql)
+    while i < n:
+        ch = sql[i]
+        if ch in ("'", '"', "`"):
+            j = i + 1
+            while j < n:
+                if sql[j] == ch:
+                    if j + 1 < n and sql[j + 1] == ch:
+                        j += 2
+                        continue
+                    break
+                j += 1
+            buf.append(sql[i:j + 1])
+            i = j + 1
+            continue
+        if ch == ";":
+            text = "".join(buf).strip()
+            if text:
+                out.append(text)
+            buf = []
+            i += 1
+            continue
+        buf.append(ch)
+        i += 1
+    text = "".join(buf).strip()
+    if text:
+        out.append(text)
+    return out
+
+
+def run_query(path: Path, sql_text: str, params):
+    """One /query call; supports several `;`-separated statements like D1 does."""
+    statements = split_sql(sql_text or "")
+    if len(statements) <= 1:
+        return [run_statement(path, sql_text, params)]
+    return run_batch(path, [{"sql": s, "params": params if len(statements) == 1 else []}
+                            for s in statements])
 
 
 def run_batch(path: Path, statements):
@@ -117,6 +159,10 @@ class Handler(BaseHTTPRequestHandler):
         self._send(404, {"success": False, "errors": [{"message": "not found"}]})
 
     def do_POST(self):
+        if os.environ.get("D1_EMULATOR_NO_BATCH") == "1" and re.search(r"/batch$", self.path):
+            # Mirrors the real Cloudflare REST API of some accounts, which has no
+            # /batch route — lets us test the multi-statement fallback.
+            return self._send(404, {"success": False, "errors": ["Route not found"]})
         if re.search(r"/d1/database$", self.path):
             body = self._body()
             name = body.get("name") or "db"
@@ -136,7 +182,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             body = self._body()
             if action == "query":
-                result = [run_statement(path, body.get("sql") or "", body.get("params") or [])]
+                result = run_query(path, body.get("sql") or "", body.get("params") or [])
             else:
                 result = run_batch(path, body.get("batch") or [])
             self._send(200, {"success": True, "result": result, "errors": []})

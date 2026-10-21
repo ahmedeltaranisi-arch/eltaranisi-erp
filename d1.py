@@ -65,6 +65,20 @@ class D1IntegrityError(D1Error):
     pass
 
 
+def _error_message(errors, fallback="D1 request failed") -> str:
+    """Cloudflare returns [{"code":…,"message":…}] — be tolerant of plain strings."""
+    if not errors:
+        return fallback
+    first = errors[0]
+    if isinstance(first, dict):
+        code = first.get("code")
+        msg = first.get("message") or fallback
+        return f"{msg} [code {code}]" if code else msg
+    if isinstance(first, str):
+        return first
+    return json.dumps(first, ensure_ascii=False)[:300]
+
+
 def _classify(message: str, exc_type) -> D1Error:
     msg = str(message or "")
     low = msg.lower()
@@ -161,6 +175,7 @@ class Client:
         if not self.account_id or not self.token:
             raise D1OperationalError(
                 "CF_ACCOUNT_ID and CF_API_TOKEN are required for the D1 backend")
+        self._batch_route = None
         self.lazy_database = not self.database_id
         if not self.database_id and self._database_name:
             self.database_id = self._resolve_database()
@@ -188,8 +203,8 @@ class Client:
                     time.sleep(0.4 * (2 ** attempt) + random.random() * 0.2)
                     last = _classify(json.dumps(body), exc)
                     continue
-                errors = body.get("errors") or [{"message": f"HTTP {exc.code}"}]
-                raise _classify(errors[0].get("message"), exc)
+                errors = body.get("errors") or [f"HTTP {exc.code}"]
+                raise _classify(_error_message(errors, f"HTTP {exc.code}"), exc)
             except urllib.error.URLError as exc:
                 last = D1OperationalError(f"network error: {exc.reason}")
                 if attempt + 1 < self.retries:
@@ -197,8 +212,8 @@ class Client:
                     continue
                 raise last
             if not body.get("success", True):
-                errors = body.get("errors") or [{"message": "D1 request failed"}]
-                raise _classify(errors[0].get("message"), None)
+                errors = body.get("errors") or ["D1 request failed"]
+                raise _classify(_error_message(errors), None)
             return body
         raise last or D1OperationalError("D1 request failed")
 
@@ -225,13 +240,35 @@ class Client:
         return _unwrap(body)
 
     def batch(self, statements):
-        """Run [(sql, params), ...] atomically — all or nothing."""
+        """Run [(sql, params), ...] as one unit.
+
+        The public REST API of this account exposes no ``/batch`` route (it answers
+        "Route not found"), so we fall back to the documented multi-statement
+        `/query` form: one request, all statements executed by SQLite in a single
+        implicit transaction. Parameters are inlined with proper SQL escaping
+        because that endpoint only takes one parameter list.
+        """
         self._ensure_database()
-        body = self._request("POST",
-                             f"/accounts/{self.account_id}/d1/database/{self.database_id}/batch",
-                             {"batch": [{"sql": s, "params": list(p or ())} for s, p in statements]})
-        result = body.get("result") or []
-        return [_unwrap_one(item) for item in result]
+        stmts = [(s, list(p or ())) for s, p in statements]
+        if not stmts:
+            return []
+        if self._batch_route is not False:
+            try:
+                body = self._request(
+                    "POST", f"/accounts/{self.account_id}/d1/database/{self.database_id}/batch",
+                    {"batch": [{"sql": s, "params": p} for s, p in stmts]})
+                self._batch_route = True
+                return [_unwrap_one(item) for item in body.get("result") or []]
+            except D1OperationalError as exc:
+                if "route not found" not in str(exc).lower():
+                    raise
+                self._batch_route = False           # remembered for the process
+        sql = ";\n".join(_inline_sql(s, p) for s, p in stmts)
+        body = self._request(
+            "POST", f"/accounts/{self.account_id}/d1/database/{self.database_id}/query",
+            {"sql": sql, "params": []})
+        return [_unwrap_one(item) for item in body.get("result") or []]
+
 
     def list_databases(self):
         return self._request("GET", f"/accounts/{self.account_id}/d1/database?per_page=100").get("result") or []
@@ -298,7 +335,10 @@ class Connection:
         return Cursor([r[0][0] if r[0] else None for r in results])
 
     def executescript(self, script):
-        statements = _split_script(script)
+        # D1 rejects PRAGMA inside a batch (and has no per-connection settings),
+        # so they are dropped here — `execute()` treats them as no-ops too.
+        statements = [x for x in _split_script(script)
+                      if not x.lstrip().upper().startswith("PRAGMA")]
         for start in range(0, len(statements), 50):
             chunk = statements[start:start + 50]
             self.client.batch([(s, ()) for s in chunk])
@@ -382,13 +422,59 @@ def _sql_literal(value) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
+def _inline_sql(sql, params) -> str:
+    """Inline a statement's `?` parameters (the multi-statement form takes none).
+
+    Quoted strings, quoted identifiers and comments are copied verbatim, so a
+    literal '?' inside text is never mistaken for a placeholder.
+    """
+    if not params:
+        return sql
+    values = list(params)
+    out, i, n = [], 0, len(sql)
+    while i < n:
+        ch = sql[i]
+        if ch in ("'", '"', "`"):
+            j = i + 1
+            while j < n:
+                if sql[j] == ch:
+                    if j + 1 < n and sql[j + 1] == ch:      # doubled quote
+                        j += 2
+                        continue
+                    break
+                j += 1
+            out.append(sql[i:j + 1])
+            i = j + 1
+            continue
+        if sql.startswith("--", i):
+            j = sql.find("\n", i)
+            j = n if j == -1 else j
+            out.append(sql[i:j])
+            i = j
+            continue
+        if ch == "?":
+            if not values:
+                raise D1OperationalError("too few parameters for this statement")
+            out.append(_sql_literal(values.pop(0)))
+            i += 1
+            continue
+        out.append(ch)
+        i += 1
+    if values:
+        raise D1OperationalError("too many parameters for this statement")
+    return "".join(out)
+
+
 def dump_sql(conn, batch_size=500) -> str:
     """Whole database as portable SQL (schema + data) — the D1 backup format."""
     lines = ["-- ELTARANISI ERP — Cloudflare D1 logical backup",
              "-- restore:  python3 scripts/restore_backup.py <this-file>.sql", ""]
+    # Cloudflare keeps its own internal tables (e.g. `_cf_KV`) and refuses to read
+    # them ("access to _cf_KV.key is prohibited"): never include system objects.
     objects = conn.execute(
         "SELECT type, name, sql FROM sqlite_master "
-        "WHERE type IN ('table','index','view','trigger') AND name NOT LIKE 'sqlite_%' "
+        "WHERE type IN ('table','index','view','trigger') "
+        r"AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '\_%' ESCAPE '\' "
         "ORDER BY CASE type WHEN 'table' THEN 0 WHEN 'index' THEN 1 ELSE 2 END, name"
     ).fetchall()
     tables = [r["name"] for r in objects if r["type"] == "table"]
