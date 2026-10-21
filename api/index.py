@@ -86,6 +86,8 @@ except Exception:                                    # pragma: no cover - deploy
 HOP_BY_HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
               "te", "trailer", "transfer-encoding", "upgrade"}
 
+ROUTE_FORWARDING_BROKEN = "/api/__route_not_forwarded__"
+
 
 class _Socket:
     """Minimal stand-in for a socket: `makefile` is all http.server needs."""
@@ -132,8 +134,9 @@ def _original_path(environ: dict) -> tuple[str, str]:
         return path, rest
     path = environ.get("PATH_INFO", "/") or "/"
     if path.startswith("/api/index"):
-        # rewrite that dropped the parameter map — degrade to a clear 404 path
-        path = "/api/__missing_rewrite__"
+        # the rewrite dropped the `__p` parameter — signal it explicitly so the
+        # bridge can answer with an actionable diagnostic instead of a bare 404.
+        return ROUTE_FORWARDING_BROKEN, query
     return path, query
 
 
@@ -200,6 +203,17 @@ def app(environ, start_response):
     body = environ["wsgi.input"].read(length) if length else b""
 
     path, query = _original_path(environ)
+    if path == ROUTE_FORWARDING_BROKEN:
+        payload = (
+            b'{"error": "ROUTE_NOT_FORWARDED: vercel.json rewrite did not pass __p. '
+            b'Expected: /api/:path* -> /api/index?__p=:path*"}'
+        )
+        start_response("502 Bad Gateway",
+                       [("Content-Type", "application/json; charset=utf-8"),
+                        ("Content-Length", str(len(payload))),
+                        ("X-Route-Debug", "no-__p-parameter")])
+        return [payload]
+
     rfile = io.BytesIO(_build_request(environ, body, path, query))
     wfile = io.BytesIO()
 

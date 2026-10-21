@@ -32,7 +32,7 @@ import index as wsgi_app  # noqa: E402  (must come after the env vars)
 PASS, FAIL = 0, 0
 
 
-def call(method, path, body=b"", headers=None, rewrite=True):
+def call(method, path, body=b"", headers=None, rewrite=True, raw_path=None):
     """Invoke the WSGI app the way Vercel does (rewrite → /api/index?__p=...)."""
     headers = headers or {}
     if rewrite and path.startswith("/api/"):
@@ -43,7 +43,7 @@ def call(method, path, body=b"", headers=None, rewrite=True):
         environ_path, _, query = path.partition("?")
     environ = {
         "REQUEST_METHOD": method,
-        "PATH_INFO": "/api/index",
+        "PATH_INFO": raw_path or ("/api/index" if (rewrite and path.startswith("/api/")) else environ_path),
         "QUERY_STRING": query,
         "CONTENT_TYPE": "application/json" if body else "",
         "CONTENT_LENGTH": str(len(body)) if body else "",
@@ -148,9 +148,16 @@ def main():
     status, body, _ = call("GET", "/api/does-not-exist", headers=auth)
     check("unknown API route → 404 JSON", status == 404 and b'"error"' in body)
 
-    # 10. static assets are NOT served by the function (Vercel serves them from /static)
-    status, body, _ = call("GET", "/index.html")
-    check("non-API paths are not routed through the function (documented)", status in (200, 404))
+    # 10. static assets never reach the function (Vercel's CDN serves static/)
+    status, body, _ = call("GET", "/index.html", rewrite=False)
+    check("static assets bypass the rewrite (served by the CDN, function is a fallback)",
+          status in (200, 404), f"(got {status})")
+
+    # 11. misconfigured rewrite produces an actionable diagnostic, not a blank 404
+    status, body, headers = call("GET", "/api/health", rewrite=False, raw_path="/api/index")
+    check("missing __p → 502 with ROUTE_NOT_FORWARDED diagnostic",
+          status == 502 and b"ROUTE_NOT_FORWARDED" in body
+          and headers.get("X-Route-Debug") == "no-__p-parameter")
 
     if os.environ.get("ERP_SEED_DEMO_DATA") == "true":
         closed_mode_check()
