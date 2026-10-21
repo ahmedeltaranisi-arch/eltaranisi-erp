@@ -52,7 +52,8 @@ UNITS = {
 METHODS = {"cash": "نقدية", "bank": "تحويل بنكي", "cheque": "شيك", "transfer": "تحويل"}
 
 ACC_COST_OF_SERVICE = "5100"   # تكلفة المبيعات / cost of service
-ACC_PAYABLES = "2110"          # الموردون
+ACC_PAYABLES = "2120"          # مستحقات المقاولين — debt sub-ledger control account
+ACC_TRADE_PAYABLES = "2110"    # الموردون (trade goods, fed by purchase invoices)
 ACC_CASH = "1111"              # صندوق دمياط الرئيسي
 
 
@@ -76,6 +77,29 @@ def _amount(qty_milli: int, rate_cents: int) -> int:
 
 def _gl(conn, company_id: int, code: str) -> int:
     return accounting.account_id_by_code(conn, company_id, code)
+
+
+def payable_account(conn, company_id: int) -> int:
+    """Control account for contractor dues (2120).
+
+    Contractor/stevedoring dues are a separate sub-ledger from trade payables:
+    keeping them on 2110 would make the vendor sub-ledger stop reconciling with
+    its own control account. The account is created on demand so databases
+    seeded before this round keep working.
+    """
+    row = conn.execute("SELECT id FROM accounts WHERE company_id=? AND code=?",
+                       (company_id, ACC_PAYABLES)).fetchone()
+    if row:
+        return row["id"]
+    parent = conn.execute("SELECT id FROM accounts WHERE company_id=? AND code='21'",
+                          (company_id,)).fetchone()
+    cur = conn.execute(
+        """INSERT INTO accounts (company_id, code, name_ar, name_en, type, parent_id, level,
+              is_postable, is_active, currency, closing_type)
+           VALUES (?,?,?,?,'liability',?,4,1,1,'EGP','balance')""",
+        (company_id, ACC_PAYABLES, "مستحقات المقاولين والموردين المتنوعين",
+         "Contractor & Sundry Payables", parent["id"] if parent else None))
+    return cur.lastrowid
 
 
 def _detach_entry(conn, table: str, doc_id: int, entry_id) -> None:
@@ -305,8 +329,7 @@ def _post_item(conn, user, company_id: int, item_id: int) -> int:
                         (item_id, company_id)).fetchone()
     acc = _account(conn, company_id, item["account_id"])
     debit = acc["expense_account_id"] or _gl(conn, company_id, ACC_COST_OF_SERVICE)
-    credit = accounting.vendor_ap_account(conn, company_id, acc["vendor_id"]) if acc["vendor_id"] \
-        else _gl(conn, company_id, ACC_PAYABLES)
+    credit = payable_account(conn, company_id)
     label = f"{acc['name_ar']} — {item['description']}"
     je = accounting.auto_post_entry(
         conn, user, company_id=company_id, entry_date=item["doc_date"],
@@ -328,8 +351,7 @@ def _post_payment(conn, user, company_id: int, payment_id: int) -> int:
     pay = conn.execute("SELECT * FROM debt_payments WHERE id=? AND company_id=?",
                        (payment_id, company_id)).fetchone()
     acc = _account(conn, company_id, pay["account_id"])
-    debit = accounting.vendor_ap_account(conn, company_id, acc["vendor_id"]) if acc["vendor_id"] \
-        else _gl(conn, company_id, ACC_PAYABLES)
+    debit = payable_account(conn, company_id)
     credit = pay["gl_account_id"] or _gl(conn, company_id, ACC_CASH)
     label = f"سداد {acc['name_ar']}" + (f" — اذن صرف {pay['voucher_no']}" if pay["voucher_no"] else "")
     je = accounting.auto_post_entry(

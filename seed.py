@@ -52,6 +52,7 @@ ACCOUNTS = [
     ("2", "الالتزامات", "Liabilities", "liability", None, 0),
     ("21", "الالتزامات المتداولة", "Current Liabilities", "liability", "2", 0),
     ("2110", "الموردون", "Trade Payables — Vendors", "liability", "21", 1),
+    ("2120", "مستحقات المقاولين والموردين المتنوعين", "Contractor & Sundry Payables", "liability", "21", 1),
     ("2130", "رواتب مستحقة", "Accrued Payroll", "liability", "21", 1),
     ("2135", "تأمينات وضرائب مستحقة", "Payroll Deductions Payable", "liability", "21", 1),
     ("2140", "مصروفات مستحقة", "Accrued Expenses", "liability", "21", 1),

@@ -1141,8 +1141,10 @@ class ERPTestCase(unittest.TestCase):
         codes = {a["code"] for a in data["accounts"]}
         self.assertIn("DB-0003", codes)          # إبراهيم الحبشي — بالطن
         self.assertIn("DB-0006", codes)          # مكتب القدس — حاويات
-        for a in data["accounts"]:
-            self.assertEqual(a["net_cents"], 0, "seeded balances must start at zero")
+        seeded = [a for a in data["accounts"] if a["code"].startswith("DB-")]
+        self.assertEqual(len(seeded), 15, "the 15 accounts of the paper statement must exist")
+        for a in seeded:
+            self.assertEqual(a["opening_balance_cents"], 0, "seeded balances must start at zero")
         acc = self._debt_account()
         got = next(a for a in self.owner.get("/api/debt/accounts")[1]["accounts"] if a["id"] == acc)
         self.assertEqual(got["billing_unit"], "ton")
@@ -1151,7 +1153,7 @@ class ERPTestCase(unittest.TestCase):
     def test_B121_debt_item_computes_quantity_by_unit_rate_and_posts(self):
         acc = self._debt_account()
         cogs_before = self.account_balance("5100")
-        ap_before = self.account_balance("2110")
+        ap_before = self.account_balance("2120")
         status, res = self.owner.post("/api/debt/items", {
             "account_id": acc, "doc_date": self.today(), "description": "تفريغ ذرة",
             "operation": "تفريغ", "qty": 31882.74, "unit": "ton", "unit_rate": 3,
@@ -1163,11 +1165,12 @@ class ERPTestCase(unittest.TestCase):
         self.assertEqual(item["status"], "posted")
         self.assertTrue(item["item_no"].startswith("DEB-"))
         self.assertEqual(self.account_balance("5100") - cogs_before, 9_564_822)
-        self.assertEqual(self.account_balance("2110") - ap_before, 9_564_822)
+        self.assertEqual(self.account_balance("2120") - ap_before, 9_564_822,
+                         "contractor dues belong to their own control account, not trade payables")
         je = self.owner.get(f"/api/journal-entries/{item['journal_entry_id']}")[1]
         self.assertEqual(len(je["lines"]), 2)
         self.assertEqual(je["lines"][0]["account_code"], "5100")
-        self.assertEqual(je["lines"][1]["account_code"], "2110")
+        self.assertEqual(je["lines"][1]["account_code"], "2120")
 
     def test_B122_debt_payment_voucher_and_statement_totals(self):
         acc = self._debt_account()
@@ -1183,7 +1186,7 @@ class ERPTestCase(unittest.TestCase):
         self.assertEqual(st["totals"]["net_cents"], 300_000)
         self.assertEqual(st["payments"][0]["voucher_no"], "4412")
         je = self.owner.get(f"/api/journal-entries/{st['payments'][0]['journal_entry_id']}")[1]
-        self.assertEqual(je["lines"][0]["account_code"], "2110")
+        self.assertEqual(je["lines"][0]["account_code"], "2120")
         self.assertEqual(je["lines"][1]["account_code"], "1111")
         summary = self.owner.get("/api/debt/summary")[1]
         row = next(a for a in summary["accounts"] if a["id"] == acc)
@@ -1218,12 +1221,12 @@ class ERPTestCase(unittest.TestCase):
         self.assertEqual(status, 428, "deletion must be explicitly confirmed")
         status, blocked = self.owner.request("DELETE", f"/api/debt/accounts/{acc}", {"confirm": True}, auth=True)
         self.assertEqual(status, 409, blocked)
-        ap_before = self.account_balance("2110")
+        ap_before = self.account_balance("2120")
         status, out = self.owner.request("DELETE", f"/api/debt/payments/{pay_id}", {"confirm": True}, auth=True)
         self.assertEqual(status, 200, out)
         status, out = self.owner.request("DELETE", f"/api/debt/items/{item_id}", {"confirm": True}, auth=True)
         self.assertEqual(status, 200, out)
-        self.assertEqual(self.account_balance("2110"), ap_before + 300_00 - 700_00)
+        self.assertEqual(self.account_balance("2120"), ap_before + 300_00 - 700_00)
         status, out = self.owner.request("DELETE", f"/api/debt/accounts/{acc}", {"confirm": True}, auth=True)
         self.assertEqual(status, 200, out)
         self.assertNotIn(acc, [a["id"] for a in self.owner.get("/api/debt/accounts")[1]["accounts"]])
