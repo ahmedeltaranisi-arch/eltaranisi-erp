@@ -76,6 +76,22 @@ def check(name, condition, detail=""):
         print(f"  ✗ {name} {detail}")
 
 
+def closed_mode_check():
+    """Second pass with ERP_SEED_DEMO_DATA=false — the login listing must disappear."""
+    global PASS, FAIL
+    print("\nClosed-mode check (ERP_SEED_DEMO_DATA=false)")
+    os.environ["ERP_SEED_DEMO_DATA"] = "false"   # flags are read per request
+    status, body, _ = call("GET", "/api/health")
+    check("health reports dev_mode = false", status == 200 and b'"dev_mode": false' in body)
+    status, body, _ = call("GET", "/api/dev/accounts")
+    check("GET /api/dev/accounts → 404 (no public credential listing)", status == 404)
+    import json
+    creds = json.dumps({"username": "ahmed.taranisi", "password": "Eltaranisi@2026"}).encode()
+    status, body, _ = call("POST", "/api/auth/login", creds)
+    check("seeded owner can still sign in manually", status == 200 and bool(json.loads(body).get("token")))
+    os.environ["ERP_SEED_DEMO_DATA"] = "true"    # restore for any later check
+
+
 def main():
     print("Vercel WSGI bridge — offline verification")
     print(f"  database: {os.environ['ERP_DB']}")
@@ -135,6 +151,9 @@ def main():
     # 10. static assets are NOT served by the function (Vercel serves them from /static)
     status, body, _ = call("GET", "/index.html")
     check("non-API paths are not routed through the function (documented)", status in (200, 404))
+
+    if os.environ.get("ERP_SEED_DEMO_DATA") == "true":
+        closed_mode_check()
 
     print(f"\n{PASS} passed, {FAIL} failed")
     return 1 if FAIL else 0

@@ -41,9 +41,11 @@ if ON_VERCEL:
     os.environ.setdefault("ERP_CREDENTIALS_FILE", "/tmp/eltaranisi-erp/dev-credentials.txt")
     os.makedirs("/tmp/eltaranisi-erp", exist_ok=True)
 
-# Tell the app it is running in demo mode unless the operator says otherwise:
-# the seeded accounts (fixed passwords) are the point of a showcase deployment.
-os.environ.setdefault("ERP_SEED_DEMO_DATA", "true")
+# Demo login listing is CLOSED by default on serverless: the deployment URL is
+# public, so it must not advertise credentials. Flip it on for a showcase with
+#   ERP_SEED_DEMO_DATA=true
+# (the seeded users still exist; they just are not listed publicly).
+os.environ.setdefault("ERP_SEED_DEMO_DATA", "false")
 
 import db  # noqa: E402  (import after ERP_DB is set)
 
