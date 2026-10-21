@@ -185,9 +185,11 @@ code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-si
 .btn-sm { padding: 6px 11px; font-size: 12.5px; border-radius: 9px; }
 .btn-block { width: 100%; }
 .icon-btn {
-  width: 36px; height: 36px; display: grid; place-items: center; border-radius: 10px;
+  /* inline-grid, not grid: a grid-level button would stack under the next one */
+  width: 36px; height: 36px; display: inline-grid; place-items: center; border-radius: 10px;
   border: 1px solid var(--border); background: var(--surface); color: var(--text-2);
   cursor: pointer; font-size: 14px; position: relative; transition: .14s;
+  vertical-align: middle;
 }
 .icon-btn:hover { background: var(--surface-3); color: var(--text); }
 .avatar {
@@ -952,3 +954,22 @@ td .icon-btn .ico-svg { width: 16px; height: 16px; }
 }
 td .icon-btn.edit + .icon-btn.danger { margin-inline-start: 2px; }
 @media (prefers-reduced-motion: reduce) { .icon-btn:hover { transform: none; } }
+
+/* ---------- action columns: buttons always sit side by side ---------- */
+table.data td.act, table.data th.act { white-space: nowrap; }
+table.data td.act { text-align: end; }
+table.data td.act > * { vertical-align: middle; }
+table.data td.act > * + * { margin-inline-start: 6px; }
+.row-actions {
+  display: inline-flex; align-items: center; gap: 6px; flex-wrap: nowrap;
+  white-space: nowrap; vertical-align: middle;
+}
+.page-head .actions .icon-btn,
+.toolbar .icon-btn,
+.card-head .icon-btn { margin-inline-start: 4px; }
+@media (max-width: 640px) {
+  /* cards on phones: the label stays start-aligned, the buttons line up at the end */
+  table.data tbody td.act { justify-content: flex-end; gap: 8px; align-items: center; }
+  table.data tbody td.act::before { flex: 0 0 auto; margin-inline-end: auto; }
+  table.data tbody td.act > * + * { margin-inline-start: 0; }
+}

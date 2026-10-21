@@ -394,7 +394,7 @@
           { key: "total_debit_cents", label: t("common.debit"), cls: "num", render: r => fmtMoney(r.total_debit_cents) },
           { key: "status", label: t("common.status"), render: r => statusBadge(r.status) },
           { key: "created_by_name", label: t("journal.createdBy"), render: r => ESC(r.created_by_name || "—") },
-          { key: "act", label: t("common.actions"), render: r => `
+          { key: "act", cls: "act", label: t("common.actions"), render: r => `
               ${!r.source_type && r.status === "draft" && can("journal.edit") ? editButton(`/api/journal-entries/${r.id}`,
                   `القيد ${r.entry_no}`, `entry ${r.entry_no}`, [
                     { name: "entry_date", label: t("common.date"), type: "date", value: r.entry_date },
@@ -629,7 +629,7 @@
           { key: "paid_cents", label: t("common.paid"), cls: "num", render: r => fmtMoney(r.paid_cents) },
           { key: "remaining", label: t("common.remaining"), cls: "num", render: r => fmtMoney(r.total_cents - r.paid_cents) },
           { key: "status", label: t("common.status"), render: r => statusBadge(r.status) },
-          { key: "act", label: t("common.actions"), render: r => `
+          { key: "act", cls: "act", label: t("common.actions"), render: r => `
               ${r.status === "draft" && can("sales.edit") ? editButton(`/api/sales-invoices/${r.id}`,
                   `فاتورة المبيعات ${r.invoice_no}`, `sales invoice ${r.invoice_no}`, [
                     { name: "customer_id", label: t("nav.customers"), type: "select", value: r.customer_id,
@@ -829,7 +829,7 @@
           { key: "paid_cents", label: t("common.paid"), cls: "num", render: r => fmtMoney(r.paid_cents) },
           { key: "status", label: t("common.status"), render: r => statusBadge(r.status) },
           { key: "three_way_match", label: t("purchases.threeWay"), render: r => r.three_way_match ? `<span class="badge green">${icon("check", "ico-sm")}</span>` : `<span class="badge gray">—</span>` },
-          { key: "act", label: t("common.actions"), render: r => `
+          { key: "act", cls: "act", label: t("common.actions"), render: r => `
               ${r.status === "draft" && can("purchases.edit") ? editButton(`/api/purchase-invoices/${r.id}`,
                   `فاتورة المشتريات ${r.invoice_no}`, `purchase invoice ${r.invoice_no}`, [
                     { name: "invoice_date", label: t("common.date"), type: "date", value: r.invoice_date },
@@ -1018,7 +1018,7 @@
           { key: "amount_cents", label: t("common.amount"), cls: "num", render: r => fmtMoney(r.amount_cents) },
           { key: "unallocated", label: t("payments.unallocated"), cls: "num", render: r => r.amount_cents - r.allocated_cents ? `<span class="neg">${fmtMoney(r.amount_cents - r.allocated_cents)}</span>` : "—" },
           { key: "status", label: t("common.status"), render: r => statusBadge(r.status) },
-          { key: "act", label: t("common.actions"), render: r => `
+          { key: "act", cls: "act", label: t("common.actions"), render: r => `
               ${editButton(`/api/payments/${r.id}`,
                   `${r.payment_type === "receipt" ? "سند التحصيل" : "سند الدفع"} ${r.payment_no}`,
                   `${r.payment_type === "receipt" ? "receipt" : "payment"} ${r.payment_no}`, [
@@ -1169,7 +1169,7 @@
           { key: "overdue_cents", label: t("payables.overdue"), cls: "num", render: r => r.overdue_cents ? `<span class="neg">${fmtMoney(r.overdue_cents)}</span>` : "—" },
           { key: "next_due_date", label: t("payables.nextDue"), render: r => r.next_due_date ? fmtDate(r.next_due_date) : "—" },
           { key: "terms", label: t("customers.terms"), render: r => r.payment_terms_days },
-          { key: "act", label: t("common.actions"), render: r => `<button class="btn btn-sm btn-ghost" data-stmt="${r.id}">${ESC(t("payables.statement"))}</button>
+          { key: "act", cls: "act", label: t("common.actions"), render: r => `<button class="btn btn-sm btn-ghost" data-stmt="${r.id}">${ESC(t("payables.statement"))}</button>
               ${can("vendors.edit") ? editButton(`/api/vendors/${r.id}`,
                   `المورد «${r.name_ar}» (${r.code})`, `vendor “${r.name_en}” (${r.code})`, [
                     { name: "code", label: t("common.code"), required: true, value: r.code },
@@ -1288,7 +1288,7 @@
           { key: "credit_limit_cents", label: t("sales.creditLimit"), cls: "num", render: r => fmtMoney(r.credit_limit_cents) },
           { key: "outstanding_cents", label: t("payables.outstanding"), cls: "num", render: r => fmtMoney(r.outstanding_cents) },
           { key: "is_active", label: t("common.status"), render: r => statusBadge(r.is_active ? "active" : "inactive") },
-          { key: "act", label: t("common.actions"), render: r => `
+          { key: "act", cls: "act", label: t("common.actions"), render: r => `
               ${can("customers.edit") ? editButton(`/api/customers/${r.id}`,
                   `العميل «${r.name_ar}» (${r.code})`, `customer “${r.name_en}” (${r.code})`, [
                     { name: "code", label: t("common.code"), required: true, value: r.code },
@@ -1335,7 +1335,7 @@
           { key: "payment_terms_days", label: t("customers.terms") },
           { key: "outstanding_cents", label: t("payables.outstanding"), cls: "num", render: r => fmtMoney(r.outstanding_cents) },
           { key: "is_active", label: t("common.status"), render: r => statusBadge(r.is_active ? "active" : "inactive") },
-          { key: "act", label: t("common.actions"), render: r => `<button class="btn btn-sm btn-ghost" data-stmt="${r.id}">${ESC(t("payables.statement"))}</button>
+          { key: "act", cls: "act", label: t("common.actions"), render: r => `<button class="btn btn-sm btn-ghost" data-stmt="${r.id}">${ESC(t("payables.statement"))}</button>
               ${can("vendors.edit") ? editButton(`/api/vendors/${r.id}`,
                   `المورد «${r.name_ar}» (${r.code})`, `vendor “${r.name_en || r.name_ar}” (${r.code})`, [
                     { name: "code", label: t("common.code"), required: true, value: r.code },
@@ -1393,7 +1393,7 @@
           { key: "reorder_level_milli", label: t("inventory.reorder"), cls: "num", render: r => fmtNum(r.reorder_level_milli / 1000, 0) },
           { key: "value_cents", label: t("inventory.value"), cls: "num", render: r => fmtMoney(r.value_cents) },
           { key: "avg", label: t("inventory.unitCost"), cls: "num", render: r => r.qty_milli ? fmtMoney(Math.round(r.value_cents * 1000 / r.qty_milli)) : "—" },
-          { key: "act", label: t("common.actions"), render: r => can("inventory.manage")
+          { key: "act", cls: "act", label: t("common.actions"), render: r => can("inventory.manage")
               ? editButton(`/api/products/${r.product_id}`, `الصنف «${r.name_ar}» (${r.sku})`, `product “${r.name_en || r.name_ar}” (${r.sku})`, [
                   { name: "sku", label: t("common.code"), required: true, value: r.sku },
                   { name: "name_ar", label: "الاسم بالعربية", required: true, value: r.name_ar },
@@ -1465,7 +1465,7 @@
           { key: "gl_code", label: t("common.account"), render: r => `<span class="mono">${ESC(r.gl_code)}</span>` },
           { key: "currency", label: L("العملة", "Currency") },
           { key: "balance_cents", label: t("common.balance"), cls: "num", render: r => fmtMoney(r.balance_cents) },
-          { key: "act", label: t("common.actions"), render: r => can("banks.manage") ? `
+          { key: "act", cls: "act", label: t("common.actions"), render: r => can("banks.manage") ? `
               ${editButton(`/api/bank-accounts/${r.id}`,
                   `${r.account_type === "cash" ? "الصندوق" : "الحساب البنكي"} «${r.name_ar}»`,
                   `${r.account_type === "cash" ? "cash box" : "bank account"} “${r.name_en || r.name_ar}”`, [
@@ -1493,7 +1493,7 @@
           { key: "credit_cents", label: t("common.credit"), cls: "num", render: r => r.credit_cents ? fmtMoney(r.credit_cents) : "" },
           { key: "matched_payment_no", label: t("payments.receipt"), render: r => ESC(r.matched_payment_no || "—") },
           { key: "is_reconciled", label: t("common.status"), render: r => r.is_reconciled ? `<span class="badge green">${ESC(t("banks.reconciled"))}</span>` : `<span class="badge amber">${ESC(t("banks.unreconciled"))}</span>` },
-          { key: "act", label: t("common.actions"), render: r => can("banks.manage") ? `
+          { key: "act", cls: "act", label: t("common.actions"), render: r => can("banks.manage") ? `
               ${!r.is_reconciled ? `<button class="btn btn-sm btn-ghost" data-rec="${r.id}">${ESC(t("banks.reconcile"))}</button>` : ""}
               ${!r.is_reconciled ? editButton(`/api/bank-transactions/${r.id}`,
                   `الحركة البنكية «${r.description}»`, `bank transaction “${r.description}”`, [
@@ -1601,7 +1601,7 @@
           { key: "useful_life_months", label: t("assets.life"), cls: "num" },
           { key: "bv", label: t("assets.bookValue"), cls: "num", render: r => fmtMoney(r.cost_cents - r.accumulated_cents) },
           { key: "status", label: t("common.status"), render: r => statusBadge(r.status === "active" ? "active" : "inactive") },
-          { key: "act", label: t("common.actions"), render: r => can("assets.manage") ? `
+          { key: "act", cls: "act", label: t("common.actions"), render: r => can("assets.manage") ? `
               ${editButton(`/api/assets/${r.id}`, `الأصل «${r.name_ar}» (${r.code})`, `asset “${r.name_en}” (${r.code})`, [
                 { name: "code", label: t("common.code"), required: true, value: r.code },
                 { name: "name_ar", label: "الاسم بالعربية", required: true, value: r.name_ar },
@@ -1685,7 +1685,7 @@
           { key: "allowances_cents", label: t("payroll.allowances"), cls: "num", render: r => fmtMoney(r.allowances_cents) },
           { key: "ded", label: t("payroll.deductions"), cls: "num", render: r => fmtMoney(r.deductions_cents + r.insurance_cents + r.tax_cents) },
           { key: "net", label: t("payroll.net"), cls: "num", render: r => fmtMoney(r.basic_salary_cents + r.allowances_cents - r.deductions_cents - r.insurance_cents - r.tax_cents) },
-          { key: "act", label: t("common.actions"), render: r => can("payroll.manage") ? `
+          { key: "act", cls: "act", label: t("common.actions"), render: r => can("payroll.manage") ? `
               ${editButton(`/api/employees/${r.id}`, `الموظف «${r.name_ar}» (${r.code})`, `employee “${r.name_en}” (${r.code})`, [
                 { name: "code", label: t("common.code"), required: true, value: r.code },
                 { name: "name_ar", label: "الاسم بالعربية", required: true, value: r.name_ar },
@@ -1768,7 +1768,7 @@
               return `<div class="progress ${p > 100 ? "danger" : p > 85 ? "warn" : ""}"><span style="width:${Math.min(100, p)}%"></span></div>
                       <small class="muted">${p.toFixed(0)}%</small>`;
             } },
-          { key: "act", label: t("common.actions"), render: r => {
+          { key: "act", cls: "act", label: t("common.actions"), render: r => {
               const lines = (data.budgets || []).filter(b => b.account_id === r.account_id || b.code === r.code);
               if (!can("budgets.manage") || !lines.length) return "—";
               return lines.map(b => `
@@ -1960,7 +1960,7 @@
           { key: "role_code", label: t("users.role"), render: r => `<span class="badge violet">${ESC(APP.lang === "ar" ? r.role_ar : r.role_en)}</span>` },
           { key: "last_login_at", label: t("users.lastLogin"), render: r => r.last_login_at ? `<span dir="ltr">${ESC(r.last_login_at)}</span>` : "—" },
           { key: "is_active", label: t("common.status"), render: r => statusBadge(r.is_active ? "active" : "inactive") },
-          { key: "act", label: t("common.actions"), render: r => `<button class="btn btn-sm btn-ghost" data-perm="${r.role_code}">${ESC(t("users.permissions"))}</button>` },
+          { key: "act", cls: "act", label: t("common.actions"), render: r => `<button class="btn btn-sm btn-ghost" data-perm="${r.role_code}">${ESC(t("users.permissions"))}</button>` },
         ], data.users))}
         <div class="section-title"><span>${ESC(t("users.role"))}</span><span class="line"></span></div>
         ${card("", renderTable([
@@ -2024,7 +2024,7 @@
               (current && r.id === current.id ? ` <span class="pill pill-accent">${ESC(L("الحالية", "Current"))}</span>` : "") },
           { key: "closed_by_name", label: L("أقفلها", "Closed by"), render: r => ESC(r.closed_by_name || "—") },
           { key: "closed_at", label: L("تاريخ الإقفال", "Closed at"), render: r => ESC(r.closed_at || "—") },
-          { key: "act", label: "", render: r => canClose
+          { key: "act", cls: "act", label: "", render: r => canClose
               ? (r.status === "open"
                 ? `<button class="btn btn-sm btn-ghost" data-close-p="${r.id}">${ESC(t("periods.close"))}</button>`
                 : `<button class="btn btn-sm btn-ghost" data-open-p="${r.id}">${ESC(t("periods.reopen"))}</button>`)
