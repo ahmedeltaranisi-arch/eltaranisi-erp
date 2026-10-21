@@ -1048,6 +1048,21 @@ function closeSidebar() {
 async function loadDemoAccounts() {
   const box = $("#demo-box");
   if (!box) return;
+  // Hosted/production deployments are not a "demo environment": drop the labels
+  // that claim otherwise instead of showing them to real users.
+  try {
+    const h = await fetch("/api/health").then(r => r.json()).catch(() => ({}));
+    if (h && h.dev_mode === false) {
+      document.body.classList.add("is-production");
+      const foot = document.querySelector(".login-foot");
+      if (foot) foot.remove();
+      const hint = document.querySelector(".login-hint [data-i18n], .login-hint span");
+      if (hint) {
+        hint.dataset.i18n = "login.hintProd";     // survives language switches
+        hint.textContent = t("login.hintProd");
+      }
+    }
+  } catch (e) { /* offline-safe */ }
   try {
     const res = await fetch("/api/dev/accounts");
     if (!res.ok) return;                       // production / demo disabled

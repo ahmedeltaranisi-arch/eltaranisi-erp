@@ -101,7 +101,8 @@ async def audit(widths, langs, themes, shots, user, password):
                     # the card must use most of a phone screen, not be squeezed into a sliver
                     # a healthy card fills >=75% of the phone width (the bug this
                     # guard was written for left it at ~36% of a 360px screen)
-                    if card and (card["w"] < card["vw"] * 0.75 or card["w"] < 240):
+                    if card and card["vw"] <= 640 and (
+                            card["w"] < card["vw"] * 0.75 or card["w"] < 240):
                         login_bad.append(("login-card-too-narrow", card))
                     if shots:
                         os.makedirs(shots, exist_ok=True)
