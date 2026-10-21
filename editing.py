@@ -367,36 +367,126 @@ def update_journal_entry(conn, user, company_id: int, entry_id: int, body: dict,
     return {"ok": True, "updated": "journal_entry", "id": entry_id, "changed": list(fields)}
 
 
+PAYMENT_METHODS = ("cash", "bank", "cheque", "transfer")
+
+
 def update_payment(conn, user, company_id: int, payment_id: int, body: dict, ip=None) -> dict:
-    """Payments: only descriptive fields move once money is allocated."""
+    """Edit a receipt/payment, including one that is already posted.
+
+    Changing money-bearing fields on a posted voucher is done the only way that
+    keeps the ledger truthful: the voucher is *unposted* (its journal entry and
+    the invoice allocations it created are rolled back inside this transaction),
+    the new values are written, and the voucher is posted again — producing a
+    single fresh entry that matches the document. Everything is audited, so the
+    old and the new state both survive in سجل التدقيق.
+    """
+    import documents  # local import: documents does not depend on editing
+
     pay = _row(conn, "SELECT * FROM payments WHERE id=? AND company_id=?", (payment_id, company_id))
     if pay is None:
         raise ValidationError("NOT_FOUND: السند غير موجود / Payment not found", status=404)
     ensure_period_open(conn, company_id, pay["payment_date"])
 
-    before = _snap(pay)
-    fields, values = {}, []
-    if "reference" in body:
-        fields["reference"] = _txt(body["reference"]); values.append(fields["reference"])
-    if "notes" in body:
-        fields["notes"] = _txt(body["notes"]); values.append(fields["notes"])
-    if "payment_date" in body and body["payment_date"]:
-        if pay["status"] == "posted":
+    # a reconciled bank line must be unreconciled first
+    if pay["status"] == "posted":
+        linked = conn.execute(
+            """SELECT id FROM bank_transactions WHERE company_id=? AND matched_payment_id=?
+               AND is_reconciled=1""", (company_id, payment_id)).fetchone()
+        if linked:
             raise ValidationError(
-                "ALREADY_POSTED: تاريخ سند مرحّل لا يُعدّل — اعكسه ثم أنشئ سندًا جديدًا "
-                "/ Posted payment date is locked; reverse it instead", status=409)
+                "RECONCILED: السند مُطابَق مع كشف بنكي — ألغِ التسوية أولًا "
+                "/ Voucher is reconciled with a bank statement; unreconcile it first",
+                status=409)
+
+    before = _snap(pay)
+    changes, money_changed = {}, False
+
+    if "reference" in body:
+        changes["reference"] = _txt(body["reference"])
+    if "notes" in body:
+        changes["notes"] = _txt(body["notes"])
+    if "payment_date" in body and body["payment_date"]:
         ensure_period_open(conn, company_id, body["payment_date"])
-        fields["payment_date"] = _txt(body["payment_date"]); values.append(fields["payment_date"])
-    if not fields:
+        changes["payment_date"] = _txt(body["payment_date"])
+        money_changed |= changes["payment_date"] != pay["payment_date"]
+    if "method" in body and body["method"]:
+        method = str(body["method"]).strip().lower()
+        if method not in PAYMENT_METHODS:
+            raise ValidationError(
+                "INVALID_VALUE: طريقة الدفع يجب أن تكون cash أو bank أو cheque أو transfer "
+                "/ method must be cash, bank, cheque or transfer", details={"field": "method"})
+        changes["method"] = method
+        money_changed |= method != pay["method"]
+    if "gl_account_id" in body and body["gl_account_id"]:
+        gl_id = _int(body["gl_account_id"])
+        gl = conn.execute("SELECT id, company_id, is_postable FROM accounts WHERE id=?", (gl_id,)).fetchone()
+        if gl is None or gl["company_id"] != company_id:
+            raise ValidationError("INVALID_ACCOUNT: حساب الصندوق/البنك غير صالح / Invalid cash/bank account")
+        changes["gl_account_id"] = gl_id
+        money_changed |= gl_id != pay["gl_account_id"]
+    if "amount" in body and body["amount"] is not None and str(body["amount"]) != "":
+        amount = _money(body["amount"])
+        if amount <= 0:
+            raise ValidationError("INVALID_AMOUNT: المبلغ يجب أن يكون موجبًا / Amount must be positive")
+        if amount < pay["allocated_cents"]:
+            raise ValidationError(
+                "OVER_ALLOCATION: المبلغ الجديد أقل من المبالغ المخصصة للفواتير "
+                "/ New amount is smaller than the allocated amount",
+                details={"allocated": pay["allocated_cents"] / 100, "amount": amount / 100}, status=409)
+        changes["amount_cents"] = amount
+        money_changed |= amount != pay["amount_cents"]
+
+    if not changes:
         raise ValidationError("NOTHING_TO_UPDATE: لا توجد حقول للتعديل / Nothing to update")
 
-    sets = ", ".join(f"{c}=?" for c in fields)
+    was_posted = pay["status"] == "posted"
+    if was_posted and money_changed:
+        _unpost_payment(conn, user, company_id, pay, ip=ip)
+
+    values = list(changes.values())
+    sets = ", ".join(f"{c}=?" for c in changes)
     conn.execute(f"UPDATE payments SET {sets} WHERE id=?", tuple(values) + (payment_id,))
+
+    if was_posted and money_changed:
+        documents.post_payment(conn, user, company_id, payment_id)
+
     after = _row(conn, "SELECT * FROM payments WHERE id=?", (payment_id,))
     audit(conn, user, "payment.update", "payment", payment_id,
-          {"before": before, "after": _snap(after), "changed": list(fields)},
+          {"before": before, "after": _snap(after), "changed": list(changes),
+           "reposted": bool(was_posted and money_changed),
+           "journal_entry_id": (after["journal_entry_id"] if after else None)},
           company_id=company_id, ip=ip)
-    return {"ok": True, "updated": "payment", "id": payment_id, "changed": list(fields)}
+    return {"ok": True, "updated": "payment", "id": payment_id, "changed": list(changes),
+            "reposted": bool(was_posted and money_changed)}
+
+
+def _unpost_payment(conn, user, company_id: int, pay, ip=None) -> None:
+    """Undo a posted voucher's ledger effect so it can be re-posted with new values."""
+    allocs = conn.execute("SELECT * FROM payment_allocations WHERE payment_id=?", (pay["id"],)).fetchall()
+    for a in allocs:
+        table = "sales_invoices" if a["invoice_kind"] == "sales" else "purchase_invoices"
+        inv = conn.execute(f"SELECT total_cents, paid_cents, status FROM {table} WHERE id=?",
+                           (a["invoice_id"],)).fetchone()
+        if inv is None:
+            continue
+        paid = max(0, inv["paid_cents"] - a["amount_cents"])
+        status = "paid" if paid and paid >= inv["total_cents"] else ("partially_paid" if paid else "posted")
+        if inv["status"] == "cancelled":
+            status = "cancelled"
+        conn.execute(f"UPDATE {table} SET paid_cents=?, status=? WHERE id=?",
+                     (paid, status, a["invoice_id"]))
+
+    je_id = pay["journal_entry_id"]
+    # drop the FK reference first: payments.journal_entry_id points at the entry
+    conn.execute("UPDATE payments SET status='draft', journal_entry_id=NULL, posted_at=NULL WHERE id=?",
+                 (pay["id"],))
+    if je_id:
+        conn.execute("DELETE FROM journal_lines WHERE entry_id=?", (je_id,))
+        conn.execute("UPDATE journal_entries SET reversal_of_id=NULL WHERE reversal_of_id=?", (je_id,))
+        conn.execute("DELETE FROM journal_entries WHERE id=?", (je_id,))
+    audit(conn, user, "payment.unpost", "payment", pay["id"],
+          {"journal_entry_id": je_id, "reason": "edit", "payment_no": pay["payment_no"]},
+          company_id=company_id, ip=ip)
 
 
 def update_bank_transaction(conn, user, company_id: int, txn_id: int, body: dict, ip=None) -> dict:

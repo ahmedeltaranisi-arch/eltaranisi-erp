@@ -394,3 +394,41 @@ detail contract (balance == list balance, dated payments, open-invoice filter),
 payment lowering the outstanding balance, and permission enforcement. Headless
 render sweep: 21/21 pages, vendor panel HTML verified to contain the balance,
 payments tab, dated payment column and the payment button.
+
+---
+
+## Round «الدفعات: نقدًا، تعديل، حذف» (2026-10-21)
+
+### What changed
+1. **رصيد المستحق في لوحة المورد** كان يظهر كوسم HTML مهرَّب
+   (`<span class="num">…`). السبب: بناء الحقل عبر دالة عامة تُهرِّب كل قيمة. صار
+   الرصيد يُعرض في صندوق للقراءة فقط (`readonly-money`) بصيغة مبلغ حقيقية مع
+   علامة لونية (مدين = أصفر، صفر/دائن = أخضر) واتجاه LTR للأرقام.
+2. **طريقة الدفع «نقدًا»** أُضيفت إلى نموذج السند: نقدًا / تحويل بنكي / شيك، مع
+   اختيار تلقائي لصندوق النقدية عند «نقدًا» وللحساب البنكي عند التحويل/الشيك.
+   الخادم يوحّد القيم (`cash|bank|cheque|transfer`) ويقبل التسميات العربية.
+3. **تعديل وحذف أي سند دفعة** من صفحة المدفوعات ومن تبويب الدفعات داخل المورد.
+   تعديل السند **المرحّل** يتم بإلغاء ترحيله ثم إعادة ترحيله داخل معاملة واحدة:
+   يُحذف القيد القديم، تُردّ التخصيصات من الفواتير، تُكتب القيم الجديدة، ثم يُنشأ
+   قيد واحد جديد. سجل التدقيق يحتفظ بـ `payment.unpost` + `payment.post` +
+   `payment.update` مع `{before, after}`.
+4. **إلغاء التسوية البنكية** (`POST /api/bank-transactions/{id}/unreconcile` + زر في
+   صفحة البنوك) ليصبح بالإمكان تعديل/حذف سند مُطابَق مع كشف — كانت الرسالة تنصح
+   بإلغاء التسوية دون وجود وسيلة لذلك.
+5. الحرّاس: `409 OVER_ALLOCATION` (المبلغ أقل من المخصص)، `409 RECONCILED`
+   (سند مُطابَق)، `422` لطريقة دفع غير معروفة أو طلب فارغ، `422 PERIOD_CLOSED`.
+
+### Files
+`editing.py` (rewrote `update_payment`, added `_unpost_payment`, method validation),
+`deletion.py` (reconciled guard + unlink on delete), `server.py`
+(`_payment_method`, unreconcile route), `static/pages.js` (balance box, voucher
+method, shared `PAGES.payments.editForm`, per-row edit/delete, unreconcile button),
+`static/styles.css` (`.readonly-money`), tests, docs.
+
+### Tests
+`51 passed` (was 48). New: cash method + Jordanian/Arabic alias, posted-voucher
+edit re-post (fresh JE, old JE gone, balanced TB, audited), and the guard matrix
+(allocation, method, empty body, reconciled edit/delete, unreconcile then delete).
+Headless render: 21/21 pages; the vendor panel HTML contains the formatted balance
+box and edit/delete buttons on every payment row; the voucher form exposes
+نقدًا / تحويل بنكي / شيك.

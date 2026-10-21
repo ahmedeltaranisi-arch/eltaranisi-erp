@@ -895,6 +895,18 @@ def payments_list(ctx):
     return {"payments": rows}
 
 
+PAYMENT_METHODS = {"cash": "نقدًا", "bank": "تحويل بنكي", "cheque": "شيك", "transfer": "تحويل"}
+
+
+def _payment_method(raw):
+    """Normalise the payment method; anything unknown falls back to a bank transfer."""
+    method = str(raw or "bank").strip().lower()
+    aliases = {"cash": "cash", "نقدا": "cash", "نقدًا": "cash", "نقداً": "cash", "نقد": "cash",
+               "bank": "bank", "transfer": "transfer", "تحويل": "transfer", "تحويل بنكي": "transfer",
+               "cheque": "cheque", "check": "cheque", "شيك": "cheque"}
+    return aliases.get(method, "bank")
+
+
 @route("POST", r"/api/payments", "payments.create")
 def payments_create(ctx):
     cid = ensure_company(ctx.user)
@@ -903,7 +915,7 @@ def payments_create(ctx):
         "payment_type": b.get("payment_type", "receipt"),
         "payment_date": b.get("payment_date") or date.today().isoformat(),
         "party_type": b.get("party_type"), "party_id": b.get("party_id"),
-        "method": b.get("method", "bank"), "gl_account_id": int(b["gl_account_id"]),
+        "method": _payment_method(b.get("method")), "gl_account_id": int(b["gl_account_id"]),
         "amount_cents": to_cents(b.get("amount")),
         "branch_id": b.get("branch_id") or ctx.user["branch_id"],
         "reference": b.get("reference"), "notes": b.get("notes"),
@@ -997,6 +1009,22 @@ def bank_reconcile(ctx, txn_id):
         reconciled_at=? WHERE id=?""", (payment_id, ctx.user["id"], utcnow(), txn_id))
     audit(ctx.conn, ctx.user, "bank_txn.reconcile", "bank_transaction", txn_id,
           {"payment_id": payment_id}, company_id=cid)
+    return {"ok": True}
+
+
+@route("POST", r"/api/bank-transactions/(\d+)/unreconcile", "banks.manage")
+def bank_unreconcile(ctx, txn_id):
+    """Undo a reconciliation so the voucher behind it can be edited or deleted."""
+    cid = ensure_company(ctx.user)
+    t = q1(ctx.conn, "SELECT * FROM bank_transactions WHERE id=? AND company_id=?", (txn_id, cid))
+    if t is None:
+        raise ApiError("NOT_FOUND: الحركة غير موجودة / Transaction not found", 404)
+    if not t["is_reconciled"]:
+        raise ApiError("INVALID_STATE: الحركة غير مطابَقة أصلًا / Transaction is not reconciled")
+    ctx.conn.execute("""UPDATE bank_transactions SET is_reconciled=0, matched_payment_id=NULL,
+        reconciled_by=NULL, reconciled_at=NULL WHERE id=?""", (txn_id,))
+    audit(ctx.conn, ctx.user, "bank_txn.unreconcile", "bank_transaction", txn_id,
+          {"payment_id": t["matched_payment_id"]}, company_id=cid)
     return {"ok": True}
 
 

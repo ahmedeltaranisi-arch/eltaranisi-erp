@@ -658,6 +658,17 @@ paths:
         "200": { description: Created, content: { application/json: { schema: { type: object, properties: { id: { type: integer } } } } } }
         "403": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
+  /api/bank-transactions/{id}/unreconcile:
+    post:
+      tags: [banking]
+      summary: Undo a bank reconciliation so the matched voucher can be edited or deleted
+      description: Requires `banks.manage`.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      responses:
+        "200": { description: Unreconciled }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
 
 components:
   schemas:
@@ -862,8 +873,15 @@ components:
         notes: { type: string }
     PaymentPatchInput:
       type: object
+      description: >
+        Works for draft and posted vouchers. Posting-relevant changes (date, amount,
+        method, gl_account_id) unpost the voucher and post it again in one
+        transaction; the audit trail keeps the unpost + repost events.
       properties:
         payment_date: { type: string, format: date }
+        amount: { type: number, description: Cannot be lower than the allocated amount }
+        method: { type: string, enum: [cash, bank, cheque, transfer] }
+        gl_account_id: { type: integer, description: Cash box or bank GL account }
         reference: { type: string }
         notes: { type: string }
 

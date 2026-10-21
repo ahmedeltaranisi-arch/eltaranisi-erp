@@ -134,6 +134,16 @@ def delete_payment(conn, user, company_id: int, payment_id: int, ip=None) -> dic
 
     ensure_period_open(conn, company_id, pay["payment_date"])
 
+    # a voucher matched to a reconciled bank statement is evidence: unreconcile first
+    linked = conn.execute(
+        """SELECT id FROM bank_transactions WHERE company_id=? AND matched_payment_id=?
+           AND is_reconciled=1""", (company_id, payment_id)).fetchone()
+    if linked:
+        raise ValidationError(
+            "RECONCILED: السند مُطابَق مع كشف بنكي — ألغِ التسوية قبل الحذف "
+            "/ Voucher is reconciled with a bank statement; unreconcile it before deleting",
+            status=409)
+
     allocs = conn.execute("SELECT * FROM payment_allocations WHERE payment_id=?", (payment_id,)).fetchall()
     snapshot = {"payment": _snapshot(pay), "allocations": [_snapshot(a) for a in allocs]}
     audit(conn, user, "payment.delete", "payment", payment_id, snapshot, company_id=company_id, ip=ip)
@@ -156,6 +166,8 @@ def delete_payment(conn, user, company_id: int, payment_id: int, ip=None) -> dic
             status = "cancelled"
         conn.execute(f"UPDATE {table} SET paid_cents=?, status=? WHERE id=?", (paid, status, a["invoice_id"]))
 
+    conn.execute("UPDATE bank_transactions SET matched_payment_id=NULL WHERE company_id=? AND matched_payment_id=?",
+                 (company_id, payment_id))
     conn.execute("DELETE FROM payment_allocations WHERE payment_id=?", (payment_id,))
     conn.execute("DELETE FROM stock_movements WHERE company_id=? AND ref_type='payment' AND ref_id=?",
                  (company_id, payment_id))

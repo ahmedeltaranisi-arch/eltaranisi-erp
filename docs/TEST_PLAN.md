@@ -123,3 +123,15 @@ Manual checks performed in this round:
 Manual checks: the vendor panel renders both tabs (details + payments) with the
 balance field, the payments table and the «تسجيل دفعة» button; the payables page
 opens the same panel.
+
+### Round «طرق الدفع وتعديل السندات» — coverage
+
+| Test | What it proves |
+|---|---|
+| `test_A100_cash_payment_method` | a `cash` voucher credits the cash-box GL (1111), and the Arabic label «نقداً» is normalised to `cash` |
+| `test_A101_posted_payment_can_be_edited_and_is_reposted` | editing a posted voucher's method/account/amount creates a **fresh** journal entry, removes the superseded one, keeps the trial balance balanced, and audits unpost + post + update |
+| `test_A102_payment_edit_guards` | amount below the allocated total → 409; unknown method → 422; empty body → 422; a reconciled voucher cannot be edited or deleted (409) until `POST /api/bank-transactions/{id}/unreconcile`, after which deletion restores the invoice balance |
+
+Manual: the vendor balance renders as a formatted amount inside the edit form
+(not as escaped HTML), the voucher form offers نقدًا/تحويل بنكي/شيك, and every
+payment row in the vendor panel and the payments page carries edit + delete.

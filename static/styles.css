@@ -973,3 +973,16 @@ table.data td.act > * + * { margin-inline-start: 6px; }
   table.data tbody td.act::before { flex: 0 0 auto; margin-inline-end: auto; }
   table.data tbody td.act > * + * { margin-inline-start: 0; }
 }
+
+/* ---------- read-only money field (outstanding balances inside forms) ---------- */
+.readonly-money {
+  display: flex; align-items: baseline; justify-content: flex-end; gap: 4px;
+  min-height: 42px; padding: 10px 14px; border-radius: var(--r-sm);
+  border: 1px dashed var(--border-strong);
+  background: color-mix(in srgb, var(--brand) 7%, var(--surface-2));
+  font-variant-numeric: tabular-nums; font-weight: 800; font-size: 15.5px;
+  color: var(--text); direction: ltr; unicode-bidi: isolate;
+}
+.readonly-money.pos { color: var(--ok, #1e8e5a); }
+.readonly-money.neg { color: var(--warn, #b7791f); }
+[dir="rtl"] .readonly-money { justify-content: flex-start; }

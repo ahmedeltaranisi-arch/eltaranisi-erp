@@ -1019,13 +1019,8 @@
           { key: "unallocated", label: t("payments.unallocated"), cls: "num", render: r => r.amount_cents - r.allocated_cents ? `<span class="neg">${fmtMoney(r.amount_cents - r.allocated_cents)}</span>` : "—" },
           { key: "status", label: t("common.status"), render: r => statusBadge(r.status) },
           { key: "act", cls: "act", label: t("common.actions"), render: r => `
-              ${editButton(`/api/payments/${r.id}`,
-                  `${r.payment_type === "receipt" ? "سند التحصيل" : "سند الدفع"} ${r.payment_no}`,
-                  `${r.payment_type === "receipt" ? "receipt" : "payment"} ${r.payment_no}`, [
-                    { name: "payment_date", label: t("common.date"), type: "date", value: r.payment_date },
-                    { name: "reference", label: L("المرجع", "Reference"), value: r.reference || "" },
-                    { name: "notes", label: t("common.description"), value: r.notes || "" },
-                  ])}
+              ${can("payments.edit") ? `<button class="icon-btn edit" data-pay-edit="${r.id}"
+                  title="${ESC(L("تعديل السند", "Edit voucher"))}" aria-label="${ESC(L("تعديل", "Edit"))}">${icon("edit")}</button>` : ""}
               ${can("payments.delete")
                 ? deleteButton(`/api/payments/${r.id}`,
                     `${r.payment_type === "receipt" ? "سند التحصيل" : "سند الدفع"} ${r.payment_no}`,
@@ -1033,6 +1028,64 @@
                 : "" }` },
         ], data.payments))}`;
       if (can("payments.create")) $("#new-pay").onclick = () => PAGES.payments.newVoucher("receipt");
+    },
+
+    /** Edit a receipt/payment — works for drafts and for already-posted vouchers
+     *  (the server unposts, applies, and re-posts in one transaction). */
+    async editForm(paymentId, onDone) {
+      const ar = APP.lang === "ar";
+      const [banks, list] = await Promise.all([api("/api/banks"), api("/api/payments")]);
+      const pay = (list.payments || []).find(p => p.id === Number(paymentId));
+      if (!pay) { toast(ar ? "السند غير موجود" : "Voucher not found", "err"); return; }
+      const accounts = banks.accounts.map(b => ({
+        value: b.gl_account_id,
+        label: `${APP.lang === "ar" ? b.name_ar : (b.name_en || b.name_ar)} (${b.gl_code})`,
+        kind: b.account_type,
+      }));
+      const cashFirst = accounts.find(a => a.kind === "cash");
+      const subject = `${pay.payment_type === "receipt" ? (ar ? "سند التحصيل" : "receipt") : (ar ? "سند الدفع" : "payment")} ${pay.payment_no}`;
+      const original = {
+        payment_date: pay.payment_date,
+        amount: (pay.amount_cents / 100).toFixed(2),
+        method: pay.method || "bank",
+        gl_account_id: String(pay.gl_account_id),
+        reference: pay.reference || "",
+        notes: pay.notes || "",
+      };
+      openForm({
+        title: (ar ? "تعديل " : "Edit ") + subject,
+        wide: true,
+        submitLabel: ar ? "حفظ التعديل" : "Save changes",
+        fields: [
+          { name: "payment_date", label: t("common.date"), type: "date", value: original.payment_date },
+          { name: "amount", label: t("common.amount"), type: "number", step: "0.01", required: true, value: original.amount,
+            hint: pay.allocated_cents ? (ar ? `المخصّص للفواتير ${fmtMoney(pay.allocated_cents)} — لا يمكن النزول تحته`
+                                              : `Allocated ${fmtMoney(pay.allocated_cents)} — cannot go below`) : "" },
+          { name: "method", label: ar ? "طريقة الدفع" : "Payment method", type: "select", value: original.method,
+            options: [{ value: "cash", label: ar ? "نقدًا" : "Cash" },
+                      { value: "bank", label: ar ? "تحويل بنكي" : "Bank transfer" },
+                      { value: "cheque", label: ar ? "شيك" : "Cheque" }] },
+          { name: "gl_account_id", label: ar ? "الصندوق / البنك" : "Cash / bank account", type: "select", value: original.gl_account_id,
+            options: accounts.map(a => ({ value: a.value, label: a.label })) },
+          { name: "reference", label: ar ? "المرجع" : "Reference", value: original.reference },
+          { name: "notes", label: t("common.description"), value: original.notes },
+        ],
+        onSubmit: async (data) => {
+          const changed = Object.keys(data).filter(k => String(data[k]) !== String(original[k]));
+          if (!changed.length) { toast(ar ? "لا يوجد تغيير لحفظه" : "Nothing changed", "err"); return; }
+          const moneyChanged = changed.some(k => ["payment_date", "amount", "gl_account_id", "method"].includes(k));
+          const ok = await confirmAsync(
+            ar ? `هل أنت متأكد من تعديل ${subject}؟` + (pay.status === "posted" && moneyChanged
+                  ? "\nالسند مرحّل: سيُعاد ترحيله بقيمه الجديدة ويُسجَّل ذلك في سجل التدقيق."
+                  : "\nسيُسجَّل التعديل في سجل التدقيق باسمك ووقته.")
+               : `Are you sure you want to edit ${subject}?`,
+            { title: ar ? "تأكيد التعديل" : "Confirm edit" });
+          if (!ok) return;
+          await api(`/api/payments/${pay.id}`, { method: "PATCH", body: data });
+          toast(ar ? "تم حفظ التعديل" : "Changes saved");
+          if (onDone) await onDone(); else await render();
+        },
+      });
     },
 
     async newVoucher(type = "receipt", preset = {}) {
@@ -1055,6 +1108,12 @@
                 <option value="payment" ${type === "payment" ? "selected" : ""}>${ESC(t("payments.payment"))}</option>
               </select></div>
             <div class="field"><span>${ESC(t("common.date"))}</span><input type="date" id="pv-date" value="${today()}"/></div>
+            <div class="field"><span>${ESC(L("طريقة الدفع", "Payment method"))}</span>
+              <select id="pv-method">
+                <option value="cash">${ESC(L("نقدًا", "Cash"))}</option>
+                <option value="bank">${ESC(L("تحويل بنكي", "Bank transfer"))}</option>
+                <option value="cheque">${ESC(L("شيك", "Cheque"))}</option>
+              </select></div>
             <div class="field"><span>${ESC(t("payments.method"))}</span>
               <select id="pv-gl">${glOptions.map(o => `<option value="${o.value}">${ESC(o.label)}</option>`).join("")}</select></div>
             <div class="field"><span>${ESC(t("payments.party"))}</span>
@@ -1081,6 +1140,17 @@
         footer: `<button class="btn" data-close>${ESC(t("common.cancel"))}</button>
                  <button class="btn btn-primary" id="pv-save">${ESC(L("حفظ وترحيل", "Save & post"))}</button>`,
         onMount: (root, close) => {
+          // "نقدًا" selects the cash box automatically; bank/cheque prefer bank accounts
+          const accountMeta = banks.accounts.map(b => ({ id: String(b.gl_account_id), kind: b.account_type }));
+          const syncMethod = () => {
+            const method = $("#pv-method", root).value;
+            const wanted = method === "cash" ? "cash" : "bank";
+            const match = accountMeta.find(a => a.kind === wanted);
+            if (match) $("#pv-gl", root).value = match.id;
+          };
+          $("#pv-method", root).onchange = syncMethod;
+          syncMethod();
+
           $$(".al-chk", root).forEach(chk => chk.onchange = () => {
             const tr = chk.closest("tr");
             const amt = $(".al-amt", tr);
@@ -1109,7 +1179,8 @@
                   payment_date: $("#pv-date", root).value,
                   party_type: kind === "receipt" ? "customer" : "vendor",
                   party_id: Number($("#pv-party", root).value),
-                  method: "bank", gl_account_id: Number($("#pv-gl", root).value),
+                  method: $("#pv-method", root).value,
+                  gl_account_id: Number($("#pv-gl", root).value),
                   amount: Number($("#pv-amount", root).value || 0),
                   notes: $("#pv-notes", root).value,
                   allocations, post: true,
@@ -1378,10 +1449,14 @@
       <div id="vp-pane-data">
         <div class="grid cols-2" style="gap:0 16px">
           ${fld("code", t("common.code"), original.code, { required: true })}
-          ${fld("balance", ar ? "رصيد المستحق" : "Outstanding balance",
-                fmtMoney(d.outstanding_cents || 0), { readonly: true,
-                hint: ar ? "المتبقي على المورد من الفواتير المرحّلة — يُحدَّث بالدفعات"
-                         : "Remaining on posted purchase invoices — updated by payments" })}
+          <div class="field" style="margin-bottom:12px">
+            <span>${ESC(ar ? "رصيد المستحق" : "Outstanding balance")}</span>
+            <div class="readonly-money ${d.outstanding_cents > 0 ? "neg" : "pos"}">
+              ${fmtMoney(d.outstanding_cents || 0)}
+            </div>
+            <div class="field-hint">${ESC(ar ? "المتبقي على المورد من الفواتير المرحّلة — يتحدّث تلقائيًا مع الدفعات"
+                                              : "Remaining on posted invoices — updated automatically by payments")}</div>
+          </div>
           ${fld("name_ar", ar ? "الاسم بالعربية" : "Arabic name", original.name_ar, { required: true })}
           ${fld("name_en", "Name (English)", original.name_en,
                 { hint: ar ? "اختياري — يُستخدم الاسم العربي إن تُرك فارغًا" : "Optional — falls back to the Arabic name" })}
@@ -1417,6 +1492,13 @@
           { key: "method", label: ar ? "الطريقة" : "Method", render: r => ESC(r.method || "—") },
           { key: "reference", label: ar ? "المرجع" : "Reference", render: r => ESC(r.reference || "—") },
           { key: "status", label: t("common.status"), render: r => statusBadge(r.status) },
+          { key: "act", cls: "act", label: t("common.actions"), render: r => `
+              ${can("payments.edit") ? `<button class="icon-btn edit" data-pay-edit="${r.id}"
+                  title="${ESC(L("تعديل السند", "Edit voucher"))}" aria-label="${ESC(L("تعديل", "Edit"))}">${icon("edit")}</button>` : ""}
+              ${can("payments.delete") ? deleteButton(`/api/payments/${r.id}`,
+                  `${r.payment_type === "receipt" ? "سند التحصيل" : "سند الدفع"} ${r.payment_no}`,
+                  `${r.payment_type === "receipt" ? "receipt" : "payment"} ${r.payment_no}`,
+                  { delBack: `#/vendors` }) : ""}` },
         ], payRows, { compact: true, empty: ar ? "لا توجد دفعات مسجّلة لهذا المورد بعد" : "No payments recorded for this vendor yet" })}
         <div class="section-title"><span>${ESC(ar ? "فواتير المشتريات" : "Purchase invoices")}</span><span class="line"></span></div>
         ${renderTable([
@@ -1487,6 +1569,19 @@
       },
     });
   };
+
+  // one delegated handler for every "edit voucher" button (payments page + vendor panel)
+  document.addEventListener("click", (ev) => {
+    const btn = ev.target.closest("[data-pay-edit]");
+    if (!btn) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    PAGES.payments.editForm(Number(btn.dataset.payEdit), async () => {
+      const root = $("#modal-root");
+      if (root && !root.classList.contains("hidden")) { root.classList.add("hidden"); root.innerHTML = ""; }
+      await render();
+    });
+  });
 
   // one delegated handler for every vendor row button
   document.addEventListener("click", (ev) => {
@@ -1626,7 +1721,9 @@
           { key: "matched_payment_no", label: t("payments.receipt"), render: r => ESC(r.matched_payment_no || "—") },
           { key: "is_reconciled", label: t("common.status"), render: r => r.is_reconciled ? `<span class="badge green">${ESC(t("banks.reconciled"))}</span>` : `<span class="badge amber">${ESC(t("banks.unreconciled"))}</span>` },
           { key: "act", cls: "act", label: t("common.actions"), render: r => can("banks.manage") ? `
-              ${!r.is_reconciled ? `<button class="btn btn-sm btn-ghost" data-rec="${r.id}">${ESC(t("banks.reconcile"))}</button>` : ""}
+              ${r.is_reconciled
+                ? `<button class="btn btn-sm btn-ghost" data-unrec="${r.id}">${ESC(L("إلغاء التسوية", "Unreconcile"))}</button>`
+                : `<button class="btn btn-sm btn-ghost" data-rec="${r.id}">${ESC(t("banks.reconcile"))}</button>`}
               ${!r.is_reconciled ? editButton(`/api/bank-transactions/${r.id}`,
                   `الحركة البنكية «${r.description}»`, `bank transaction “${r.description}”`, [
                     { name: "txn_date", label: t("common.date"), type: "date", value: r.txn_date },
@@ -1672,6 +1769,18 @@
             { name: "statement_ref", label: L("مرجع كشف الحساب", "Statement ref") },
           ],
           onSubmit: async (d) => { await api("/api/bank-transactions", { method: "POST", body: d }); toast(t("common.saved")); render(); }
+        });
+        $$("[data-unrec]", view).forEach(b => b.onclick = async () => {
+          const okConfirm = await confirmAsync(
+            L("هل تريد إلغاء تسوية هذه الحركة البنكية؟ سيصبح السند المرتبط بها قابلًا للتعديل أو الحذف.",
+              "Unreconcile this bank line? The voucher matched to it becomes editable again."),
+            { title: L("إلغاء التسوية", "Unreconcile") });
+          if (!okConfirm) return;
+          try {
+            await api(`/api/bank-transactions/${b.dataset.unrec}/unreconcile`, { method: "POST", body: {} });
+            toast(L("تم إلغاء التسوية", "Reconciliation undone"));
+            await render();
+          } catch (e) { toast(e.message, "err"); }
         });
         $$("[data-rec]", view).forEach(b => b.onclick = async () => {
           const sug = await api("/api/bank-transactions/suggestions");

@@ -925,6 +925,131 @@ class ERPTestCase(unittest.TestCase):
         status, _ = self.sales.get(f"/api/vendors/{vendor['id']}")
         self.assertEqual(status, 403, "the sales role has no vendors.view")
 
+    def _vendor_with_invoice(self):
+        vendor = next(v for v in self.owner.get("/api/vendors")[1]["vendors"]
+                      if v["outstanding_cents"] > 0)
+        detail = self.owner.get(f"/api/vendors/{vendor['id']}")[1]
+        return vendor, detail["open_invoices"][0]
+
+    def _cash_and_bank_gl(self):
+        banks = self.owner.get("/api/banks")[1]["accounts"]
+        cash = next(b for b in banks if b["account_type"] == "cash")
+        bank = next(b for b in banks if b["account_type"] == "bank")
+        return cash, bank
+
+    def _new_payment(self, amount, method="cash", gl=None, invoice_id=None, party=None):
+        cash, bank = self._cash_and_bank_gl()
+        return self.fm.post("/api/payments", {
+            "payment_type": "payment", "payment_date": self.today(), "party_type": "vendor",
+            "party_id": party, "method": method, "gl_account_id": gl or cash["gl_account_id"],
+            "amount": amount, "post": True,
+            "allocations": ([{"invoice_kind": "purchase", "invoice_id": invoice_id,
+                              "amount": amount}] if invoice_id else []),
+        })
+
+    def test_A100_cash_payment_method(self):
+        vendor, invoice = self._vendor_with_invoice()
+        cash, _ = self._cash_and_bank_gl()
+        status, res = self._new_payment(120, "cash", invoice_id=invoice["id"], party=vendor["id"])
+        self.assertEqual(status, 200, res)
+        pay = next(p for p in self.owner.get("/api/payments")[1]["payments"] if p["id"] == res["id"])
+        self.assertEqual(pay["method"], "cash")
+        self.assertEqual(pay["gl_account_id"], cash["gl_account_id"])
+        status, je = self.owner.get(f"/api/journal-entries/{pay['journal_entry_id']}")
+        self.assertEqual(status, 200, je)
+        credit = [l for l in je["lines"] if l["credit_cents"]]
+        self.assertEqual(credit[0]["account_code"], cash["gl_code"],
+                         "a cash payment must credit the cash box, not a bank account")
+        # the Arabic label is accepted too
+        status, res2 = self.owner.post("/api/payments", {
+            "payment_type": "payment", "payment_date": self.today(), "party_type": "vendor",
+            "party_id": vendor["id"], "method": "نقداً", "gl_account_id": cash["gl_account_id"],
+            "amount": 10})
+        self.assertEqual(status, 200, res2)
+        pay2 = next(p for p in self.owner.get("/api/payments")[1]["payments"] if p["id"] == res2["id"])
+        self.assertEqual(pay2["method"], "cash", "the Arabic label must be normalised to cash")
+
+    def test_A101_posted_payment_can_be_edited_and_is_reposted(self):
+        vendor, invoice = self._vendor_with_invoice()
+        cash, bank = self._cash_and_bank_gl()
+        status, res = self._new_payment(100, "cash", invoice_id=invoice["id"], party=vendor["id"])
+        self.assertEqual(status, 200, res)
+        pid = res["id"]
+        before = next(p for p in self.owner.get("/api/payments")[1]["payments"] if p["id"] == pid)
+        tb_before = self.owner.get("/api/reports/trial-balance")[1]["totals"]
+
+        status, out = self.fm.patch(f"/api/payments/{pid}", {
+            "method": "bank", "gl_account_id": bank["gl_account_id"], "amount": 150})
+        self.assertEqual(status, 200, out)
+        self.assertTrue(out.get("reposted"))
+
+        after = next(p for p in self.owner.get("/api/payments")[1]["payments"] if p["id"] == pid)
+        self.assertEqual(after["method"], "bank")
+        self.assertEqual(after["gl_account_id"], bank["gl_account_id"])
+        self.assertEqual(after["amount_cents"], 15_000)
+        self.assertEqual(after["status"], "posted")
+        self.assertNotEqual(after["journal_entry_id"], before["journal_entry_id"],
+                            "editing must produce a fresh entry, not mutate the old one")
+        self.assertEqual(self.owner.get(f"/api/journal-entries/{before['journal_entry_id']}")[0], 404,
+                         "the superseded entry must be gone")
+        status, je = self.owner.get(f"/api/journal-entries/{after['journal_entry_id']}")
+        self.assertEqual(status, 200)
+        credit = next(l for l in je["lines"] if l["credit_cents"])
+        self.assertEqual(credit["account_code"], bank["gl_code"])
+        tb_after = self.owner.get("/api/reports/trial-balance")[1]["totals"]
+        self.assertEqual(tb_after["period_debit"], tb_after["period_credit"],
+                         "the trial balance must stay balanced after re-posting")
+        self.assertEqual(tb_after["period_debit"] - tb_before["period_debit"], 5_000)
+
+        status, logs = self.owner.get("/api/audit-logs?per_page=100")
+        actions = [r["action"] for r in logs["logs"]
+                   if str(r["entity_id"]) == str(pid) and r["entity"] == "payment"]
+        self.assertIn("payment.unpost", actions)
+        self.assertIn("payment.post", actions)
+        self.assertIn("payment.update", actions)
+
+    def test_A102_payment_edit_guards(self):
+        vendor, invoice = self._vendor_with_invoice()
+        status, res = self._new_payment(80, invoice_id=invoice["id"], party=vendor["id"])
+        self.assertEqual(status, 200, res)
+        pid = res["id"]
+
+        status, data = self.fm.patch(f"/api/payments/{pid}", {"amount": 0.5})
+        self.assertEqual(status, 409, data)
+        self.assertIn("OVER_ALLOCATION", data["error"])
+
+        status, data = self.fm.patch(f"/api/payments/{pid}", {"method": "bitcoin"})
+        self.assertEqual(status, 422, data)
+
+        status, data = self.fm.patch(f"/api/payments/{pid}", {})
+        self.assertEqual(status, 422, data)
+
+        # reconcile it with a bank statement through the real API: editing and
+        # deleting must both stop until the reconciliation is undone
+        cash, _ = self._cash_and_bank_gl()
+        status, txn = self.owner.post("/api/bank-transactions", {
+            "bank_account_id": cash["id"], "txn_date": self.today(),
+            "description": "test recon", "direction": "credit", "amount": 80})
+        self.assertEqual(status, 200, txn)
+        status, rec = self.owner.post(f"/api/bank-transactions/{txn['id']}/reconcile",
+                                      {"payment_id": pid})
+        self.assertEqual(status, 200, rec)
+        status, data = self.fm.patch(f"/api/payments/{pid}", {"amount": 90})
+        self.assertEqual(status, 409, data)
+        self.assertIn("RECONCILED", data["error"])
+        status, data = self.owner.delete(f"/api/payments/{pid}", {"confirm": True})
+        self.assertEqual(status, 409, data)
+        self.assertIn("RECONCILED", data["error"])
+
+        # after undoing the reconciliation through the API, delete works again
+        status, unrec = self.owner.post(f"/api/bank-transactions/{txn['id']}/unreconcile")
+        self.assertEqual(status, 200, unrec)
+        before_delete = self.owner.get(f"/api/vendors/{vendor['id']}")[1]["outstanding_cents"]
+        status, _ = self.owner.delete(f"/api/payments/{pid}", {"confirm": True})
+        self.assertEqual(status, 200)
+        after_delete = self.owner.get(f"/api/vendors/{vendor['id']}")[1]["outstanding_cents"]
+        self.assertEqual(after_delete, before_delete + 8_000)
+
     def test_94_auth_survives_missing_session_rows(self):
         """Regression: /tmp-only sessions on serverless hosts must not log users out."""
         before = self.owner.get("/api/banks")

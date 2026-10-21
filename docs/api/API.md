@@ -369,3 +369,28 @@ POST /api/payments
   "allocations": [{ "invoice_kind": "purchase", "invoice_id": 11, "amount": 250.00 }],
   "post": true }
 ```
+
+### تعديل وحذف سندات القبض والدفع / Editing & deleting vouchers
+
+**`PATCH /api/payments/{id}`** — يعمل الآن للسندات **المسودة والمرحّلة**:
+
+| الحقل | الأثر |
+|---|---|
+| `reference`, `notes` | تُحدَّث مباشرة بلا أي تأثير محاسبي |
+| `payment_date`, `amount`, `method`, `gl_account_id` | تُحدَّث مع **إعادة ترحيل**: يُلغى ترحيل السند (حذف قيده وردّ التخصيصات من الفواتير) ثم يُرحَّل من جديد بقيد واحد جديد |
+
+الاستجابة: `{"ok": true, "updated": "payment", "id": 12, "changed": [...], "reposted": true}`.
+سجل التدقيق يحتفظ بثلاثة أحداث: `payment.unpost` ثم `payment.post` ثم `payment.update` مع `{before, after}`.
+
+**طرق الدفع** (`method`): `cash` (نقدًا) · `bank` (تحويل بنكي) · `cheque` (شيك) · `transfer`.
+تُقبل أيضًا التسميات العربية (`نقدًا`/`نقداً`/`نقدا`، `شيك`، `تحويل`) وتُوحَّد تلقائيًا.
+حساب الصندوق/البنك (`gl_account_id`) يجب أن يكون حسابًا من نفس الشركة.
+
+**الحرّاس / Guards**
+
+* `409 OVER_ALLOCATION` — المبلغ الجديد أقل من المبالغ المخصّصة للفواتير.
+* `409 RECONCILED` — السند مُطابَق مع كشف بنكي: ألغِ التسوية أولًا (زر «إلغاء التسوية» في صفحة البنوك أو `POST /api/bank-transactions/{id}/unreconcile`).
+* `422 PERIOD_CLOSED` — تاريخ داخل فترة مالية مقفولة.
+* `422 NOTHING_TO_UPDATE` — لا حقول في الطلب.
+
+**`DELETE /api/payments/{id}`** — يحذف السند وقيده ويعيد التخصيصات إلى الفواتير؛ ويُرفض بـ `409 RECONCILED` إذا كان مُطابَقًا مع كشف بنكي.
