@@ -1,4 +1,10 @@
+<div align="center">
+  <img src="static/brand/logo-full.png" alt="Eltaranisi ERP" width="220" />
+</div>
+
 # Eltaranisi ERP — الطرانيسي ERP
+
+**🌐 نسخة حيّة / Live demo:** https://eltaranisi-erp-eltaranisi.vercel.app
 
 [![CI](https://github.com/ahmedeltaranisi-arch/eltaranisi-erp/actions/workflows/ci.yml/badge.svg)](https://github.com/ahmedeltaranisi-arch/eltaranisi-erp/actions/workflows/ci.yml)
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/ahmedeltaranisi-arch/eltaranisi-erp)
@@ -124,6 +130,8 @@ eltaranisi-erp/
 | السيولة | 1,813,513.20 ج.م |
 | قيمة المخزون | 5,882,650 ج.م — ومساوية لرصيد حساب 1310 |
 | الواجهة | 21 صفحة عربية/إنجليزية، وضع ليلي، RTL/LTR، متجاوبة (1440/1280/768/390) — تم فحصها في المتصفح |
+| الهوية البصرية | شعار المشروع الرسمي (`static/brand/`): أيقونة الموقع + favicon + apple-touch + بطاقة OG + ترويسة PDF بألوان الكحلي/الذهبي |
+| النشر | Vercel إنتاجي: `/api/health` ✅، تسجيل دخول ✅، تنزيل PDF عربي (601KB) ✅، الوضع التجريبي مغلق (404) ✅ |
 | خط الواجهة | Cairo حقيقي بأوزان 400/600/700/800 (woff2 مقطوعة من الخط المتغيّر) — تُحمَّل فعليًا في المتصفح |
 | تصدير المستندات | PDF عربي/إنجليزي + Excel RTL + CSV من الفاتورة والتقارير، بترويسة شركة قابلة للتحرير |
 | سجل التدقيق | كل دخول/إنشاء/ترحيل/عكس/تصدير مسجّل بهوية المستخدم ووقته |
@@ -142,6 +150,8 @@ npm i -g vercel && vercel --prod
 
 | ماذا | كيف |
 |---|---|
+| **الرابط الحالي** | **https://eltaranisi-erp-eltaranisi.vercel.app** (مشروع Vercel باسم `eltaranisi-erp`) |
+| **النشر التلقائي** | مربوط بمستودع GitHub: أي `git push` على `main` → نشر إنتاجي تلقائي (تم التحقق) |
 | ملف الضبط | `vercel.json` (output `static` + rewrite لـ `/api/*`) |
 | نقطة الدخول | `api/index.py` — WSGI bridge، يهيّئ قاعدة SQLite في `/tmp` ويبذرها عند أول طلب (~0.5 ثانية) |
 | الاعتماديات | لا شيء — `requirements.txt` موجود فقط ليتعرّف Vercel على Python |

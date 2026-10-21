@@ -38,6 +38,15 @@
 
 ## 2) النشر في دقيقتين
 
+### الحالة الحالية (نُشر فعليًا)
+| البند | القيمة |
+|---|---|
+| Project | `eltaranisi-erp` (framework = **None**، output = `static`) |
+| Production URL | **https://eltaranisi-erp-eltaranisi.vercel.app** |
+| Auto-deploy | نعم — GitHub webhook: كل push على `main` ينشر إنتاجيًا |
+| Deployment Protection | **مُعطَّلة** (`ssoProtection: null`) حتى يكون الرابط عامًا |
+| فحص حيّ | `/api/health` → `dev_mode:false` · `/api/dev/accounts` → 404 · PDF عربي 601KB `%PDF-1.7` |
+
 ### الطريقة أ — من لوحة Vercel (موصى بها)
 1. `github.com` ← المستودع `ahmedeltaranisi-arch/eltaranisi-erp` ← **Add Project** في Vercel.
 2. Framework Preset: **Other** (Vercel يقرأ `vercel.json` تلقائيًا).
