@@ -647,11 +647,18 @@ def report_pdf(title_ar: str, title_en: str, columns, rows, company=None, lang="
                  align="right" if ar else "left", rtl=ar)
         ny -= 11.5
     title_y = H - 56 if not two_lines else H - 62
-    pdf.text(right_x if ar else left_x, title_y, (title_ar if ar else title_en), 11.5, (226, 222, 250),
+    title_txt = (title_ar if ar else title_en)
+    title_size = 11.5
+    while title_size > 7.5 and pdf.measure(title_txt, title_size, ar) > (right_x - left_x):
+        title_size -= 0.3
+    pdf.text(right_x if ar else left_x, title_y, title_txt, title_size, (226, 222, 250),
              align="right" if ar else "left", rtl=ar)
     sub = subtitle_ar if ar else subtitle_en
     if sub:
-        pdf.text(right_x if ar else left_x, title_y - 15, sub, 8.4, (198, 193, 238),
+        sub_size = 8.4
+        while sub_size > 6.4 and pdf.measure(sub, sub_size, ar) > (right_x - left_x):
+            sub_size -= 0.25
+        pdf.text(right_x if ar else left_x, title_y - 15, sub, sub_size, (198, 193, 238),
                  align="right" if ar else "left", rtl=ar)
     brand_mark(pdf, M, H - 74, 24)
     pdf.text(M + 30, H - 40, "ELTARANISI ERP", 8.8, WHITE, align="left", rtl=False)
