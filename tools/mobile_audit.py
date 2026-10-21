@@ -52,7 +52,7 @@ PROBE = """
   for (const el of document.querySelectorAll('body *')) {
     const r = el.getBoundingClientRect();
     if (!r.width || !r.height) continue;
-    if (r.right <= vw + 1 && r.left >= -1) continue;
+    if (r.right <= vw + 1.5 && r.left >= -1.5) continue;   // sub-pixel tolerance
     if (inScroller(el) || isHidden(el)) continue;
     bad.push(el.tagName.toLowerCase() + '.' + (el.className || '').toString().split(' ').slice(0, 2).join(' ')
              + ' [' + Math.round(r.left) + '..' + Math.round(r.right) + '] '

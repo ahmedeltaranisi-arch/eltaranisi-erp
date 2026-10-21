@@ -353,8 +353,20 @@ table.data.compact tbody td { padding: 7px 12px; }
 .toast.ok { border-inline-start-color: var(--ok); }
 .toast.err { border-inline-start-color: var(--danger); }
 @keyframes slide { from { transform: translateY(12px); opacity: 0; } }
-.loading-bar { position: fixed; inset-block-start: 0; inset-inline-start: 0; height: 3px; background: linear-gradient(90deg, var(--brand), var(--accent)); width: 40%; z-index: 300; animation: load 1.1s ease-in-out infinite; }
-@keyframes load { 0% { inset-inline-start: 0; width: 8%; } 50% { width: 55%; } 100% { inset-inline-start: 92%; width: 8%; } }
+.loading-bar {
+  position: fixed; inset-block-start: 0; inset-inline: 0; height: 3px; z-index: 300;
+  overflow: hidden; pointer-events: none;   /* a clipped track: it can never widen the page */
+}
+.loading-bar > span {
+  display: block; height: 100%; width: 40%;
+  background: linear-gradient(90deg, var(--brand), var(--accent));
+  animation: load 1.1s ease-in-out infinite;
+}
+@keyframes load {
+  0%   { margin-inline-start: 0;   width: 10%; }
+  50%  { margin-inline-start: 45%; width: 55%; }
+  100% { margin-inline-start: 90%; width: 10%; }
+}
 
 /* ---------------- Misc components ---------------- */
 .tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--border); margin-bottom: 18px; overflow-x: auto; }
