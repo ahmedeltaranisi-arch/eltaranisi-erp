@@ -23,11 +23,12 @@ FONT_PATH = BASE_DIR / "assets" / "fonts" / "Amiri-Regular.ttf"
 LATIN_FONT_PATH = BASE_DIR / "assets" / "fonts" / "DejaVuSans.ttf"
 
 # palette
-INK = (17, 24, 39)
+INK = (11, 47, 107)            # logo ink
 MUTED = (107, 114, 128)
 LINE = (226, 232, 240)
-BRAND = (79, 53, 216)
-BRAND_SOFT = (243, 241, 255)
+BRAND = (20, 73, 143)          # logo navy
+GOLD = (240, 169, 28)          # logo gold
+BRAND_SOFT = (234, 241, 251)
 OK = (16, 122, 87)
 DANGER = (185, 28, 28)
 WARN = (180, 83, 9)
@@ -219,13 +220,26 @@ def _einvoice_payload(company, data) -> dict:
 
 
 def brand_mark(pdf, x, y, size=30, mono=False):
-    """Vector brand mark: rounded gradient-ish square with the letter ط."""
-    top = (124, 58, 237) if not mono else (255, 255, 255)
-    bot = (37, 99, 235) if not mono else (235, 235, 250)
-    pdf.rect(x, y, size, size, fill=top, radius=size * 0.28)
-    pdf.rect(x, y, size, size * 0.45, fill=bot, radius=size * 0.28)
-    pdf.rect(x, y + size * 0.35, size, size * 0.15, fill=top)
-    pdf.text(x + size / 2, y + size * 0.24, "ط", size * 0.62, (255, 255, 255), align="center", rtl=True)
+    """Vector echo of the project logo: navy plate, gold orbit, white "E".
+
+    The PDF engine is stdlib-only (no image XObjects), so the logo is redrawn
+    with primitives — same colours and composition as `static/brand/logo-mark.png`:
+    navy block + a gold ellipse sweep + geometric E.
+    """
+    navy = (11, 47, 107) if not mono else (255, 255, 255)
+    gold = (240, 169, 28) if not mono else (214, 226, 245)
+    pdf.rect(x, y, size, size, fill=navy, radius=size * 0.26)
+    # gold orbit (an ellipse drawn as a thin rectangle band would be crude — use a
+    # stroked rounded rect that reads as the sweeping ring at small sizes)
+    pdf.rect(x + size * 0.10, y + size * 0.30, size * 0.80, size * 0.11, fill=gold, radius=size * 0.06)
+    # white "E" (three bars + spine), sized to the plate
+    white = (255, 255, 255)
+    bx, by = x + size * 0.26, y + size * 0.20
+    bh = size * 0.56
+    pdf.rect(bx, by, size * 0.09, bh, fill=white)
+    pdf.rect(bx, by + bh - size * 0.09, size * 0.36, size * 0.09, fill=white)
+    pdf.rect(bx, by + bh / 2 - size * 0.045, size * 0.30, size * 0.09, fill=white)
+    pdf.rect(bx, by, size * 0.36, size * 0.09, fill=white)
 
 
 # ---------------------------------------------------------------- invoice PDF
@@ -246,8 +260,8 @@ def invoice_pdf(conn, company_id: int, kind: str, invoice_id: int, lang: str = "
     pdf.new_page()
 
     # ---------- header band ----------
-    pdf.rect(0, H - 118, W, 118, fill=(38, 27, 92))
-    pdf.rect(0, H - 122, W, 4, fill=BRAND)
+    pdf.rect(0, H - 118, W, 118, fill=(11, 47, 107))
+    pdf.rect(0, H - 122, W, 4, fill=GOLD)
     name = (company.get("name_ar") if ar else company.get("name_en")) or "Eltaranisi ERP"
     pdf.text(W - M, H - 46, name, 17, WHITE, align="right", rtl=rtl)
     sub = (company.get("name_en") if ar else company.get("name_ar")) or ""
@@ -262,7 +276,7 @@ def invoice_pdf(conn, company_id: int, kind: str, invoice_id: int, lang: str = "
     badge_text = STATUS_AR.get(status, status) if ar else STATUS_EN.get(status, status)
     bw = pdf.measure(badge_text, 9) + 22
     pdf.rect(M + 2, H - 88, bw, 20, fill=(255, 255, 255), radius=10)
-    pdf.text(M + 2 + bw / 2, H - 82, badge_text, 8.6, (38, 27, 92), align="center", rtl=rtl)
+    pdf.text(M + 2 + bw / 2, H - 82, badge_text, 8.6, (11, 47, 107), align="center", rtl=rtl)
 
     y = H - 150
     # ---------- meta boxes ----------
@@ -312,7 +326,7 @@ def invoice_pdf(conn, company_id: int, kind: str, invoice_id: int, lang: str = "
     cols_ar[1] = (cols_ar[1][0], (W - 2 * M) - fixed, "right")
     row_h = 22
     # header
-    pdf.rect(M, y - row_h, W - 2 * M, row_h, fill=(38, 27, 92), radius=6)
+    pdf.rect(M, y - row_h, W - 2 * M, row_h, fill=(11, 47, 107), radius=6)
     x = W - M if rtl else M
     header_positions = []
     for label, width, align in cols_ar:
@@ -557,7 +571,7 @@ def report_pdf(title_ar: str, title_en: str, columns, rows, company=None, lang="
     W, H = pdf.W, pdf.H
     M = 34.0
     pdf.new_page()
-    pdf.rect(0, H - 92, W, 92, fill=(38, 27, 92))
+    pdf.rect(0, H - 92, W, 92, fill=(11, 47, 107))
     pdf.rect(0, H - 95, W, 3, fill=BRAND)
     name = (company or {}).get("name_ar" if ar else "name_en") or "Eltaranisi ERP"
     pdf.text(W - M, H - 40, name, 14, WHITE, align="right" if ar else "left", rtl=ar)
@@ -577,7 +591,7 @@ def report_pdf(title_ar: str, title_en: str, columns, rows, company=None, lang="
     y = H - 120
 
     def draw_header(yy):
-        pdf.rect(M, yy - 22, W - 2 * M, 22, fill=(38, 27, 92), radius=4)
+        pdf.rect(M, yy - 22, W - 2 * M, 22, fill=(11, 47, 107), radius=4)
         x = W - M if ar else M
         for c, w in zip(columns, widths):
             label = c.get("ar") if ar else c.get("en")
