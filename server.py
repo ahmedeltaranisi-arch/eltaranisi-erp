@@ -1250,6 +1250,76 @@ def debt_meta(ctx):
     }
 
 
+@route("GET", r"/api/debt/invoices", "debt.view")
+def debt_invoices(ctx):
+    """بيان الفواتير — every due line of every contractor in one list."""
+    cid = ensure_company(ctx.user)
+    acc = ctx.qs.get("account_id")
+    return debt.invoices_statement(ctx.conn, cid, ctx.qs.get("from") or None,
+                                   ctx.qs.get("to") or None, int(acc) if acc else None)
+
+
+@route("GET", r"/api/debt/invoices/xlsx", "debt.view")
+def debt_invoices_xlsx(ctx):
+    cid = ensure_company(ctx.user)
+    lang = _lang(ctx)
+    ar = lang != "en"
+    acc = ctx.qs.get("account_id")
+    data = debt.invoices_statement(ctx.conn, cid, ctx.qs.get("from") or None,
+                                   ctx.qs.get("to") or None, int(acc) if acc else None)
+    head = ["التاريخ", "الحساب", "البيان", "العملية", "الكمية", "الوحدة", "فئة الوحدة",
+            "الإجمالي المستحق", "المركب", "العميل", "بيان التشغيل"] if ar else \
+           ["Date", "Account", "Statement", "Operation", "Qty", "Unit", "Rate",
+            "Amount due", "Vessel", "Client", "Report no."]
+    rows = [head]
+    for it in sorted(data["items"], key=lambda x: (x["doc_date"], x["id"])):
+        rows.append([it["doc_date"], it["account_name"], it["description"], it["operation"] or "",
+                     f"{it['qty_milli'] / 1000:g}" if it["qty_milli"] else "",
+                     it["unit_label_ar"] if ar else it["unit_label_en"],
+                     money_str(it["unit_rate_cents"]) if it["unit_rate_cents"] else "",
+                     money_str(it["amount_cents"]), it["vessel"] or "", it["client_name"] or "",
+                     it["report_no"] or ""])
+    rows.append(["", "", "إجمالي بيان الفواتير" if ar else "Total due lines", "", "", "", "",
+                 money_str(data["totals"]["amount_cents"]), "", "", ""])
+    out = exporter.report_xlsx("بيان الفواتير" if ar else "Invoice statement", rows[0], rows[1:], rtl=ar)
+    audit(ctx.conn, ctx.user, "debt_invoices.xlsx", "debt_invoice_statement", None, {}, company_id=cid)
+    return {"__file__": True, "content": out,
+            "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "filename": "debt-invoices.xlsx"}
+
+
+@route("GET", r"/api/debt/invoices/pdf", "debt.view")
+def debt_invoices_pdf(ctx):
+    cid = ensure_company(ctx.user)
+    lang = _lang(ctx)
+    ar = lang != "en"
+    acc = ctx.qs.get("account_id")
+    data = debt.invoices_statement(ctx.conn, cid, ctx.qs.get("from") or None,
+                                   ctx.qs.get("to") or None, int(acc) if acc else None)
+    cols = [{"ar": "التاريخ", "en": "Date", "w": 1.0, "align": "center", "rtl": False},
+            {"ar": "الحساب", "en": "Account", "w": 2.2},
+            {"ar": "البيان", "en": "Statement", "w": 2.6},
+            {"ar": "الكمية", "en": "Qty", "w": 1.1, "align": "center", "rtl": False},
+            {"ar": "فئة الوحدة", "en": "Rate", "w": 1.0, "align": "center", "rtl": False},
+            {"ar": "الإجمالي المستحق", "en": "Due", "w": 1.3, "align": "center", "rtl": False}]
+    rows = []
+    for it in sorted(data["items"], key=lambda x: (x["doc_date"], x["id"])):
+        qty = f"{it['qty_milli'] / 1000:g}" if it["qty_milli"] else ""
+        rows.append([it["doc_date"], it["account_name"], it["description"],
+                     f"{qty} {it['unit_label_ar'] if ar else it['unit_label_en']}".strip(),
+                     money_str(it["unit_rate_cents"]) if it["unit_rate_cents"] else "",
+                     money_str(it["amount_cents"])])
+    rows.append(["", "", "إجمالي بيان الفواتير" if ar else "Total due lines", "", "",
+                 money_str(data["totals"]["amount_cents"])])
+    company = exporter.company_block(ctx.conn, cid)
+    out = exporter.report_pdf("بيان الفواتير", "Invoice statement", cols, rows, company=company, lang=lang,
+                              subtitle_ar=f"من {data['range']['from'] or 'البداية'} إلى {data['range']['to'] or 'اليوم'}",
+                              subtitle_en=f"{data['range']['from'] or 'start'} — {data['range']['to'] or 'today'}")
+    audit(ctx.conn, ctx.user, "debt_invoices.pdf", "debt_invoice_statement", None, {}, company_id=cid)
+    return {"__file__": True, "content": out, "content_type": "application/pdf",
+            "filename": "debt-invoices.pdf", "inline": True}
+
+
 @route("GET", r"/api/debt/summary", "debt.view")
 def debt_summary(ctx):
     cid = ensure_company(ctx.user)
@@ -1267,8 +1337,8 @@ def debt_summary_xlsx(ctx):
     d2 = ctx.qs.get("to") or None
     data = debt.summary(ctx.conn, cid, d1, d2)
     head = ["م", "البيان"] if ar else ["#", "Statement"]
-    head += ["النوع", "وحدة الاحتساب", "المستحق", "المدفوع", "الصافي"] if ar else \
-            ["Type", "Billing unit", "Due", "Paid", "Net"]
+    head += ["النوع", "وحدة الاحتساب", "المستحق", "المدفوع", "دفعات مقدمة", "الصافي"] if ar else \
+            ["Type", "Billing unit", "Due", "Paid", "Advances", "Net"]
     rows, i = [head], 0
     for g in data["groups"]:
         for a in g["accounts"]:
@@ -1276,12 +1346,15 @@ def debt_summary_xlsx(ctx):
             rows.append([i, a["name_ar"] if ar else (a["name_en"] or a["name_ar"]),
                          g["label_ar"] if ar else g["label_en"],
                          a["unit_label_ar"] if ar else a["unit_label_en"],
-                         money_str(a["due_cents"]), money_str(a["paid_cents"]), money_str(a["net_cents"])])
+                         money_str(a["due_cents"]), money_str(a["paid_cents"]),
+                         money_str(a["advance_cents"]), money_str(a["net_cents"])])
         rows.append(["", ("اجمالي " if ar else "Total ") + (g["label_ar"] if ar else g["label_en"]), "", "",
-                     money_str(g["due_cents"]), money_str(g["paid_cents"]), money_str(g["net_cents"])])
+                     money_str(g["due_cents"]), money_str(g["paid_cents"]),
+                     money_str(g["advance_cents"]), money_str(g["net_cents"])])
     t = data["totals"]
     rows.append(["", "إجمالي المديونية" if ar else "Total debt", "", "",
-                 money_str(t["due_cents"]), money_str(t["paid_cents"]), money_str(t["net_cents"])])
+                 money_str(t["due_cents"]), money_str(t["paid_cents"]),
+                 money_str(t["advance_cents"]), money_str(t["net_cents"])])
     out = exporter.report_xlsx("حساب المديونية" if ar else "Debt summary", rows[0], rows[1:], rtl=ar)
     audit(ctx.conn, ctx.user, "debt_summary.xlsx", "debt_summary", None, {}, company_id=cid)
     return {"__file__": True, "content": out,
@@ -1298,23 +1371,27 @@ def debt_summary_pdf(ctx):
     d2 = ctx.qs.get("to") or None
     data = debt.summary(ctx.conn, cid, d1, d2)
     cols = [{"ar": "م", "en": "#", "w": 0.5, "align": "center", "rtl": False},
-            {"ar": "البيان", "en": "Statement", "w": 3.2},
-            {"ar": "النوع", "en": "Type", "w": 1.4},
-            {"ar": "المستحق", "en": "Due", "w": 1.4, "align": "center", "rtl": False},
-            {"ar": "المدفوع", "en": "Paid", "w": 1.4, "align": "center", "rtl": False},
-            {"ar": "الصافي", "en": "Net", "w": 1.4, "align": "center", "rtl": False}]
+            {"ar": "البيان", "en": "Statement", "w": 3.0},
+            {"ar": "النوع", "en": "Type", "w": 1.3},
+            {"ar": "المستحق", "en": "Due", "w": 1.3, "align": "center", "rtl": False},
+            {"ar": "المدفوع", "en": "Paid", "w": 1.3, "align": "center", "rtl": False},
+            {"ar": "دفعات مقدمة", "en": "Advances", "w": 1.3, "align": "center", "rtl": False},
+            {"ar": "الصافي", "en": "Net", "w": 1.3, "align": "center", "rtl": False}]
     rows, i = [], 0
     for g in data["groups"]:
         for a in g["accounts"]:
             i += 1
             rows.append([str(i), a["name_ar"] if ar else a["name_en"] or a["name_ar"],
                          g["label_ar"] if ar else g["label_en"],
-                         money_str(a["due_cents"]), money_str(a["paid_cents"]), money_str(a["net_cents"])])
+                         money_str(a["due_cents"]), money_str(a["paid_cents"]),
+                         money_str(a["advance_cents"]), money_str(a["net_cents"])])
         rows.append(["", ("اجمالي " if ar else "Total ") + (g["label_ar"] if ar else g["label_en"]), "", "",
-                     money_str(g["due_cents"]), money_str(g["paid_cents"]), money_str(g["net_cents"])])
+                     money_str(g["due_cents"]), money_str(g["paid_cents"]),
+                     money_str(g["advance_cents"]), money_str(g["net_cents"])])
     t = data["totals"]
     rows.append(["", "إجمالي المديونية" if ar else "Total debt", "", "",
-                 money_str(t["due_cents"]), money_str(t["paid_cents"]), money_str(t["net_cents"])])
+                 money_str(t["due_cents"]), money_str(t["paid_cents"]),
+                 money_str(t["advance_cents"]), money_str(t["net_cents"])])
     company = exporter.company_block(ctx.conn, cid)
     out = exporter.report_pdf("حساب المديونية", "Debt summary", cols, rows, company=company, lang=lang,
                               subtitle_ar=f"من {d1 or 'البداية'} إلى {d2 or 'اليوم'}",
@@ -1378,13 +1455,17 @@ def debt_statement_xlsx(ctx, account_id):
                      money_str(it["amount_cents"])])
     rows.append(["", "إجمالي المستحق" if ar else "Total due", "", "", "", "", money_str(st["totals"]["due_cents"])])
     rows.append([])
-    rows.append(["اذن صرف", "التاريخ", "المبلغ", "طريقة السداد", "المستلم/الصارف"] if ar else
-                ["Voucher", "Date", "Amount", "Method", "Payee"])
+    rows.append(["اذن صرف", "التاريخ", "المبلغ", "البيان", "طريقة السداد", "المستلم/الصارف"] if ar else
+                ["Voucher", "Date", "Amount", "Statement", "Method", "Payee"])
     for p in sorted(st["payments"], key=lambda x: (x["pay_date"], x["id"])):
         rows.append([p["voucher_no"] or p["payment_no"], p["pay_date"], money_str(p["amount_cents"]),
+                     p["description"] or ("دفعة مقدمة" if p["advance_cents"] else ""),
                      p["method_label_ar"], p["payee"] or ""])
-    rows.append(["", "اجمالي الدفعات المستلمة" if ar else "Total paid", money_str(st["totals"]["paid_cents"]), "", ""])
-    rows.append(["", "صافي المستحق" if ar else "Net due", money_str(st["totals"]["net_cents"]), "", ""])
+    rows.append(["", "اجمالي الدفعات المستلمة" if ar else "Total paid", money_str(st["totals"]["paid_cents"]), "", "", ""])
+    if st["totals"]["advance_cents"]:
+        rows.append(["", "دفعات مقدمة (لم تُقابلها فاتورة)" if ar else "Advances (no invoice yet)",
+                     money_str(st["totals"]["advance_cents"]), "", "", ""])
+    rows.append(["", "صافي المستحق" if ar else "Net due", money_str(st["totals"]["net_cents"]), "", "", ""])
     out = exporter.report_xlsx(title, rows[0], rows[1:], rtl=ar)
     audit(ctx.conn, ctx.user, "debt_statement.xlsx", "debt_account", int(account_id), {}, company_id=cid)
     return {"__file__": True, "content": out,
@@ -1414,8 +1495,13 @@ def debt_statement_pdf(ctx, account_id):
     rows.append(["", "إجمالي المستحق" if ar else "Total due", "", "", money_str(st["totals"]["due_cents"])])
     rows.append(["", "", "", "الدفعات المستلمة" if ar else "Paid", money_str(st["totals"]["paid_cents"])])
     for p in sorted(st["payments"], key=lambda x: (x["pay_date"], x["id"])):
-        rows.append([p["pay_date"], (f"اذن صرف {p['voucher_no']}" if p["voucher_no"] else p["payment_no"]),
-                     "", p["method_label_ar"], money_str(p["amount_cents"])])
+        voucher = f"اذن صرف {p['voucher_no']}" if p["voucher_no"] else p["payment_no"]
+        if p["description"]:
+            voucher += f" — {p['description']}"
+        rows.append([p["pay_date"], voucher, "", p["method_label_ar"], money_str(p["amount_cents"])])
+    if st["totals"]["advance_cents"]:
+        rows.append(["", "دفعات مقدمة (لم تُقابلها فاتورة)", "", "",
+                     money_str(st["totals"]["advance_cents"])])
     rows.append(["", "صافي المستحق" if ar else "Net due", "", "", money_str(st["totals"]["net_cents"])])
     company = exporter.company_block(ctx.conn, cid)
     out = exporter.report_pdf(f"كشف حساب — {acc['name_ar']}", f"Statement — {acc['name_en'] or acc['name_ar']}",

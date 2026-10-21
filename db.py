@@ -57,6 +57,29 @@ def init_db(force: bool = False) -> None:
     conn.close()
 
 
+# Additive column migrations: (table, column, SQL type/definition).
+# `schema.sql` is re-applied to existing databases, but CREATE TABLE IF NOT EXISTS
+# never adds a column to a table that already exists — these do.
+COLUMN_MIGRATIONS = [
+    ("debt_payments", "description", "TEXT"),
+    ("debt_payments", "advance_cents", "INTEGER NOT NULL DEFAULT 0"),
+]
+
+
+def _ensure_columns(conn) -> None:
+    for table, column, ddl in COLUMN_MIGRATIONS:
+        try:
+            cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        except sqlite3.Error:
+            continue
+        if not cols or column in cols:
+            continue
+        try:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+        except sqlite3.Error:
+            pass
+
+
 def migrate() -> None:
     """Apply additive, idempotent schema changes to an existing database.
 
@@ -80,6 +103,7 @@ def migrate() -> None:
                     conn.execute(stmt)
                 except sqlite3.Error:
                     pass
+        _ensure_columns(conn)
         _sync_system_roles(conn)
     finally:
         conn.close()

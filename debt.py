@@ -133,6 +133,28 @@ def _drop_entry(conn, entry_id) -> None:
     conn.execute("DELETE FROM journal_entries WHERE id=?", (entry_id,))
 
 
+def _outstanding_before(conn, company_id: int, account_id: int, exclude_payment_id=None,
+                        exclude_item_id=None) -> int:
+    """Due (incl. opening balance) minus settlements already posted.
+
+    Used to decide whether a new settlement covers real dues or is an advance
+    (دفعة مقدمة) taken before the invoice/trip statement exists. The document
+    being posted is still a draft at this point, so it never counts as paid.
+    """
+    acc = conn.execute("SELECT opening_balance_cents FROM debt_accounts WHERE id=?",
+                       (account_id,)).fetchone()
+    opening = int(acc["opening_balance_cents"] or 0) if acc else 0
+    due = conn.execute(
+        "SELECT COALESCE(SUM(amount_cents),0) AS s FROM debt_items "
+        "WHERE company_id=? AND account_id=? AND status='posted' AND id<>?",
+        (company_id, account_id, exclude_item_id or -1)).fetchone()["s"]
+    paid = conn.execute(
+        "SELECT COALESCE(SUM(amount_cents),0) AS s FROM debt_payments "
+        "WHERE company_id=? AND account_id=? AND status='posted' AND id<>?",
+        (company_id, account_id, exclude_payment_id or -1)).fetchone()["s"]
+    return opening + int(due) - int(paid)
+
+
 def _totals(conn, company_id: int, account_id: int, d1: str | None = None, d2: str | None = None) -> dict:
     where = ["company_id=?", "account_id=?", "status='posted'"]
     params: list = [company_id, account_id]
@@ -176,6 +198,8 @@ def list_accounts(conn, company_id: int) -> list:
         r["due_cents"] = int(r["due_cents"])
         r["opening_balance_cents"] = int(r["opening_balance_cents"] or 0)
         r["net_cents"] = r["opening_balance_cents"] + r["due_cents"] - r["paid_cents"]
+        r["advance_cents"] = max(0, -r["net_cents"])          # دفعات مقدمة
+        r["open_due_cents"] = max(0, r["net_cents"])
         r["kind_label_ar"], r["kind_label_en"] = KINDS.get(r["kind"], KINDS["other"])
         r["unit_label_ar"], r["unit_label_en"] = UNITS.get(r["billing_unit"], UNITS["item"])
     return rows
@@ -353,7 +377,18 @@ def _post_payment(conn, user, company_id: int, payment_id: int) -> int:
     acc = _account(conn, company_id, pay["account_id"])
     debit = payable_account(conn, company_id)
     credit = pay["gl_account_id"] or _gl(conn, company_id, ACC_CASH)
-    label = f"سداد {acc['name_ar']}" + (f" — اذن صرف {pay['voucher_no']}" if pay["voucher_no"] else "")
+    # A settlement larger than what the account owes is an advance (دفعة مقدمة)
+    # taken before the invoice / trip statement is issued: the excess sits as a
+    # debit on the contractor control account and is consumed automatically by
+    # the next due line booked to the same account.
+    outstanding = _outstanding_before(conn, company_id, acc["id"], exclude_payment_id=payment_id)
+    advance = max(0, int(pay["amount_cents"]) - max(0, outstanding))
+    conn.execute("UPDATE debt_payments SET advance_cents=? WHERE id=?", (advance, payment_id))
+    kind = "دفعة مقدمة" if advance and advance == int(pay["amount_cents"]) else (
+        "سداد جزئي بدفعة مقدمة" if advance else "سداد")
+    label = f"{kind} {acc['name_ar']}" + (f" — اذن صرف {pay['voucher_no']}" if pay["voucher_no"] else "")
+    if pay["description"]:
+        label += f" — {pay['description']}"
     je = accounting.auto_post_entry(
         conn, user, company_id=company_id, entry_date=pay["pay_date"],
         memo=f"سداد مديونية {pay['payment_no']} — {acc['name_ar']}",
@@ -481,10 +516,11 @@ def create_payment(conn, user, company_id: int, body: dict) -> int:
     no = accounting.next_number(conn, company_id, "debt_payment", pay_date)
     cur = conn.execute(
         """INSERT INTO debt_payments (company_id, account_id, payment_no, voucher_no, pay_date,
-              amount_cents, method, gl_account_id, payee, status, notes, created_by, created_at)
-           VALUES (?,?,?,?,?,?,?,?,?,'draft',?,?,?)""",
+              amount_cents, method, gl_account_id, payee, description, status, notes, created_by, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,'draft',?,?,?)""",
         (company_id, acc["id"], no, (body.get("voucher_no") or "").strip() or None, pay_date, amount,
-         method, gl, body.get("payee"), body.get("notes"), user["id"], utcnow()))
+         method, gl, body.get("payee"), (body.get("description") or "").strip() or None,
+         body.get("notes"), user["id"], utcnow()))
     pay_id = cur.lastrowid
     if body.get("post", True):
         _post_payment(conn, user, company_id, pay_id)
@@ -511,11 +547,14 @@ def update_payment(conn, user, company_id: int, payment_id: int, body: dict) -> 
     was_posted = pay["status"] == "posted"
     if was_posted:
         _detach_entry(conn, "debt_payments", payment_id, pay["journal_entry_id"])
+    description = body.get("description") if body.get("description") is not None else pay["description"]
     conn.execute(
         """UPDATE debt_payments SET pay_date=?, amount_cents=?, method=?, gl_account_id=?, voucher_no=?,
-              payee=?, notes=?, status='draft', journal_entry_id=NULL, updated_at=? WHERE id=?""",
+              payee=?, description=?, notes=?, status='draft', journal_entry_id=NULL, advance_cents=0,
+              updated_at=? WHERE id=?""",
         (pay_date, amount, method, gl, (voucher or "").strip() or None,
          body.get("payee") if body.get("payee") is not None else pay["payee"],
+         (description or "").strip() or None,
          body.get("notes") if body.get("notes") is not None else pay["notes"], utcnow(), payment_id))
     post = body.get("post", was_posted)
     if post:
@@ -546,6 +585,9 @@ def statement(conn, company_id: int, account_id: int, d1: str | None = None, d2:
     payments = list_payments(conn, company_id, account_id, d1, d2)
     t = _totals(conn, company_id, account_id, d1, d2)
     opening = int(acc["opening_balance_cents"] or 0)
+    gross_due = opening + t["due_cents"]
+    advance = max(0, t["paid_cents"] - gross_due)         # paid with no due to cover yet
+    open_due = max(0, gross_due - t["paid_cents"])        # still owed to the contractor
     return {
         "account": dict(acc) | {
             "kind_label_ar": KINDS.get(acc["kind"], KINDS["other"])[0],
@@ -559,7 +601,9 @@ def statement(conn, company_id: int, account_id: int, d1: str | None = None, d2:
             "opening_cents": opening,
             "due_cents": t["due_cents"],
             "paid_cents": t["paid_cents"],
-            "net_cents": opening + t["due_cents"] - t["paid_cents"],
+            "net_cents": gross_due - t["paid_cents"],
+            "advance_cents": advance,      # دفعات مقدمة لم تُقابلها فاتورة بعد
+            "open_due_cents": open_due,    # ما زال مستحقًا للمقاول
         },
         "range": {"from": d1, "to": d2},
     }
@@ -572,6 +616,8 @@ def summary(conn, company_id: int, d1: str | None = None, d2: str | None = None)
             t = _totals(conn, company_id, a["id"], d1, d2)
             a["due_cents"], a["paid_cents"] = t["due_cents"], t["paid_cents"]
             a["net_cents"] = a["opening_balance_cents"] + t["due_cents"] - t["paid_cents"]
+            a["advance_cents"] = max(0, -a["net_cents"])
+            a["open_due_cents"] = max(0, a["net_cents"])
     groups = []
     for code, (label_ar, label_en) in KINDS.items():
         rows = [a for a in accounts if a["kind"] == code]
@@ -582,6 +628,7 @@ def summary(conn, company_id: int, d1: str | None = None, d2: str | None = None)
             "due_cents": sum(r["due_cents"] for r in rows),
             "paid_cents": sum(r["paid_cents"] for r in rows),
             "net_cents": sum(r["net_cents"] for r in rows),
+            "advance_cents": sum(r["advance_cents"] for r in rows),
         })
     return {
         "groups": groups,
@@ -591,7 +638,40 @@ def summary(conn, company_id: int, d1: str | None = None, d2: str | None = None)
             "due_cents": sum(a["due_cents"] for a in accounts),
             "paid_cents": sum(a["paid_cents"] for a in accounts),
             "net_cents": sum(a["net_cents"] for a in accounts),
+            "advance_cents": sum(a["advance_cents"] for a in accounts),
+            "open_due_cents": sum(a["open_due_cents"] for a in accounts),
             "accounts": len(accounts),
         },
         "range": {"from": d1, "to": d2},
     }
+
+
+def invoices_statement(conn, company_id: int, d1: str | None = None, d2: str | None = None,
+                       account_id: int | None = None) -> dict:
+    """بيان الفواتير — every due line (invoice / trip statement) in one place.
+
+    This is the paper «بيان» the accountant hands over: البيان، الحساب، التاريخ،
+    الكمية، فئة الوحدة، الإجمالي — across all contractors, with filters and the
+    coverage state (مسدَّد / غير مسدَّد) computed per account.
+    """
+    items = list_items(conn, company_id, account_id, d1, d2)
+    accounts = {a["id"]: a for a in list_accounts(conn, company_id)}
+    rows = []
+    for it in items:
+        acc = accounts.get(it["account_id"], {})
+        rows.append({
+            **it,
+            "account_name": acc.get("name_ar"),
+            "account_kind_ar": acc.get("kind_label_ar"),
+            "unit_label_ar": it.get("unit_label_ar"),
+            "paid_state": "posted" if it["status"] == "posted" else "draft",
+        })
+    totals = {
+        "rows": len(rows),
+        "amount_cents": sum(r["amount_cents"] for r in rows if r["status"] == "posted"),
+        "draft_cents": sum(r["amount_cents"] for r in rows if r["status"] != "posted"),
+    }
+    return {"items": rows, "totals": totals,
+            "accounts": [{"id": a["id"], "code": a["code"], "name_ar": a["name_ar"],
+                          "advance_cents": a.get("advance_cents", 0)} for a in accounts.values()],
+            "range": {"from": d1, "to": d2}}

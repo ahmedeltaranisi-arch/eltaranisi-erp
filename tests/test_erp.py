@@ -1254,6 +1254,94 @@ class ERPTestCase(unittest.TestCase):
         self.assertTrue(body.startswith(b"%PDF"), "statement PDF must be a real PDF")
         self.assertIn("application/pdf", ctype)
 
+    def test_B130_settlement_without_any_due_is_an_advance(self):
+        """A settlement recorded before the invoice/trip statement arrives must be
+        treated as دفعة مقدمة, not silently netted into nothing."""
+        acc = self._debt_account()
+        status, res = self.owner.post("/api/debt/payments", {
+            "account_id": acc, "pay_date": self.today(), "amount": 100000, "method": "bank",
+            "voucher_no": "5001", "payee": "محمود مراد",
+            "description": "دفعة مقدمة لحين استخراج الفاتورة"})
+        self.assertEqual(status, 200, res)
+        pay = self.owner.get(f"/api/debt/payments?account_id={acc}")[1]["payments"][0]
+        self.assertEqual(pay["advance_cents"], 10_000_000,
+                         "the whole settlement is an advance when nothing is owed yet")
+        self.assertEqual(pay["description"], "دفعة مقدمة لحين استخراج الفاتورة")
+        st = self.owner.get(f"/api/debt/accounts/{acc}")[1]
+        self.assertEqual(st["totals"]["due_cents"], 0)
+        self.assertEqual(st["totals"]["paid_cents"], 10_000_000)
+        self.assertEqual(st["totals"]["advance_cents"], 10_000_000)
+        self.assertEqual(st["totals"]["open_due_cents"], 0)
+        self.assertEqual(st["totals"]["net_cents"], -10_000_000)
+        # the voucher says so in the ledger narration too
+        je = self.owner.get(f"/api/journal-entries/{pay['journal_entry_id']}")[1]
+        self.assertTrue(any("دفعة مقدمة" in (l["description"] or "") for l in je["lines"]))
+        # and the summary reports it as an advance rather than a payable
+        row = next(a for a in self.owner.get("/api/debt/summary")[1]["accounts"] if a["id"] == acc)
+        self.assertEqual(row["advance_cents"], 10_000_000)
+        self.assertEqual(row["open_due_cents"], 0)
+
+    def test_B131_advance_is_consumed_by_the_next_invoice(self):
+        acc = self._debt_account()
+        self.owner.post("/api/debt/payments", {"account_id": acc, "pay_date": self.today(),
+                                               "amount": 100000, "method": "bank", "voucher_no": "6001"})
+        self.owner.post("/api/debt/items", {"account_id": acc, "doc_date": self.today(),
+                                            "description": "نولون 508 طن", "qty": 508, "unit": "ton",
+                                            "unit_rate": 550})
+        st = self.owner.get(f"/api/debt/accounts/{acc}")[1]
+        self.assertEqual(st["totals"]["due_cents"], 27_940_000)
+        self.assertEqual(st["totals"]["advance_cents"], 0,
+                         "the advance must be absorbed by the invoice once it exists")
+        self.assertEqual(st["totals"]["open_due_cents"], 17_940_000)
+        self.assertEqual(st["totals"]["net_cents"], 17_940_000)
+
+    def test_B132_only_the_excess_over_the_balance_is_an_advance(self):
+        acc = self._debt_account()
+        self.owner.post("/api/debt/items", {"account_id": acc, "doc_date": self.today(),
+                                            "description": "تفريغ", "qty": 100, "unit": "ton",
+                                            "unit_rate": 500})                      # 50,000 due
+        status, res = self.owner.post("/api/debt/payments", {
+            "account_id": acc, "pay_date": self.today(), "amount": 70000, "method": "cash"})
+        self.assertEqual(status, 200, res)
+        pay = self.owner.get(f"/api/debt/payments?account_id={acc}")[1]["payments"][0]
+        self.assertEqual(pay["advance_cents"], 2_000_000,   # 20,000 EGP of the 70,000
+                         "only the part above the outstanding balance is an advance")
+        st = self.owner.get(f"/api/debt/accounts/{acc}")[1]
+        self.assertEqual(st["totals"]["advance_cents"], 2_000_000)
+        self.assertEqual(st["totals"]["open_due_cents"], 0)
+
+    def test_B133_settlement_statement_text_is_saved_and_editable(self):
+        acc = self._debt_account()
+        pid = self.owner.post("/api/debt/payments", {
+            "account_id": acc, "pay_date": self.today(), "amount": 1000, "method": "cash",
+            "description": "دفعة مقدمة"})[1]["id"]
+        self.assertEqual(self.owner.get(f"/api/debt/payments?account_id={acc}")[1]["payments"][0]["description"],
+                         "دفعة مقدمة")
+        status, out = self.owner.patch(f"/api/debt/payments/{pid}", {
+            "description": "دفعة مقدمة — جرار محمد نجيب"})
+        self.assertEqual(status, 200, out)
+        pay = self.owner.get(f"/api/debt/payments?account_id={acc}")[1]["payments"][0]
+        self.assertEqual(pay["description"], "دفعة مقدمة — جرار محمد نجيب")
+        self.assertEqual(pay["status"], "posted", "editing the narration keeps the voucher posted")
+        self.assertEqual(pay["advance_cents"], 100_000)
+
+    def test_B134_invoice_statement_lists_every_due_line(self):
+        acc = self._debt_account()
+        self.owner.post("/api/debt/items", {"account_id": acc, "doc_date": self.today(),
+                                            "description": "بيان فاتورة اختبار", "qty": 2, "unit": "trip",
+                                            "unit_rate": 1000})
+        status, data = self.owner.get("/api/debt/invoices")
+        self.assertEqual(status, 200, data)
+        row = next(r for r in data["items"] if r["description"] == "بيان فاتورة اختبار")
+        self.assertTrue(row["account_name"])
+        self.assertEqual(row["amount_cents"], 200_000)
+        self.assertEqual(data["totals"]["amount_cents"],
+                         sum(r["amount_cents"] for r in data["items"] if r["status"] == "posted"))
+        for path, sig in (("/api/debt/invoices/xlsx", b"PK"), ("/api/debt/invoices/pdf", b"%PDF")):
+            status, body, ctype = self._raw_get(path)
+            self.assertEqual(status, 200)
+            self.assertTrue(body.startswith(sig), path)
+
     def test_B126_debt_permissions_are_enforced_server_side(self):
         acc = self._debt_account()
         status, _ = self.sales.get("/api/debt/summary")

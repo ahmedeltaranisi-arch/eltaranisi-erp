@@ -848,6 +848,31 @@ paths:
       summary: Debt summary Excel
       responses:
         "200": { description: XLSX }
+  /api/debt/invoices:
+    get:
+      tags: [debt]
+      summary: بيان الفواتير — every due line of every contractor in one list
+      parameters:
+        - { in: query, name: from, schema: { type: string, format: date } }
+        - { in: query, name: to, schema: { type: string, format: date } }
+        - { in: query, name: account_id, schema: { type: integer } }
+      responses:
+        "200": { description: Invoice statement rows plus totals }
+        "403": { $ref: "#/components/responses/Error" }
+  /api/debt/invoices/pdf:
+    get:
+      tags: [debt]
+      summary: Invoice statement PDF
+      parameters:
+        - { in: query, name: lang, schema: { type: string, enum: [ar, en] } }
+      responses:
+        "200": { description: PDF }
+  /api/debt/invoices/xlsx:
+    get:
+      tags: [debt]
+      summary: Invoice statement Excel (RTL)
+      responses:
+        "200": { description: XLSX }
 
 components:
   schemas:
@@ -906,6 +931,7 @@ components:
         gl_account_id: { type: integer }
         voucher_no: { type: string, example: "4412" }
         payee: { type: string, example: "أحمد تاج" }
+        description: { type: string, example: "دفعة مقدمة لحين استخراج الفاتورة" }
         notes: { type: string }
         post: { type: boolean, default: true }
     User:

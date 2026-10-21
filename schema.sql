@@ -793,6 +793,8 @@ CREATE TABLE IF NOT EXISTS debt_payments (
     method           TEXT NOT NULL DEFAULT 'cash',
     gl_account_id    INTEGER REFERENCES accounts(id),
     payee            TEXT,
+    description      TEXT,                                  -- البيان (e.g. دفعة مقدمة لحين استخراج الفاتورة)
+    advance_cents    INTEGER NOT NULL DEFAULT 0,            -- portion paid with no due to cover = دفعة مقدمة
     status           TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','posted')),
     journal_entry_id INTEGER REFERENCES journal_entries(id),
     notes            TEXT,

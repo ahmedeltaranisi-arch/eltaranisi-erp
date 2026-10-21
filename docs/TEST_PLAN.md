@@ -154,3 +154,18 @@ Manual / headless checks: the debt page renders 7 type groups with edit + delete
 side by side on every row; the statement page shows the invoice-style table
 (`البيان | الوحدة | الكمية | فئة الوحدة | الإجمالي المستحق`), the payments table
 with اذن صرف, and the three totals (المستحق / المدفوع / الصافي).
+
+### Round j+1 — advances (دفعات مقدمة) & invoice statement
+
+| Test | What it proves |
+|---|---|
+| `test_B130_settlement_without_any_due_is_an_advance` | a settlement on an account with no dues gets `advance_cents` = the full amount, the statement reports `advance_cents` with `net_cents` negative, the journal narration says «دفعة مقدمة», and the summary counts it as an advance not a payable |
+| `test_B131_advance_is_consumed_by_the_next_invoice` | when the invoice (due line) is added later the advance is absorbed automatically: `advance_cents` → 0 and `open_due_cents` = due − paid |
+| `test_B132_only_the_excess_over_the_balance_is_an_advance` | a 70,000 settlement against 50,000 of dues books 20,000 as the advance, not the whole voucher |
+| `test_B133_settlement_statement_text_is_saved_and_editable` | the بيان السداد is stored, returned in the list, editable via PATCH, and the voucher stays posted with its advance classification |
+| `test_B134_invoice_statement_lists_every_due_line` | «بيان الفواتير» returns every due line with its account name and totals, and the XLSX/PDF exports are real files |
+
+Manual / headless: the settlement form shows the outstanding balance and the
+«no dues yet → recorded as an advance» hint; the statement shows the advances
+card and the «دفعة مقدمة» badge; `#/debt-invoices` renders the consolidated
+invoice statement.

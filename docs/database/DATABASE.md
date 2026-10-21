@@ -62,7 +62,7 @@ journal_lines(
 |---|---|---|
 | `debt_accounts` | حساب مديونية لكل مقاول/مورد | `code`, `kind` (contractor/labor/equipment/transport/fuel/workshop/supplies/other), `billing_unit` (ton/trip/container/hour/month/item), `expense_account_id`, `vendor_id`, `opening_balance_cents`, `is_active` |
 | `debt_items` | سطر مستحق (البيان) | `item_no` (DEB-YYYY-NNNNN), `doc_date`, `description`, `operation` (شحن/تفريغ/نقل/إيجار/مشتريات), `qty_milli`, `unit`, `unit_rate_cents`, `amount_cents`, `vessel`, `client_name`, `cargo`, `period_from`, `period_to`, `report_no`, `status`, `journal_entry_id` |
-| `debt_payments` | سداد (اذن صرف) | `payment_no` (DPV-YYYY-NNNNN), `voucher_no`, `pay_date`, `amount_cents`, `method`, `gl_account_id`, `payee`, `status`, `journal_entry_id` |
+| `debt_payments` | سداد (اذن صرف) | `payment_no` (DPV-YYYY-NNNNN), `voucher_no`, `pay_date`, `amount_cents`, `description` (بيان السداد), `advance_cents` (الجزء المُصنَّف دفعة مقدمة), `method`, `gl_account_id`, `payee`, `status`, `journal_entry_id` |
 
 * `amount_cents = round(qty_milli × unit_rate_cents / 1000)` ما لم يُدخَل المبلغ صريحًا.
 * حساب التحكم المستخدم هو **2120 مستحقات المقاولين والموردين المتنوعين** (يُنشأ تلقائيًا على
@@ -72,6 +72,12 @@ journal_lines(
 * كل مستحق/سداد مرحّل يملك `journal_entry_id`؛ وعند التعديل تُفصل العلاقة
   (`journal_entry_id = NULL`) ثم يُحذف القيد القديم ويُنشأ قيد جديد — لذلك لا
   تصطدم قيود المفاتيح الأجنبية عند الإلغاء وإعادة الترحيل.
+* **الدفعة المقدمة**: `debt_payments.advance_cents` يُحسب لحظة الترحيل =
+  `max(0, المبلغ − المستحق القائم)`. الرصيد المدين الناتج على حساب المقاول يُمثّل
+  الدفعة المقدمة، ويستهلكه أول مستحق يُسجَّل لاحقًا (لا جدول تطبيقات ولا خطوة يدوية).
+* **الترقية**: عمودا `description` و`advance_cents` يُضافان تلقائيًا لقواعد
+  البيانات القديمة عبر `db.COLUMN_MIGRATIONS` + `_ensure_columns` (ALTER TABLE
+  إضافي idempotent) — لا حاجة لإعادة بناء القاعدة.
 * فهارس: `(company_id, account_id, doc_date)` و`(company_id, account_id, pay_date)` و`(company_id, kind)`.
 
 ### 2.2 عرض التقارير

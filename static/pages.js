@@ -1303,6 +1303,8 @@
           { key: "items_count", label: t("debt.items"), cls: "num", render: r => `${r.items_count || 0}` },
           { key: "due_cents", label: t("debt.due"), cls: "num", render: r => fmtMoney(r.due_cents) },
           { key: "paid_cents", label: t("debt.paid"), cls: "num", render: r => fmtMoney(r.paid_cents) },
+          { key: "advance_cents", label: t("debt.advance"), cls: "num",
+            render: r => r.advance_cents ? `<span class="badge green">${fmtMoney(r.advance_cents)}</span>` : "—" },
           { key: "net_cents", label: t("debt.net"), cls: "num",
             render: r => `<strong class="${r.net_cents < 0 ? "neg" : ""}">${fmtMoney(r.net_cents)}</strong>` },
           { key: "act", cls: "act", label: t("common.actions"), render: r => `
@@ -1312,19 +1314,22 @@
         ], g.accounts, { compact: true, footer: `<tr class="foot-total">
             <td colspan="4">${ESC((ar ? "إجمالي " : "Total ") + (ar ? g.label_ar : g.label_en))}</td>
             <td class="num">${fmtMoney(g.due_cents)}</td><td class="num">${fmtMoney(g.paid_cents)}</td>
+            <td class="num">${g.advance_cents ? fmtMoney(g.advance_cents) : "—"}</td>
             <td class="num">${fmtMoney(g.net_cents)}</td><td></td></tr>` }))}
       `).join("");
 
       view.innerHTML = `${pageHead("debt.title", "debt.subtitle",
         `<div class="doc-toolbar">
            ${can("debt.create") ? `<button class="btn btn-primary btn-sm" id="debt-new">${icon("plus")} ${ESC(t("debt.newAccount"))}</button>` : ""}
+           <button class="btn btn-sm" id="debt-invoices-link">${icon("reports")} ${ESC(t("debt.invoiceStatement"))}</button>
            <button class="btn btn-sm" data-export="/api/debt/summary/xlsx" data-name="debt-summary.xlsx">${icon("chart")} Excel</button>
            <button class="btn btn-sm" data-preview="/api/debt/summary/pdf?lang=${APP.lang}">${icon("printer")} PDF</button>
          </div>`)}
         <div class="grid cols-4">
-          ${kpi({ label: t("debt.accountsCount"), value: T.accounts, icon: icon("accounts"), raw: true })}
           ${kpi({ label: t("debt.due"), value: T.due_cents, icon: icon("payables"), tone: "warn" })}
           ${kpi({ label: t("debt.paid"), value: T.paid_cents, icon: icon("check"), tone: "ok" })}
+          ${kpi({ label: t("debt.advance"), value: T.advance_cents, icon: icon("bank"),
+                  sub: ESC(L("لم تُقابلها فواتير بعد", "Not matched to invoices yet")) })}
           ${kpi({ label: t("debt.net"), value: T.net_cents, icon: icon("reports"), tone: T.net_cents > 0 ? "danger" : "" })}
         </div>
         ${data.groups.length ? groupHtml : `<div class="card"><div class="empty"><span class="big">${icon("debt", "ico-lg")}</span>
@@ -1332,12 +1337,15 @@
         ${card(t("debt.grandTotal"), `
           <div class="stat-line"><span>${ESC(t("debt.due"))}</span><strong>${fmtMoney(T.due_cents)}</strong></div>
           <div class="stat-line"><span>${ESC(t("debt.paid"))}</span><strong>${fmtMoney(T.paid_cents)}</strong></div>
+          <div class="stat-line"><span>${ESC(t("debt.advance"))}</span><strong>${fmtMoney(T.advance_cents)}</strong></div>
           <div class="stat-line"><span>${ESC(t("debt.net"))}</span><strong>${fmtMoney(T.net_cents)}</strong></div>
+          <p class="field-hint" style="margin-top:8px">${ESC(t("debt.advanceHint"))}</p>
           <p class="field-hint" style="margin-top:8px">${ESC(L(
             "كل سطر مستحق يُرحَّل تلقائيًا: مدين تكلفة الخدمة / دائن الموردون. وكل سداد: مدين الموردون / دائن الصندوق أو البنك.",
             "Every due line posts automatically: Dr cost of service / Cr trade payables. Every settlement: Dr payables / Cr cash or bank."))}</p>`)}
       `;
       if (can("debt.create")) $("#debt-new").onclick = () => debtAccountForm(null, meta);
+      $("#debt-invoices-link").onclick = () => { location.hash = "#/debt-invoices"; };
     },
   };
 
@@ -1358,6 +1366,50 @@
         { name: "notes", label: L("ملاحظات", "Notes"), value: r.notes || "" },
       ]);
   }
+
+  PAGES["debt-invoices"] = {
+    perm: "debt.view",
+    async render(view) {
+      const ar = APP.lang === "ar";
+      setTitle("debt.invoiceStatement");
+      const [meta, data] = await Promise.all([debtMeta(), api("/api/debt/invoices")]);
+      const T = data.totals;
+      const rows = data.items || [];
+      view.innerHTML = `${pageHead("debt.invoiceStatement", "debt.invoiceStatementSub",
+        `<div class="doc-toolbar">
+           <a class="btn btn-sm" href="#/debt">${icon("chevron")} ${ESC(t("debt.summary"))}</a>
+           <button class="btn btn-sm" data-export="/api/debt/invoices/xlsx" data-name="debt-invoices.xlsx">${icon("chart")} Excel</button>
+           <button class="btn btn-sm" data-preview="/api/debt/invoices/pdf?lang=${APP.lang}">${icon("printer")} PDF</button>
+         </div>`)}
+        <div class="grid cols-3">
+          ${kpi({ label: t("debt.rowsCount"), value: T.rows, icon: icon("reports"), raw: true })}
+          ${kpi({ label: t("debt.due"), value: T.amount_cents, icon: icon("payables"), tone: "warn" })}
+          ${kpi({ label: t("debt.draft"), value: T.draft_cents, icon: icon("journal") })}
+        </div>
+        <div class="section-title"><span>${ESC(t("debt.invoiceStatement"))}</span><span class="line"></span></div>
+        ${card("", renderTable([
+          { key: "doc_date", label: t("common.date"), render: r => `<span class="mono">${fmtDate(r.doc_date)}</span>` },
+          { key: "account_code", label: t("common.code"), render: r => `<span class="mono">${ESC(r.account_code)}</span>` },
+          { key: "account_name", label: t("debt.account"), cls: "wrap",
+            render: r => `<a href="#/debt/${r.account_id}"><strong>${ESC(r.account_name || "")}</strong></a>` },
+          { key: "description", label: t("debt.description"), cls: "wrap", render: r => `
+              ${ESC(r.description)}
+              <div class="small muted">${[r.operation, r.vessel, r.client_name, r.cargo, r.report_no].filter(Boolean).map(ESC).join(" · ")}</div>` },
+          { key: "qty_milli", label: t("debt.qty"), cls: "num",
+            render: r => r.qty_milli ? `${qtyText(r.qty_milli)} <small class="muted">${ESC(DEBT_UNIT_LABEL(r.unit))}</small>` : "—" },
+          { key: "unit_rate_cents", label: t("debt.rate"), cls: "num",
+            render: r => r.unit_rate_cents ? fmtMoney(r.unit_rate_cents) : "—" },
+          { key: "amount_cents", label: t("debt.due"), cls: "num", render: r => `<strong>${fmtMoney(r.amount_cents)}</strong>` },
+          { key: "item_no", label: L("الرمز التعريفي", "Reference ID"),
+            render: r => `<span class="mono small">${ESC(r.item_no)}</span>` },
+        ], rows, {
+          footer: `<tr class="foot-total"><td colspan="6">${ESC(t("debt.due"))}</td>
+            <td class="num">${fmtMoney(T.amount_cents)}</td><td></td></tr>`,
+          empty: t("debt.noItems"),
+        }))}
+      `;
+    },
+  };
 
   function debtAccountEditForm(a, meta) {
     openForm({
@@ -1466,7 +1518,11 @@
     const paysTable = renderTable([
       { key: "voucher_no", label: t("debt.voucher"), render: r => `<span class="mono">${ESC(r.voucher_no || r.payment_no)}</span>` },
       { key: "pay_date", label: t("common.date"), render: r => `<span class="mono">${fmtDate(r.pay_date)}</span>` },
-      { key: "amount_cents", label: t("debt.amount"), cls: "num", render: r => `<strong>${fmtMoney(r.amount_cents)}</strong>` },
+      { key: "amount_cents", label: t("debt.amount"), cls: "num",
+        render: r => `<strong>${fmtMoney(r.amount_cents)}</strong>${r.advance_cents
+            ? ` <span class="badge green" title="${ESC(t("debt.advanceHint"))}">${ESC(t("debt.advanceBadge"))}</span>` : ""}` },
+      { key: "description", label: t("debt.payDescription"), cls: "wrap",
+        render: r => ESC(r.description || (r.advance_cents ? t("debt.advanceBadge") : "—")) },
       { key: "method", label: L("طريقة السداد", "Method"), render: r => ESC(methodLabel(r.method)) },
       { key: "payee", label: t("debt.payee"), render: r => ESC(r.payee || "—") },
       { key: "status", label: t("common.status"), render: r => statusChip(r.status) },
@@ -1476,12 +1532,13 @@
             `سداد ${fmtMoney(r.amount_cents)} ${r.voucher_no ? `باذن صرف ${r.voucher_no}` : ""}`,
             `settlement ${fmtMoney(r.amount_cents)}`) : ""}` },
     ], st.payments, { footer: `<tr class="foot-total"><td colspan="2">${ESC(t("debt.paid"))}</td>
-        <td class="num">${fmtMoney(T.paid_cents)}</td><td colspan="4"></td></tr>`,
+        <td class="num">${fmtMoney(T.paid_cents)}</td><td colspan="5"></td></tr>`,
       empty: t("debt.noPayments") });
 
     view.innerHTML = `${pageHead("debt.statement", "debt.subtitle", `
         <div class="doc-toolbar">
           <a class="btn btn-sm" href="#/debt">${icon("chevron")} ${ESC(t("debt.summary"))}</a>
+          <a class="btn btn-sm" href="#/debt-invoices">${icon("reports")} ${ESC(t("debt.invoiceStatement"))}</a>
           ${can("debt.edit") ? `<button class="btn btn-sm" id="debt-edit-acc">${icon("edit")} ${ESC(L("تعديل الحساب", "Edit account"))}</button>` : ""}
           <button class="btn btn-sm" data-export="/api/debt/accounts/${a.id}/statement/xlsx" data-name="statement.xlsx">${icon("chart")} Excel</button>
           <button class="btn btn-sm" data-preview="/api/debt/accounts/${a.id}/statement/pdf?lang=${APP.lang}">${icon("printer")} PDF</button>
@@ -1499,6 +1556,8 @@
           <div style="display:flex;gap:26px;flex-wrap:wrap">
             <div><div class="small muted">${ESC(t("debt.due"))}</div><strong style="font-size:18px">${fmtMoney(T.due_cents)}</strong></div>
             <div><div class="small muted">${ESC(t("debt.paid"))}</div><strong style="font-size:18px">${fmtMoney(T.paid_cents)}</strong></div>
+            <div><div class="small muted">${ESC(t("debt.advance"))}</div>
+              <strong style="font-size:18px;color:${T.advance_cents ? "var(--ok)" : "var(--muted)"}">${fmtMoney(T.advance_cents || 0)}</strong></div>
             <div><div class="small muted">${ESC(t("debt.net"))}</div>
               <strong style="font-size:18px;color:${T.net_cents > 0 ? "var(--danger)" : "var(--ok)"}">${fmtMoney(T.net_cents)}</strong></div>
           </div>
@@ -1513,7 +1572,7 @@
     `;
     if (can("debt.create")) {
       $("#debt-new-item").onclick = () => debtItemForm(a, meta);
-      $("#debt-new-pay").onclick = () => debtPaymentForm(a, meta);
+      $("#debt-new-pay").onclick = () => debtPaymentForm(a, meta, null, T);
     }
     if (can("debt.edit")) $("#debt-edit-acc")?.addEventListener("click", () => debtAccountEditForm(a, meta));
   }
@@ -1584,8 +1643,9 @@
         aria-label="${ESC(L("تعديل", "Edit"))}">${icon("edit")}</button>`;
   }
 
-  function debtPaymentForm(a, meta, pay) {
+  function debtPaymentForm(a, meta, pay, totals) {
     const ar = APP.lang === "ar";
+    const owed = totals ? Math.max(0, totals.net_cents) : null;
     openForm({
       title: pay ? L("تعديل السداد", "Edit settlement") : `${t("debt.newPayment")} — ${a.name_ar}`,
       wide: true,
@@ -1601,6 +1661,10 @@
           value: pay ? (pay.gl_account_id || "") : (meta.cash_accounts.find(c => c.code === "1111")?.id ?? ""),
           options: meta.cash_accounts.map(c => ({ value: c.id, label: `${c.code} — ${ar ? c.name_ar : c.name_en}` })) },
         { name: "payee", label: t("debt.payee"), value: pay ? (pay.payee || "") : "" },
+        { name: "description", label: t("debt.payDescription"), span: 2,
+          value: pay ? (pay.description || "") : "", placeholder: t("debt.payDescriptionPh"),
+          hint: owed === 0 ? t("debt.advanceNote")
+            : (owed !== null ? `${t("debt.outstandingNow")}: ${fmtMoney(owed)} — ${t("debt.advanceHint")}` : t("debt.advanceHint")) },
         { name: "notes", label: L("ملاحظات", "Notes"), value: pay ? (pay.notes || "") : "", span: 2 },
       ],
       onSubmit: async (data) => {
@@ -1614,6 +1678,7 @@
           voucher_no: data.voucher_no || null, method: data.method,
           gl_account_id: data.gl_account_id ? Number(data.gl_account_id) : null,
           payee: data.payee || null, notes: data.notes || null,
+          description: (data.description || "").trim() || null,
         };
         if (pay) await api(`/api/debt/payments/${pay.id}`, { method: "PATCH", body });
         else await api("/api/debt/payments", { method: "POST", body });
@@ -1644,7 +1709,7 @@
         if (row) debtItemForm(st.account, meta, row);
       } else {
         const row = st.payments.find(x => String(x.id) === payBtn.dataset.debtEditPay);
-        if (row) debtPaymentForm(st.account, meta, row);
+        if (row) debtPaymentForm(st.account, meta, row, st.totals);
       }
     } catch (e) { toast(e.message, "err"); }
   });

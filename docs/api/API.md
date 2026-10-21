@@ -458,9 +458,23 @@ POST /api/payments
 
 ```json
 {"account_id":8,"pay_date":"2026-05-24","amount":50000,"method":"cash",
- "voucher_no":"4412","payee":"أحمد تاج","gl_account_id":4}
+ "voucher_no":"4412","payee":"أحمد تاج","gl_account_id":4,
+ "description":"دفعة مقدمة لحين استخراج الفاتورة"}
 ```
 `method`: `cash | bank | cheque | transfer` (تُقبل التسميات العربية).
+
+**الدفعة المقدمة / Advances:** قبل ترحيل أي سداد يحسب الخادم
+`outstanding = الرصيد الافتتاحي + المستحقات المرحّلة − السدادات المرحّلة`:
+
+| الحالة | `advance_cents` | الأثر |
+|---|---|---|
+| `amount ≤ outstanding` | `0` | سداد عادي: مدين 2120 بكامل المبلغ |
+| `amount > outstanding` | الفرق | الفرق يبقى رصيدًا مدينًا على حساب المقاول (دفعة مقدمة) ويُخصم تلقائيًا من أول مستحق جديد |
+| لا مستحقات | كامل المبلغ | دفعة مقدمة كاملة، مع وسم «دفعة مقدمة» في السجل ونص القيد |
+
+الاستجابة على الكشف تحتوي `totals.advance_cents` (دفعات مقدمة لم تُقابلها فاتورة) و
+`totals.open_due_cents` (ما زال مستحقًا) و`totals.net_cents = due − paid`.
+`description` (بيان السداد) قابل للتعديل بـ`PATCH` دون إعادة ترحيل.
 
 ### الملخّص والتصدير
 
@@ -470,6 +484,8 @@ POST /api/payments
 | `GET /api/debt/summary/xlsx` · `GET /api/debt/summary/pdf?lang=ar|en` | تصدير الملخّص |
 | `GET /api/debt/accounts/{id}/statement/xlsx` · `.../statement/pdf?lang=` | تصدير كشف الحساب (مستحقات + سدادات + الصافي) |
 | `GET /api/debt/meta` | الأنواع، الوحدات، طرق السداد، الصناديق/البنوك، حسابات المصروف، الموردون |
+| `GET /api/debt/invoices?from=&to=&account_id=` | **بيان الفواتير**: كل المستحقات/الفواتير لكل المقاولين في قائمة واحدة + إجماليات |
+| `GET /api/debt/invoices/xlsx` · `GET /api/debt/invoices/pdf?lang=ar|en` | تصدير بيان الفواتير |
 
 **صافي المستحق** = رصيد افتتاحي + إجمالي المستحق − الدفعات المستلمة، ويُحسب دائمًا
 على الخادم (لا في المتصفح). كل الطلبات مقيّدة بـ `company_id`، وكل استدعاء تصدير
