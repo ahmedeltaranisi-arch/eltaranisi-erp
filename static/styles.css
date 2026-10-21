@@ -1,5 +1,5 @@
 /* ============================================================
-   Eltaranisi ERP — Design system
+   ELTARANISI ERP — Design system
    ============================================================ */
 :root {
   --brand: #4f46e5;
@@ -906,3 +906,40 @@ table.data tbody tr:focus-within { background: color-mix(in srgb, var(--brand) 7
   color: var(--gold-ink); background: var(--gold-soft); border: 1px solid color-mix(in srgb, var(--gold) 35%, transparent);
   padding: 3px 9px; border-radius: 999px;
 }
+
+/* ---------- icon system ---------- */
+.ico-svg { width: 19px; height: 19px; display: block; flex: none; }
+.icon-btn .ico-svg { width: 18px; height: 18px; }
+.nav-item .ico { display: grid; place-items: center; width: 22px; height: 22px; }
+.nav-item .ico .ico-svg { width: 18px; height: 18px; opacity: .9; }
+.nav-item.active .ico .ico-svg { opacity: 1; }
+.caret .ico-svg { width: 14px; height: 14px; opacity: .6; }
+.btn .ico-svg { width: 16px; height: 16px; }
+.sidebar-toggle .ico-svg { transition: transform .2s ease; }
+.app.sidebar-collapsed .sidebar-toggle .ico-svg { transform: rotate(180deg); }
+
+/* ------------------------------------------------------------------
+   Icon system polish + destructive actions (2026-10 round)
+   ------------------------------------------------------------------ */
+.ico-svg { stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; vertical-align: middle; }
+.ico-sm { width: 14px; height: 14px; display: inline-block; }
+.ico-lg { width: 28px; height: 28px; display: inline-block; opacity: .5; }
+
+.icon-btn.danger { color: var(--danger, #c0392b); }
+.icon-btn.danger:hover { background: color-mix(in srgb, var(--danger, #c0392b) 12%, transparent); color: var(--danger, #c0392b); }
+[data-del-path] { cursor: pointer; }
+[data-del-path]:disabled { opacity: .45; cursor: progress; }
+
+.toast-ico { display: flex; align-items: center; }
+.toast-ico .ico-svg { width: 17px; height: 17px; }
+.toast.ok .toast-ico { color: var(--ok, #1e9e6a); }
+.toast.err .toast-ico { color: var(--danger, #c0392b); }
+
+.badge .ico-svg { width: 13px; height: 13px; }
+.empty .big { display: inline-flex; align-items: center; justify-content: center; }
+.stat-line strong .ico-svg { width: 15px; height: 15px; }
+td .icon-btn { width: 32px; height: 32px; }
+td .icon-btn .ico-svg { width: 16px; height: 16px; }
+.modal-foot .btn-danger, .btn-danger { background: var(--danger, #c0392b); border-color: transparent; color: #fff; }
+.btn-danger:hover { filter: brightness(1.06); }
+.export-menu summary .ico-svg, .export-menu [data-export] .ico-svg, .export-menu [data-preview] .ico-svg { width: 15px; height: 15px; }

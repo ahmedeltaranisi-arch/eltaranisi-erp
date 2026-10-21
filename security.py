@@ -1,4 +1,4 @@
-"""Authentication, RBAC and audit helpers for Eltaranisi ERP."""
+"""Authentication, RBAC and audit helpers for ELTARANISI ERP."""
 from __future__ import annotations
 
 import hashlib
@@ -94,6 +94,12 @@ PERMISSIONS = {
     "audit.view": "سجل التدقيق / Audit log",
     "ai.use": "المساعد المالي الذكي / AI finance assistant",
     "platform.manage": "إدارة المنصة (بدون بيانات مالية) / Platform admin",
+    "journal.delete": "حذف القيود اليدوية / Delete manual journal entries",
+    "sales.delete": "حذف فواتير المبيعات / Delete sales invoices",
+    "purchases.delete": "حذف فواتير المشتريات / Delete purchase invoices",
+    "payments.delete": "حذف سندات التحصيل والدفع / Delete receipts & payments",
+    "customers.delete": "حذف العملاء / Delete customers",
+    "vendors.delete": "حذف الموردين / Delete vendors",
 }
 
 FINANCIAL_READ = [
@@ -124,7 +130,8 @@ ROLE_DEFINITIONS = [
             "journal.post", "journal.reverse", "period.close", "payments.create",
             "payments.post", "sales.post", "purchases.post", "budgets.manage",
             "reports.export", "payroll.view", "banks.manage", "ai.use", "audit.view",
-            "customers.create", "vendors.create",
+            "customers.create", "vendors.create", "customers.delete", "vendors.delete",
+            "sales.delete", "purchases.delete", "payments.delete", "journal.delete",
         ],
     },
     {
@@ -136,6 +143,7 @@ ROLE_DEFINITIONS = [
             "journal.reverse", "sales.create", "sales.post", "purchases.create",
             "purchases.post", "payments.create", "payments.post", "inventory.manage",
             "assets.manage", "reports.export", "ai.use",
+            "sales.delete", "purchases.delete", "payments.delete", "journal.delete",
         ],
     },
     {

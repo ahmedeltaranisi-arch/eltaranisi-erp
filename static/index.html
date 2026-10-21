@@ -7,14 +7,14 @@
   <meta name="theme-color" content="#4f46e5" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-  <meta name="description" content="الطرانيسي ERP — نظام محاسبي وإداري متكامل: محاسبة مزدوجة القيد، مديونية موردين، تقارير، فواتير ضريبية PDF/Excel." />
-  <title>الطرانيسي ERP — نظام محاسبي وإداري متكامل</title>
+  <meta name="description" content="ELTARANISI ERP — نظام محاسبي وإداري متكامل: محاسبة مزدوجة القيد، مديونية موردين، تقارير، فواتير ضريبية PDF/Excel." />
+  <title>ELTARANISI ERP — نظام محاسبي وإداري متكامل</title>
   <link rel="icon" href="/brand/favicon.ico" sizes="any" />
   <link rel="icon" href="/brand/icon-192.png" type="image/png" sizes="192x192" />
   <link rel="apple-touch-icon" href="/brand/apple-touch-icon.png" />
   <meta name="theme-color" content="#0b2f6b" />
   <meta property="og:type" content="website" />
-  <meta property="og:title" content="Eltaranisi ERP — نظام محاسبي وإداري متكامل" />
+  <meta property="og:title" content="ELTARANISI ERP — نظام محاسبي وإداري متكامل" />
   <meta property="og:description" content="محاسبة مزدوجة القيد، مديونية موردين، صلاحيات على الخادم، وتقارير مالية قابلة للتصدير." />
   <meta property="og:image" content="/brand/og-image.png" />
   <meta name="twitter:card" content="summary_large_image" />
@@ -30,7 +30,7 @@
   <div id="login-screen" class="login-screen hidden">
     <div class="login-visual">
       <div class="login-brand">
-        <img class="login-logo" src="/brand/logo-full.png" alt="Eltaranisi ERP" width="196" height="181" />
+        <img class="login-logo" src="/brand/logo-full.png" alt="ELTARANISI ERP" width="196" height="181" />
       </div>
       <ul class="login-features">
         <li><span>✓</span><div><strong data-i18n="login.f1">محاسبة عامة مزدوجة القيد</strong><small data-i18n="login.f1d">قيود متوازنة، ترحيل ذري، وعكس آمن</small></div></li>
@@ -43,7 +43,9 @@
     <div class="login-panel">
       <form id="login-form" class="login-card" autocomplete="off">
         <div class="login-tools">
-          <button type="button" class="icon-btn" id="login-theme" title="Theme">🌙</button>
+          <button type="button" class="icon-btn" id="login-theme" title="Theme / المظهر" aria-label="Theme">
+            <svg class="ico-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5z"/></svg>
+          </button>
           <button type="button" class="icon-btn" id="login-lang" title="Language">EN</button>
         </div>
         <h2 data-i18n="login.title">تسجيل الدخول</h2>
@@ -76,12 +78,12 @@
   <div id="app" class="app hidden">
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-head">
-        <img class="brand-logo" src="/brand/logo-mark.png" alt="Eltaranisi ERP" width="38" height="38" />
+        <img class="brand-logo" src="/brand/logo-mark.png" alt="ELTARANISI ERP" width="38" height="38" />
         <div class="brand-text">
-          <strong data-i18n="app.name">الطرانيسي ERP</strong>
+          <strong data-i18n="app.name">ELTARANISI ERP</strong>
           <small id="company-name">—</small>
         </div>
-        <button class="icon-btn sidebar-toggle" id="sidebar-toggle" title="طي القائمة">«</button>
+        <button class="icon-btn sidebar-toggle" id="sidebar-toggle" title="طي القائمة"><svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M14 6l-6 6 6 6"/></svg></button>
       </div>
       <nav class="nav" id="nav"></nav>
       <div class="sidebar-foot">
@@ -92,7 +94,7 @@
 
     <div class="main">
       <header class="topbar">
-        <button class="icon-btn mobile-only" id="menu-btn">☰</button>
+        <button class="icon-btn mobile-only" id="menu-btn" title="القائمة" aria-label="menu"><svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
         <div class="page-title">
           <h2 id="page-title">لوحة التحكم</h2>
           <div id="breadcrumbs" class="breadcrumbs"></div>
@@ -102,7 +104,7 @@
             <button class="company-switch" id="company-btn" title="الشركة / الفرع">
               <span class="dot" id="company-initial">ط</span>
               <span class="txt"><strong id="company-label">—</strong><small id="branch-label">—</small></span>
-              <span class="caret">▾</span>
+              <span class="caret"><svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg></span>
             </button>
             <div class="dropdown-panel hidden" id="company-panel" style="min-width:270px"></div>
           </div>
@@ -110,13 +112,13 @@
             <input id="global-search" placeholder="بحث شامل…" data-i18n-ph="search.placeholder" />
             <div id="search-results" class="search-results hidden"></div>
           </div>
-          <button class="icon-btn mobile-only" id="mobile-search" title="بحث" aria-label="search">🔍</button>
-          <button class="icon-btn" id="quick-create" title="إجراء سريع" aria-label="quick create">＋</button>
+          <button class="icon-btn mobile-only" id="mobile-search" title="بحث" aria-label="search"><svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></button>
+          <button class="icon-btn" id="quick-create" title="إجراء سريع" aria-label="quick create"><svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
           <div class="dropdown">
-            <button class="icon-btn" id="notif-btn" title="الإشعارات">🔔<span class="badge-dot hidden" id="notif-count"></span></button>
+            <button class="icon-btn" id="notif-btn" title="الإشعارات"><svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15V10a6 6 0 1 0-12 0v5l-2 3h16z"/><path d="M10 21a2.5 2.5 0 0 0 4 0"/></svg><span class="badge-dot hidden" id="notif-count"></span></button>
             <div class="dropdown-panel notif-panel hidden" id="notif-panel"></div>
           </div>
-          <button class="icon-btn" id="theme-btn" title="الوضع الليلي">🌙</button>
+          <button class="icon-btn" id="theme-btn" title="الوضع الليلي"></button>
           <button class="icon-btn" id="lang-btn" title="English">EN</button>
           <div class="dropdown">
             <button class="avatar" id="avatar-btn">؟</button>

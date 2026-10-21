@@ -1,4 +1,4 @@
-"""HTTP API + static file server for Eltaranisi ERP (Python stdlib only).
+"""HTTP API + static file server for ELTARANISI ERP (Python stdlib only).
 
 Run:  python3 server.py  →  http://0.0.0.0:8000
 """
@@ -17,6 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import accounting
+import deletion
 import documents
 import reports
 from db import BASE_DIR, connect, from_cents, money_str, read, to_cents, to_milli, transaction
@@ -154,6 +155,79 @@ def change_password(ctx):
 
 
 # ------------------------------ meta --------------------------------------
+# ---------------------------- deletions -----------------------------------
+@route("DELETE", r"/api/sales-invoices/(\d+)", "sales.delete")
+def sales_invoice_delete(ctx, invoice_id):
+    return _delete_document(ctx, deletion.delete_sales_invoice, int(invoice_id))
+
+
+@route("DELETE", r"/api/purchase-invoices/(\d+)", "purchases.delete")
+def purchase_invoice_delete(ctx, invoice_id):
+    return _delete_document(ctx, deletion.delete_purchase_invoice, int(invoice_id))
+
+
+@route("DELETE", r"/api/payments/(\d+)", "payments.delete")
+def payment_delete(ctx, payment_id):
+    return _delete_document(ctx, deletion.delete_payment, int(payment_id))
+
+
+@route("DELETE", r"/api/journal-entries/(\d+)", "journal.delete")
+def journal_entry_delete(ctx, entry_id):
+    return _delete_document(ctx, deletion.delete_journal_entry, int(entry_id))
+
+
+@route("DELETE", r"/api/products/(\d+)", "inventory.manage")
+def product_delete(ctx, product_id):
+    return _delete_document(ctx, deletion.delete_product, int(product_id))
+
+
+@route("DELETE", r"/api/bank-transactions/(\d+)", "banks.manage")
+def bank_transaction_delete(ctx, txn_id):
+    return _delete_document(ctx, deletion.delete_bank_transaction, int(txn_id))
+
+
+@route("DELETE", r"/api/inventory/movements/(\d+)", "inventory.manage")
+def stock_movement_delete(ctx, movement_id):
+    return _delete_document(ctx, deletion.delete_stock_movement, int(movement_id))
+
+
+@route("DELETE", r"/api/assets/(\d+)", "assets.manage")
+def asset_delete(ctx, asset_id):
+    return _delete_document(ctx, deletion.delete_asset, int(asset_id))
+
+
+@route("DELETE", r"/api/employees/(\d+)", "payroll.manage")
+def employee_delete(ctx, employee_id):
+    return _delete_document(ctx, deletion.delete_employee, int(employee_id))
+
+
+@route("DELETE", r"/api/budgets/(\d+)", "budgets.manage")
+def budget_delete(ctx, budget_id):
+    return _delete_document(ctx, deletion.delete_budget, int(budget_id))
+
+
+@route("DELETE", r"/api/customers/(\d+)", "customers.delete")
+def customer_delete(ctx, customer_id):
+    return _delete_document(ctx, deletion.delete_party, int(customer_id), kind="customer")
+
+
+@route("DELETE", r"/api/vendors/(\d+)", "vendors.delete")
+def vendor_delete(ctx, vendor_id):
+    return _delete_document(ctx, deletion.delete_party, int(vendor_id), kind="vendor")
+
+
+def _delete_document(ctx, fn, record_id, **kwargs):
+    """Shared plumbing: company scope + optimistic-lock guard + audit IP."""
+    cid = ensure_company(ctx.user)
+    if str(ctx.body.get("confirm", "")).lower() not in ("1", "true", "yes"):
+        raise ApiError("CONFIRM_REQUIRED: يجب تأكيد الحذف / Deletion must be confirmed", 428)
+    result = fn(ctx.conn, ctx.user, cid, record_id, ip=ctx.ip, **kwargs)
+    label = result.get("number") or result.get("code") or record_id
+    notify(ctx.conn, cid, ctx.user["id"], "delete",
+           "تم الحذف", "Deleted", f"تم حذف {label}", f"Deleted {label}")
+    return result
+
+
 @route("GET", r"/api/dev/accounts", None)
 def dev_accounts(ctx):
     """DEMO ONLY — returns the seeded development logins so the login screen can
@@ -1520,7 +1594,7 @@ def main():
     except Exception as exc:      # never block startup on an additive migration
         print("migration warning:", exc)
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
-    print(f"Eltaranisi ERP running on http://0.0.0.0:{PORT}")
+    print(f"ELTARANISI ERP running on http://0.0.0.0:{PORT}")
     server.serve_forever()
 
 

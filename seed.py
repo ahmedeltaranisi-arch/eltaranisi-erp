@@ -1,4 +1,4 @@
-"""Development seed data for Eltaranisi ERP.
+"""Development seed data for ELTARANISI ERP.
 
 Creates one organization, one company with branches, the full chart of accounts,
 real users (Ahmed Eltaranisi = Company Owner, Mahmoud Morad = Financial Manager),
@@ -95,24 +95,26 @@ COST_CENTERS = [
 ]
 
 CUSTOMERS = [
-    ("C-1001", "شركة النيل للتجارة والتوزيع", "Nile Trading & Distribution", "01001234567", 5_000_000_00, 30),
-    ("C-1002", "مؤسسة الدلتا للمواد الغذائية", "Delta Food Enterprises", "01112345678", 3_000_000_00, 45),
-    ("C-1003", "ماركت الصفا", "Al-Safa Market", "01223456789", 1_000_000_00, 30),
-    ("C-1004", "شركة البحر المتوسط", "Mediterranean Co.", "01534567890", 8_000_000_00, 60),
+    ("C-1001", "شركة النيل للاستيراد والتصدير", "Nile Import & Export Co.", "01001234567", 5_000_000_00, 30),
+    ("C-1002", "مؤسسة الدلتا للتجارة الدولية", "Delta International Trading", "01112345678", 3_000_000_00, 45),
+    ("C-1003", "الشركة المصرية للحاصلات الزراعية", "Egyptian Agri-Export Co.", "01223456789", 1_000_000_00, 30),
+    ("C-1004", "شركة البحر المتوسط للشحن", "Mediterranean Shipping Co.", "01534567890", 8_000_000_00, 60),
     ("C-1005", "عميل نقدي", "Cash Customer", None, 0, 0),
-    ("C-1006", "مخازن الأمانة", "Al-Amana Stores", "01045678901", 2_000_000_00, 30),
+    ("C-1006", "مخازن الأمانة اللوجستية", "Al-Amana Logistics", "01045678901", 2_000_000_00, 30),
 ]
 
 VENDORS = [
-    ("V-2001", "شركة الشرق للمستلزمات", "Al-Sharq Supplies", "01009876543", 30),
-    ("V-2002", "مصنع الدلتا للأغذية", "Delta Food Factory", "01119876543", 45),
-    ("V-2003", "شركة النور للتوريدات", "Al-Nour Trading", "01229876543", 30),
-    ("V-2004", "مؤسسة الأمل للتجارة", "Al-Amal Trading Est.", "01539876543", 60),
-    ("V-2005", "شركة الدقهلية للورق", "Dakahlia Paper Co.", "01049876543", 30),
+    ("V-2001", "شركة الشرق للتوكيلات الملاحية", "Al-Sharq Maritime Agencies", "01009876543", 30),
+    ("V-2002", "ميناء دمياط — هيئة الميناء", "Damietta Port Authority", "01119876543", 45),
+    ("V-2003", "شركة النور لأعمال التفريغ", "Al-Nour Stevedoring Co.", "01229876543", 30),
+    ("V-2004", "مؤسسة الأمل للخدمات اللوجستية", "Al-Amal Logistics Est.", "01539876543", 60),
+    ("V-2005", "شركة الدقهلية لقطع غيار المعدات", "Dakahlia Equipment Spare Parts", "01049876543", 30),
     ("V-2006", "موردون متنوعون", "Sundry Suppliers", None, 15),
 ]
 
-PRODUCTS = [
+# Demo catalogue — used only with ERP_SEED_MODE=demo (integration tests need
+# stocked products to exercise FIFO/weighted-average and COGS postings).
+PRODUCTS_DEMO = [
     ("SKU-001", "أرز مصري فاخر ٥ كجم", "Premium Egyptian Rice 5kg", "كيس", 18_500, 14_200, 1400, 60),
     ("SKU-002", "زيت ذرة ١ لتر", "Corn Oil 1L", "زجاجة", 9_750, 7_100, 1400, 120),
     ("SKU-003", "سكر أبيض ١ كجم", "White Sugar 1kg", "كيس", 4_200, 3_100, 1400, 200),
@@ -121,6 +123,16 @@ PRODUCTS = [
     ("SKU-006", "لبن مجفف ٤٠٠ جم", "Milk Powder 400g", "علبة", 14_000, 10_800, 1400, 80),
     ("SKU-007", "خدمة توصيل ونقل", "Delivery Service", "خدمة", 50_000, 0, 1400, 0),
     ("SKU-008", "منظفات متعددة الاستخدام", "Multi-purpose Detergent", "زجاجة", 5_500, 3_800, 1400, 90),
+]
+PRODUCTS = [
+    ("SRV-001", "خدمة شحن بحري (حاوية ٢٠ قدم)", "Ocean Freight (20ft Container)", "حاوية", 1_250_000, 980_000, 1400, 0),
+    ("SRV-002", "خدمة شحن بحري (حاوية ٤٠ قدم)", "Ocean Freight (40ft Container)", "حاوية", 2_150_000, 1_720_000, 1400, 0),
+    ("SRV-003", "أعمال تفريغ وشحن بالميناء", "Port Loading & Discharging", "عملية", 480_000, 360_000, 1400, 0),
+    ("SRV-004", "تخليص جمركي — إفراج نهائي", "Customs Clearance — Final Release", "ملف", 320_000, 210_000, 1400, 0),
+    ("SRV-005", "وكالة ملاحية للسفن", "Ship Agency Services", "سفينة", 1_800_000, 1_300_000, 1400, 0),
+    ("SRV-006", "تخزين بمنطقة الميناء", "Port Warehousing", "يوم/متر", 65_000, 42_000, 1400, 0),
+    ("SRV-007", "نقل بري من/إلى الميناء", "Inland Trucking To/From Port", "نقلة", 410_000, 300_000, 1400, 0),
+    ("SRV-008", "أعمال توكيل وتخليص متنوعة", "Sundry Agency & Clearance", "خدمة", 150_000, 95_000, 1400, 0),
 ]
 
 WAREHOUSES = [
@@ -158,6 +170,16 @@ DEV_PASSWORDS = {
 }
 FIXED_PASSWORDS = os.environ.get("ERP_DEV_FIXED_PASSWORDS", "true").lower() not in ("0", "false", "no")
 
+# clean (default) → company + chart of accounts + users + master data only, every
+# balance is ZERO so the business can start from scratch.
+# demo            → nine months of transactions, opening balances and stock
+#                   (needed by tests/test_erp.py, never used in production).
+SEED_MODE = os.environ.get("ERP_SEED_MODE", "clean").strip().lower()
+# Backwards compatibility: the WSGI bridge / CI entrypoints still set
+# ERP_SEED_DEMO_DATA=true to ask for the full transaction history.
+_LEGACY_DEMO = os.environ.get("ERP_SEED_DEMO_DATA", "").strip().lower() in ("1", "true", "yes", "on")
+DEMO = SEED_MODE == "demo" or _LEGACY_DEMO
+
 USERS = [
     ("ahmed.taranisi", "أحمد الطرانيسي", "Ahmed Eltaranisi", "company_owner", "ahmed@eltaranisi.com"),
     ("mahmoud.morad", "محمود مراد", "Mahmoud Morad", "financial_manager", "mahmoud@eltaranisi.com"),
@@ -184,18 +206,19 @@ def seed():
     creds = []
     with transaction() as conn:
         # ---------------- org / company / branches ----------------
-        conn.execute("INSERT INTO organizations (code, name_ar, name_en) VALUES ('ELT','مجموعة الطرانيسي','Eltaranisi Group')")
+        conn.execute("INSERT INTO organizations (code, name_ar, name_en) VALUES ('SSM','مجموعة سي سيرفيس','Sea Service Group')")
         org_id = conn.execute("SELECT id FROM organizations").fetchone()["id"]
         conn.execute(
             """INSERT INTO companies (org_id, code, name_ar, name_en, base_currency, tax_number, address, phone)
                VALUES (?,?,?,?,?,?,?,?)""",
-            (org_id, "ELT-01", "شركة الطرانيسي للتجارة والتوزيع", "Eltaranisi Trading & Distribution Co.",
-             "EGP", "512-345-678", "دمياط — شارع الجيش — برج الطرانيسي", "+20 57 234 5678"))
+            (org_id, "SSM-01", "شركة سي سيرفيس للشحن والتفريغ والوكالة الملاحية",
+             "Sea Service Co. for Shipping, Discharging & Maritime Agency",
+             "EGP", "512-345-678", "دمياط — ميناء دمياط الجديد — برج سي سيرفيس", "+20 57 234 5678"))
         company_id = conn.execute("SELECT id FROM companies").fetchone()["id"]
         conn.execute("INSERT INTO branches (company_id, code, name_ar, name_en) VALUES (?,?,?,?)",
-                     (company_id, "BR-01", "الفرع الرئيسي — دمياط", "Head Office — Damietta"))
+                     (company_id, "BR-01", "الإدارة العامة — ميناء دمياط", "Head Office — Damietta Port"))
         conn.execute("INSERT INTO branches (company_id, code, name_ar, name_en) VALUES (?,?,?,?)",
-                     (company_id, "BR-02", "فرع القاهرة", "Cairo Branch"))
+                     (company_id, "BR-02", "مكتب القاهرة", "Cairo Office"))
         branches = {r["code"]: r["id"] for r in conn.execute("SELECT id, code FROM branches").fetchall()}
         br_main = branches["BR-01"]
 
@@ -261,10 +284,10 @@ def seed():
             cc[code] = cur.lastrowid
         conn.execute("""INSERT INTO projects (company_id, code, name_ar, name_en, cost_center_id)
                         VALUES (?,?,?,?,?)""",
-                     (company_id, "PRJ-01", "مشروع التوزيع الموسمي", "Seasonal Distribution Project", cc["CC-SAL"]))
+                     (company_id, "PRJ-01", "مشروع تشغيل رصيف الحاويات", "Container Berth Operation", cc["CC-SAL"]))
         conn.execute("""INSERT INTO projects (company_id, code, name_ar, name_en, cost_center_id)
                         VALUES (?,?,?,?,?)""",
-                     (company_id, "PRJ-02", "مشروع تحديث المخازن", "Warehouse Upgrade Project", cc["CC-WHS"]))
+                     (company_id, "PRJ-02", "مشروع تحديث معدات الميناء", "Port Equipment Upgrade", cc["CC-WHS"]))
         projects = {r["code"]: r["id"] for r in conn.execute("SELECT id, code FROM projects").fetchall()}
 
         # ---------------- warehouses / products ----------------
@@ -274,17 +297,19 @@ def seed():
                                (company_id, br_main if code == "WH-01" else branches["BR-02"], code, ar, en))
             wh[code] = cur.lastrowid
         products = {}
-        for sku, ar, en, unit, sale, cost, tax_bp, reorder in PRODUCTS:
+        for sku, ar, en, unit, sale, cost, tax_bp, reorder in (PRODUCTS_DEMO if DEMO else PRODUCTS):
             cur = conn.execute(
                 """INSERT INTO products (company_id, sku, name_ar, name_en, unit, category, is_service,
                        sale_price_cents, purchase_price_cents, tax_rate_bp, reorder_level_milli,
                        inventory_account_id, cogs_account_id, revenue_account_id)
                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (company_id, sku, ar, en, unit, "مواد غذائية" if sku != "SKU-007" else "خدمات",
-                 1 if sku == "SKU-007" else 0, sale, cost, tax_bp, reorder * 1000,
-                 None if sku == "SKU-007" else code_to_id["1310"],
-                 None if sku == "SKU-007" else code_to_id["5100"],
-                 code_to_id["4110"] if sku == "SKU-007" else code_to_id["4100"]))
+                (company_id, sku, ar, en, unit,
+                 "خدمات ملاحية" if not DEMO else ("خدمات" if sku == "SKU-007" else "مواد غذائية"),
+                 1 if (sku == "SKU-007" or not DEMO) else 0, sale, cost, tax_bp,
+                 0 if not DEMO else reorder * 1000,
+                 None if (not DEMO or sku == "SKU-007") else code_to_id["1310"],
+                 None if (not DEMO or sku == "SKU-007") else code_to_id["5100"],
+                 code_to_id["4110"] if (not DEMO or sku == "SKU-007") else code_to_id["4100"]))
             products[sku] = cur.lastrowid
 
         # ---------------- customers / vendors ----------------
@@ -329,258 +354,260 @@ def seed():
                 (company_id, code, ar, en, dept, title, f"{YEAR-3}-03-01", basic, allow, ded, ins, tax))
             emp_by_code[code] = cur.lastrowid
 
-        # ---------------- fixed assets ----------------
-        for code, ar, en, cat, cost, salvage, life, acc in ASSETS:
-            conn.execute(
-                """INSERT INTO fixed_assets (company_id, code, name_ar, name_en, category, purchase_date, start_date,
-                       cost_cents, salvage_cents, useful_life_months, asset_account_id, dep_account_id, expense_account_id)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (company_id, code, ar, en, cat, f"{YEAR-1}-01-15", f"{YEAR-1}-02-01", cost, salvage, life,
-                 code_to_id[acc], code_to_id["1330"], code_to_id["5320"]))
+        # ---------------- demo-only data (ERP_SEED_MODE=demo) ----------------
+        if DEMO:
+            # ---------------- fixed assets ----------------
+            for code, ar, en, cat, cost, salvage, life, acc in ASSETS:
+                conn.execute(
+                    """INSERT INTO fixed_assets (company_id, code, name_ar, name_en, category, purchase_date, start_date,
+                           cost_cents, salvage_cents, useful_life_months, asset_account_id, dep_account_id, expense_account_id)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (company_id, code, ar, en, cat, f"{YEAR-1}-01-15", f"{YEAR-1}-02-01", cost, salvage, life,
+                     code_to_id[acc], code_to_id["1330"], code_to_id["5320"]))
 
-        # ---------------- opening balances ----------------
-        opening_date = f"{YEAR}-01-01"
-        opening_stock = [("SKU-001", 4000), ("SKU-002", 5000), ("SKU-003", 8000), ("SKU-004", 10000),
-                         ("SKU-005", 3000), ("SKU-006", 1500), ("SKU-008", 4000)]
-        stock_value = 0
-        for sku, qty in opening_stock:
-            p = conn.execute("SELECT * FROM products WHERE id=?", (products[sku],)).fetchone()
-            stock_value += int(qty * 1000) * p["purchase_price_cents"] // 1000
+            # ---------------- opening balances ----------------
+            opening_date = f"{YEAR}-01-01"
+            opening_stock = [("SKU-001", 4000), ("SKU-002", 5000), ("SKU-003", 8000), ("SKU-004", 10000),
+                             ("SKU-005", 3000), ("SKU-006", 1500), ("SKU-008", 4000)]
+            stock_value = 0
+            for sku, qty in opening_stock:
+                p = conn.execute("SELECT * FROM products WHERE id=?", (products[sku],)).fetchone()
+                stock_value += int(qty * 1000) * p["purchase_price_cents"] // 1000
 
-        opening_lines = [
-            {"account_id": gl_bank1, "debit_cents": 1_250_000_00, "credit_cents": 0, "description": "رصيد افتتاحي بنك مصر"},
-            {"account_id": gl_bank2, "debit_cents": 850_000_00, "credit_cents": 0, "description": "رصيد افتتاحي البنك الأهلي"},
-            {"account_id": gl_cash, "debit_cents": 120_000_00, "credit_cents": 0, "description": "رصيد افتتاحي الصندوق"},
-            {"account_id": code_to_id["1310"], "debit_cents": stock_value, "credit_cents": 0, "description": "مخزون افتتاحي"},
-            {"account_id": code_to_id["1210"], "debit_cents": 420_000_00, "credit_cents": 0, "description": "أرصدة عملاء افتتاحية"},
-            {"account_id": code_to_id["1430"], "debit_cents": 850_000_00, "credit_cents": 0, "description": "سيارة نقل"},
-            {"account_id": code_to_id["1450"], "debit_cents": 240_000_00, "credit_cents": 0, "description": "أثاث مكتبي"},
-            {"account_id": code_to_id["1440"], "debit_cents": 180_000_00, "credit_cents": 0, "description": "أجهزة حاسوب"},
-            {"account_id": code_to_id["1420"], "debit_cents": 2_400_000_00, "credit_cents": 0, "description": "مبنى المخزن"},
-            {"account_id": code_to_id["1330"], "debit_cents": 0, "credit_cents": 320_000_00, "description": "مجمع إهلاك افتتاحي"},
-            {"account_id": code_to_id["2110"], "debit_cents": 0, "credit_cents": 560_000_00, "description": "أرصدة موردين افتتاحية"},
-            {"account_id": code_to_id["2310"], "debit_cents": 0, "credit_cents": 1_200_000_00, "description": "قرض بنكي"},
-        ]
-        capital = sum(l["debit_cents"] - l["credit_cents"] for l in opening_lines)
-        opening_lines.append({"account_id": code_to_id["3100"], "debit_cents": 0, "credit_cents": capital,
-                              "description": "رأس المال المدفوع"})
-        accounting.auto_post_entry(
-            conn, ahmed, company_id=company_id, entry_date=opening_date, entry_type="opening",
-            memo="الأرصدة الافتتاحية للسنة المالية", lines=opening_lines,
-            idempotency_key="opening_balances",
-        )
-        conn.execute("UPDATE fixed_assets SET accumulated_cents = 32000000")
-
-        # ---------------- opening stock ----------------
-        for sku, qty in opening_stock:
-            p = conn.execute("SELECT * FROM products WHERE id=?", (products[sku],)).fetchone()
-            accounting.stock_in(conn, ahmed, company_id, p["id"], wh["WH-01"], qty * 1000,
-                                p["purchase_price_cents"], opening_date, move_type="in",
-                                notes="مخزون افتتاحي")
-
-        # ---------------- operational data over the last 9 months ----------------
-        cust_codes = list(customers.keys())
-        vend_codes = list(vendors.keys())
-        sale_skus = ["SKU-001", "SKU-002", "SKU-003", "SKU-004", "SKU-005", "SKU-006", "SKU-008"]
-
-        start_month = add_months(month_start(TODAY), -8)
-        invoice_counter = 0
-        for mi in range(9):
-            m = add_months(start_month, mi)
-            if m > TODAY:
-                break
-            month_days = 28
-            # --- purchases first (stock replenishment) ---
-            # invoice A: replenishes every stocked SKU early in the month
-            inv_date_a = m.replace(day=2)
-            lines_a = []
-            for sku in sale_skus:
-                pr = conn.execute("SELECT * FROM products WHERE id=?", (products[sku],)).fetchone()
-                lines_a.append({"product_id": pr["id"], "description": pr["name_ar"],
-                                "qty_milli": random.choice([1200, 1500, 1800, 2200]) * 1000,
-                                "unit_price_cents": pr["purchase_price_cents"],
-                                "tax_rate_bp": pr["tax_rate_bp"]})
-            v_code = vend_codes[mi % (len(vend_codes) - 1)]
-            pid = documents.create_purchase_invoice(conn, mahmoud, company_id, {
-                "vendor_id": vendors[v_code], "invoice_date": inv_date_a.isoformat(),
-                "due_date": (inv_date_a + timedelta(days=30)).isoformat(),
-                "warehouse_id": wh["WH-01"], "supplier_ref": f"SUP-{m.strftime('%Y%m')}-A",
-                "po_number": f"PO-{m.strftime('%y%m')}-A", "grn_number": f"GRN-{m.strftime('%y%m')}-A",
-                "branch_id": br_main, "lines": lines_a,
-            })
-            documents.post_purchase_invoice(conn, mahmoud, company_id, pid)
-
-            # invoice B: a second supplier mid-month
-            inv_date_b = m.replace(day=12)
-            lines_b = []
-            for sku in random.sample(sale_skus, 3):
-                pr = conn.execute("SELECT * FROM products WHERE id=?", (products[sku],)).fetchone()
-                lines_b.append({"product_id": pr["id"], "description": pr["name_ar"],
-                                "qty_milli": random.choice([800, 1000, 1400]) * 1000,
-                                "unit_price_cents": pr["purchase_price_cents"],
-                                "tax_rate_bp": pr["tax_rate_bp"]})
-            v_code_b = vend_codes[(mi + 2) % (len(vend_codes) - 1)]
-            pid_b = documents.create_purchase_invoice(conn, mahmoud, company_id, {
-                "vendor_id": vendors[v_code_b], "invoice_date": inv_date_b.isoformat(),
-                "due_date": (inv_date_b + timedelta(days=45)).isoformat(),
-                "warehouse_id": wh["WH-01"], "supplier_ref": f"SUP-{m.strftime('%Y%m')}-B",
-                "po_number": f"PO-{m.strftime('%y%m')}-B", "grn_number": f"GRN-{m.strftime('%y%m')}-B",
-                "branch_id": br_main, "lines": lines_b,
-            })
-            documents.post_purchase_invoice(conn, mahmoud, company_id, pid_b)
-            invoice_counter += 2
-
-            # --- sales ---
-            for s in range(6):
-                c_code = cust_codes[(mi * 6 + s) % (len(cust_codes) - 1)]
-                day = 4 + s * 4
-                inv_date = m.replace(day=min(day, month_days))
-                lines = []
-                for _ in range(random.randint(1, 3)):
-                    sku = random.choice(sale_skus)
-                    p = conn.execute("SELECT * FROM products WHERE id=?", (products[sku],)).fetchone()
-                    qty = random.choice([300, 500, 800, 1200])
-                    lines.append({"product_id": p["id"], "description": p["name_ar"],
-                                  "qty_milli": qty * 1000, "unit_price_cents": p["sale_price_cents"],
-                                  "tax_rate_bp": p["tax_rate_bp"]})
-                terms = conn.execute("SELECT payment_terms_days FROM customers WHERE id=?",
-                                     (customers[c_code],)).fetchone()["payment_terms_days"]
-                iid = documents.create_sales_invoice(conn, tarek, company_id, {
-                    "customer_id": customers[c_code], "invoice_date": inv_date.isoformat(),
-                    "due_date": (inv_date + timedelta(days=terms or 0)).isoformat(),
-                    "warehouse_id": wh["WH-01"], "branch_id": br_main, "lines": lines,
-                })
-                documents.post_sales_invoice(conn, tarek, company_id, iid)
-
-                # partial / full collection for older months
-                inv = conn.execute("SELECT * FROM sales_invoices WHERE id=?", (iid,)).fetchone()
-                if mi < 7 or random.random() < 0.5:
-                    ratio = 1.0 if (mi < 5 or random.random() < 0.6) else random.choice([0.3, 0.5, 0.7])
-                    amount = int(inv["total_cents"] * ratio)
-                    if amount > 0:
-                        pay_date = min(TODAY, inv_date + timedelta(days=random.choice([10, 20, 30])))
-                        pay_id = documents.create_payment(conn, mona, company_id, {
-                            "payment_type": "receipt", "payment_date": pay_date.isoformat(),
-                            "party_type": "customer", "party_id": inv["customer_id"],
-                            "method": "bank", "gl_account_id": gl_bank1, "amount_cents": amount,
-                            "branch_id": br_main,
-                            "reference": f"تحصيل فاتورة {inv['invoice_no']}",
-                            "allocations": [{"invoice_kind": "sales", "invoice_id": iid, "amount_cents": amount}],
-                        })
-                        documents.post_payment(conn, mona, company_id, pay_id)
-
-            # --- vendor payments on older invoices ---
-            open_pis = conn.execute(
-                """SELECT * FROM purchase_invoices WHERE company_id=? AND status IN ('posted','partially_paid')
-                   AND invoice_date < ?""",
-                (company_id, (m - timedelta(days=15)).isoformat())).fetchall()
-            for pi in open_pis[:2]:
-                remaining = pi["total_cents"] - pi["paid_cents"]
-                if remaining <= 0:
-                    continue
-                amount = remaining if random.random() < 0.7 else int(remaining * 0.5)
-                pay_id = documents.create_payment(conn, mona, company_id, {
-                    "payment_type": "payment", "payment_date": min(TODAY, m.replace(day=25)).isoformat(),
-                    "party_type": "vendor", "party_id": pi["vendor_id"], "method": "bank",
-                    "gl_account_id": gl_bank1, "amount_cents": amount, "branch_id": br_main,
-                    "reference": f"سداد فاتورة {pi['invoice_no']}",
-                    "allocations": [{"invoice_kind": "purchase", "invoice_id": pi["id"], "amount_cents": amount}],
-                })
-                documents.post_payment(conn, mona, company_id, pay_id)
-
-            # --- operating expenses (rent, utilities, comms, marketing) ---
-            exp_plan = [
-                ("5300", 45_000_00, "إيجار المقر الرئيسي"),
-                ("5310", 8_500_00, "كهرباء ومياه"),
-                ("5350", 3_200_00, "اتصالات وإنترنت"),
-                ("5330", 12_000_00, "حملة تسويق"),
-                ("5360", 7_500_00, "نقل وشحن"),
+            opening_lines = [
+                {"account_id": gl_bank1, "debit_cents": 1_250_000_00, "credit_cents": 0, "description": "رصيد افتتاحي بنك مصر"},
+                {"account_id": gl_bank2, "debit_cents": 850_000_00, "credit_cents": 0, "description": "رصيد افتتاحي البنك الأهلي"},
+                {"account_id": gl_cash, "debit_cents": 120_000_00, "credit_cents": 0, "description": "رصيد افتتاحي الصندوق"},
+                {"account_id": code_to_id["1310"], "debit_cents": stock_value, "credit_cents": 0, "description": "مخزون افتتاحي"},
+                {"account_id": code_to_id["1210"], "debit_cents": 420_000_00, "credit_cents": 0, "description": "أرصدة عملاء افتتاحية"},
+                {"account_id": code_to_id["1430"], "debit_cents": 850_000_00, "credit_cents": 0, "description": "سيارة نقل"},
+                {"account_id": code_to_id["1450"], "debit_cents": 240_000_00, "credit_cents": 0, "description": "أثاث مكتبي"},
+                {"account_id": code_to_id["1440"], "debit_cents": 180_000_00, "credit_cents": 0, "description": "أجهزة حاسوب"},
+                {"account_id": code_to_id["1420"], "debit_cents": 2_400_000_00, "credit_cents": 0, "description": "مبنى المخزن"},
+                {"account_id": code_to_id["1330"], "debit_cents": 0, "credit_cents": 320_000_00, "description": "مجمع إهلاك افتتاحي"},
+                {"account_id": code_to_id["2110"], "debit_cents": 0, "credit_cents": 560_000_00, "description": "أرصدة موردين افتتاحية"},
+                {"account_id": code_to_id["2310"], "debit_cents": 0, "credit_cents": 1_200_000_00, "description": "قرض بنكي"},
             ]
-            for code, amount, memo in exp_plan:
-                exp_date = m.replace(day=min(28, month_days))
+            capital = sum(l["debit_cents"] - l["credit_cents"] for l in opening_lines)
+            opening_lines.append({"account_id": code_to_id["3100"], "debit_cents": 0, "credit_cents": capital,
+                                  "description": "رأس المال المدفوع"})
+            accounting.auto_post_entry(
+                conn, ahmed, company_id=company_id, entry_date=opening_date, entry_type="opening",
+                memo="الأرصدة الافتتاحية للسنة المالية", lines=opening_lines,
+                idempotency_key="opening_balances",
+            )
+            conn.execute("UPDATE fixed_assets SET accumulated_cents = 32000000")
+
+            # ---------------- opening stock ----------------
+            for sku, qty in opening_stock:
+                p = conn.execute("SELECT * FROM products WHERE id=?", (products[sku],)).fetchone()
+                accounting.stock_in(conn, ahmed, company_id, p["id"], wh["WH-01"], qty * 1000,
+                                    p["purchase_price_cents"], opening_date, move_type="in",
+                                    notes="مخزون افتتاحي")
+
+            # ---------------- operational data over the last 9 months ----------------
+            cust_codes = list(customers.keys())
+            vend_codes = list(vendors.keys())
+            sale_skus = ["SKU-001", "SKU-002", "SKU-003", "SKU-004", "SKU-005", "SKU-006", "SKU-008"]
+
+            start_month = add_months(month_start(TODAY), -8)
+            invoice_counter = 0
+            for mi in range(9):
+                m = add_months(start_month, mi)
+                if m > TODAY:
+                    break
+                month_days = 28
+                # --- purchases first (stock replenishment) ---
+                # invoice A: replenishes every stocked SKU early in the month
+                inv_date_a = m.replace(day=2)
+                lines_a = []
+                for sku in sale_skus:
+                    pr = conn.execute("SELECT * FROM products WHERE id=?", (products[sku],)).fetchone()
+                    lines_a.append({"product_id": pr["id"], "description": pr["name_ar"],
+                                    "qty_milli": random.choice([1200, 1500, 1800, 2200]) * 1000,
+                                    "unit_price_cents": pr["purchase_price_cents"],
+                                    "tax_rate_bp": pr["tax_rate_bp"]})
+                v_code = vend_codes[mi % (len(vend_codes) - 1)]
+                pid = documents.create_purchase_invoice(conn, mahmoud, company_id, {
+                    "vendor_id": vendors[v_code], "invoice_date": inv_date_a.isoformat(),
+                    "due_date": (inv_date_a + timedelta(days=30)).isoformat(),
+                    "warehouse_id": wh["WH-01"], "supplier_ref": f"SUP-{m.strftime('%Y%m')}-A",
+                    "po_number": f"PO-{m.strftime('%y%m')}-A", "grn_number": f"GRN-{m.strftime('%y%m')}-A",
+                    "branch_id": br_main, "lines": lines_a,
+                })
+                documents.post_purchase_invoice(conn, mahmoud, company_id, pid)
+
+                # invoice B: a second supplier mid-month
+                inv_date_b = m.replace(day=12)
+                lines_b = []
+                for sku in random.sample(sale_skus, 3):
+                    pr = conn.execute("SELECT * FROM products WHERE id=?", (products[sku],)).fetchone()
+                    lines_b.append({"product_id": pr["id"], "description": pr["name_ar"],
+                                    "qty_milli": random.choice([800, 1000, 1400]) * 1000,
+                                    "unit_price_cents": pr["purchase_price_cents"],
+                                    "tax_rate_bp": pr["tax_rate_bp"]})
+                v_code_b = vend_codes[(mi + 2) % (len(vend_codes) - 1)]
+                pid_b = documents.create_purchase_invoice(conn, mahmoud, company_id, {
+                    "vendor_id": vendors[v_code_b], "invoice_date": inv_date_b.isoformat(),
+                    "due_date": (inv_date_b + timedelta(days=45)).isoformat(),
+                    "warehouse_id": wh["WH-01"], "supplier_ref": f"SUP-{m.strftime('%Y%m')}-B",
+                    "po_number": f"PO-{m.strftime('%y%m')}-B", "grn_number": f"GRN-{m.strftime('%y%m')}-B",
+                    "branch_id": br_main, "lines": lines_b,
+                })
+                documents.post_purchase_invoice(conn, mahmoud, company_id, pid_b)
+                invoice_counter += 2
+
+                # --- sales ---
+                for s in range(6):
+                    c_code = cust_codes[(mi * 6 + s) % (len(cust_codes) - 1)]
+                    day = 4 + s * 4
+                    inv_date = m.replace(day=min(day, month_days))
+                    lines = []
+                    for _ in range(random.randint(1, 3)):
+                        sku = random.choice(sale_skus)
+                        p = conn.execute("SELECT * FROM products WHERE id=?", (products[sku],)).fetchone()
+                        qty = random.choice([300, 500, 800, 1200])
+                        lines.append({"product_id": p["id"], "description": p["name_ar"],
+                                      "qty_milli": qty * 1000, "unit_price_cents": p["sale_price_cents"],
+                                      "tax_rate_bp": p["tax_rate_bp"]})
+                    terms = conn.execute("SELECT payment_terms_days FROM customers WHERE id=?",
+                                         (customers[c_code],)).fetchone()["payment_terms_days"]
+                    iid = documents.create_sales_invoice(conn, tarek, company_id, {
+                        "customer_id": customers[c_code], "invoice_date": inv_date.isoformat(),
+                        "due_date": (inv_date + timedelta(days=terms or 0)).isoformat(),
+                        "warehouse_id": wh["WH-01"], "branch_id": br_main, "lines": lines,
+                    })
+                    documents.post_sales_invoice(conn, tarek, company_id, iid)
+
+                    # partial / full collection for older months
+                    inv = conn.execute("SELECT * FROM sales_invoices WHERE id=?", (iid,)).fetchone()
+                    if mi < 7 or random.random() < 0.5:
+                        ratio = 1.0 if (mi < 5 or random.random() < 0.6) else random.choice([0.3, 0.5, 0.7])
+                        amount = int(inv["total_cents"] * ratio)
+                        if amount > 0:
+                            pay_date = min(TODAY, inv_date + timedelta(days=random.choice([10, 20, 30])))
+                            pay_id = documents.create_payment(conn, mona, company_id, {
+                                "payment_type": "receipt", "payment_date": pay_date.isoformat(),
+                                "party_type": "customer", "party_id": inv["customer_id"],
+                                "method": "bank", "gl_account_id": gl_bank1, "amount_cents": amount,
+                                "branch_id": br_main,
+                                "reference": f"تحصيل فاتورة {inv['invoice_no']}",
+                                "allocations": [{"invoice_kind": "sales", "invoice_id": iid, "amount_cents": amount}],
+                            })
+                            documents.post_payment(conn, mona, company_id, pay_id)
+
+                # --- vendor payments on older invoices ---
+                open_pis = conn.execute(
+                    """SELECT * FROM purchase_invoices WHERE company_id=? AND status IN ('posted','partially_paid')
+                       AND invoice_date < ?""",
+                    (company_id, (m - timedelta(days=15)).isoformat())).fetchall()
+                for pi in open_pis[:2]:
+                    remaining = pi["total_cents"] - pi["paid_cents"]
+                    if remaining <= 0:
+                        continue
+                    amount = remaining if random.random() < 0.7 else int(remaining * 0.5)
+                    pay_id = documents.create_payment(conn, mona, company_id, {
+                        "payment_type": "payment", "payment_date": min(TODAY, m.replace(day=25)).isoformat(),
+                        "party_type": "vendor", "party_id": pi["vendor_id"], "method": "bank",
+                        "gl_account_id": gl_bank1, "amount_cents": amount, "branch_id": br_main,
+                        "reference": f"سداد فاتورة {pi['invoice_no']}",
+                        "allocations": [{"invoice_kind": "purchase", "invoice_id": pi["id"], "amount_cents": amount}],
+                    })
+                    documents.post_payment(conn, mona, company_id, pay_id)
+
+                # --- operating expenses (rent, utilities, comms, marketing) ---
+                exp_plan = [
+                    ("5300", 45_000_00, "إيجار المقر الرئيسي"),
+                    ("5310", 8_500_00, "كهرباء ومياه"),
+                    ("5350", 3_200_00, "اتصالات وإنترنت"),
+                    ("5330", 12_000_00, "حملة تسويق"),
+                    ("5360", 7_500_00, "نقل وشحن"),
+                ]
+                for code, amount, memo in exp_plan:
+                    exp_date = m.replace(day=min(28, month_days))
+                    accounting.auto_post_entry(
+                        conn, mona, company_id=company_id, entry_date=exp_date.isoformat(),
+                        entry_type="expense", memo=f"{memo} — {m.strftime('%m/%Y')}",
+                        cost_center_id=cc["CC-ADM"] if code in ("5300", "5310", "5350") else cc["CC-SAL"],
+                        lines=[
+                            {"account_id": code_to_id[code], "debit_cents": amount, "credit_cents": 0, "description": memo},
+                            {"account_id": gl_bank2, "debit_cents": 0, "credit_cents": amount, "description": memo},
+                        ],
+                        idempotency_key=f"expense:{code}:{m.isoformat()}",
+                    )
+
+                # --- bank charges ---
                 accounting.auto_post_entry(
-                    conn, mona, company_id=company_id, entry_date=exp_date.isoformat(),
-                    entry_type="expense", memo=f"{memo} — {m.strftime('%m/%Y')}",
-                    cost_center_id=cc["CC-ADM"] if code in ("5300", "5310", "5350") else cc["CC-SAL"],
+                    conn, mona, company_id=company_id, entry_date=m.replace(day=min(27, month_days)).isoformat(),
+                    entry_type="expense", memo=f"مصروفات بنكية — {m.strftime('%m/%Y')}",
                     lines=[
-                        {"account_id": code_to_id[code], "debit_cents": amount, "credit_cents": 0, "description": memo},
-                        {"account_id": gl_bank2, "debit_cents": 0, "credit_cents": amount, "description": memo},
+                        {"account_id": code_to_id["5400"], "debit_cents": 1_250_00, "credit_cents": 0,
+                         "description": "مصروفات إدارية بنكية"},
+                        {"account_id": gl_bank1, "debit_cents": 0, "credit_cents": 1_250_00, "description": "خصم بنكي"},
                     ],
-                    idempotency_key=f"expense:{code}:{m.isoformat()}",
+                    idempotency_key=f"bank_charges:{m.isoformat()}",
                 )
 
-            # --- bank charges ---
-            accounting.auto_post_entry(
-                conn, mona, company_id=company_id, entry_date=m.replace(day=min(27, month_days)).isoformat(),
-                entry_type="expense", memo=f"مصروفات بنكية — {m.strftime('%m/%Y')}",
-                lines=[
-                    {"account_id": code_to_id["5400"], "debit_cents": 1_250_00, "credit_cents": 0,
-                     "description": "مصروفات إدارية بنكية"},
-                    {"account_id": gl_bank1, "debit_cents": 0, "credit_cents": 1_250_00, "description": "خصم بنكي"},
-                ],
-                idempotency_key=f"bank_charges:{m.isoformat()}",
-            )
+                # --- payroll for months completed ---
+                if m < month_start(TODAY):
+                    documents.payroll_run(conn, mahmoud, company_id, m.strftime("%Y-%m"))
 
-            # --- payroll for months completed ---
-            if m < month_start(TODAY):
-                documents.payroll_run(conn, mahmoud, company_id, m.strftime("%Y-%m"))
+            # --- quarterly depreciation runs ---
+            for q in range(4):
+                start = date(YEAR, 3 * q + 1, 1)
+                end = (add_months(start, 1) - timedelta(days=1))
+                if start > TODAY:
+                    break
+                documents.depreciation_run(conn, mahmoud, company_id, start.isoformat(), end.isoformat())
 
-        # --- quarterly depreciation runs ---
-        for q in range(4):
-            start = date(YEAR, 3 * q + 1, 1)
-            end = (add_months(start, 1) - timedelta(days=1))
-            if start > TODAY:
-                break
-            documents.depreciation_run(conn, mahmoud, company_id, start.isoformat(), end.isoformat())
-
-        # --- budgets for current year ---
-        budget_rows = [
-            ("5300", 45_000_00), ("5310", 9_000_00), ("5200", 155_000_00),
-            ("5330", 15_000_00), ("5350", 3_500_00), ("5360", 8_000_00), ("5340", 20_000_00),
-        ]
-        for code, amount in budget_rows:
+            # --- budgets for current year ---
+            budget_rows = [
+                ("5300", 45_000_00), ("5310", 9_000_00), ("5200", 155_000_00),
+                ("5330", 15_000_00), ("5350", 3_500_00), ("5360", 8_000_00), ("5340", 20_000_00),
+            ]
+            for code, amount in budget_rows:
+                for month in range(1, 13):
+                    conn.execute(
+                        """INSERT OR IGNORE INTO budgets (company_id, fiscal_year_id, account_id, cost_center_id,
+                               period_month, budget_cents) VALUES (?,?,?,?,?,?)""",
+                        (company_id, fy_current, code_to_id[code], cc["CC-ADM"], month, amount))
             for month in range(1, 13):
                 conn.execute(
                     """INSERT OR IGNORE INTO budgets (company_id, fiscal_year_id, account_id, cost_center_id,
                            period_month, budget_cents) VALUES (?,?,?,?,?,?)""",
-                    (company_id, fy_current, code_to_id[code], cc["CC-ADM"], month, amount))
-        for month in range(1, 13):
-            conn.execute(
-                """INSERT OR IGNORE INTO budgets (company_id, fiscal_year_id, account_id, cost_center_id,
-                       period_month, budget_cents) VALUES (?,?,?,?,?,?)""",
-                (company_id, fy_current, code_to_id["4100"], cc["CC-SAL"], month, 1_200_000_00))
+                    (company_id, fy_current, code_to_id["4100"], cc["CC-SAL"], month, 1_200_000_00))
 
-        # --- approval rules ---
-        conn.execute("""INSERT INTO approval_rules (company_id, entity, min_amount_cents, max_amount_cents, required_role, level)
-                        VALUES (?,?,?,?,?,1)""", (company_id, "journal_entry", 0, 20_000_000, "chief_accountant"))
-        conn.execute("""INSERT INTO approval_rules (company_id, entity, min_amount_cents, max_amount_cents, required_role, level)
-                        VALUES (?,?,?,?,?,2)""", (company_id, "journal_entry", 20_000_000, None, "financial_manager"))
+            # --- approval rules ---
+            conn.execute("""INSERT INTO approval_rules (company_id, entity, min_amount_cents, max_amount_cents, required_role, level)
+                            VALUES (?,?,?,?,?,1)""", (company_id, "journal_entry", 0, 20_000_000, "chief_accountant"))
+            conn.execute("""INSERT INTO approval_rules (company_id, entity, min_amount_cents, max_amount_cents, required_role, level)
+                            VALUES (?,?,?,?,?,2)""", (company_id, "journal_entry", 20_000_000, None, "financial_manager"))
 
-        # --- a few entries left pending to demonstrate the approval workflow ---
-        pending1 = accounting.create_entry(
-            conn, mona, company_id=company_id, entry_date=TODAY.isoformat(), entry_type="manual",
-            memo="قيد تسوية مصروفات مستحقة — بانتظار المراجعة",
-            lines=[
-                {"account_id": code_to_id["5340"], "debit_cents": 8_400_00, "credit_cents": 0,
-                 "description": "مصروفات إدارية مستحقة"},
-                {"account_id": code_to_id["2140"], "debit_cents": 0, "credit_cents": 8_400_00,
-                 "description": "استحقاق مصروفات"},
-            ])
-        conn.execute("UPDATE journal_entries SET status='review', submitted_by=?, submitted_at=? WHERE id=?",
-                     (mona["id"], utcnow(), pending1))
-        pending2 = accounting.create_entry(
-            conn, samy, company_id=company_id, entry_date=TODAY.isoformat(), entry_type="manual",
-            memo="قيد شراء أجهزة مكتبية — اعتماد المدير المالي مطلوب",
-            lines=[
-                {"account_id": code_to_id["1450"], "debit_cents": 265_000_00, "credit_cents": 0,
-                 "description": "أثاث ومكاتب"},
-                {"account_id": code_to_id["2110"], "debit_cents": 0, "credit_cents": 265_000_00,
-                 "vendor_id": vendors["V-2003"], "description": "مورد أثاث"},
-            ])
-        conn.execute("UPDATE journal_entries SET status='approved' WHERE id=?", (pending2,))
+            # --- a few entries left pending to demonstrate the approval workflow ---
+            pending1 = accounting.create_entry(
+                conn, mona, company_id=company_id, entry_date=TODAY.isoformat(), entry_type="manual",
+                memo="قيد تسوية مصروفات مستحقة — بانتظار المراجعة",
+                lines=[
+                    {"account_id": code_to_id["5340"], "debit_cents": 8_400_00, "credit_cents": 0,
+                     "description": "مصروفات إدارية مستحقة"},
+                    {"account_id": code_to_id["2140"], "debit_cents": 0, "credit_cents": 8_400_00,
+                     "description": "استحقاق مصروفات"},
+                ])
+            conn.execute("UPDATE journal_entries SET status='review', submitted_by=?, submitted_at=? WHERE id=?",
+                         (mona["id"], utcnow(), pending1))
+            pending2 = accounting.create_entry(
+                conn, samy, company_id=company_id, entry_date=TODAY.isoformat(), entry_type="manual",
+                memo="قيد شراء أجهزة مكتبية — اعتماد المدير المالي مطلوب",
+                lines=[
+                    {"account_id": code_to_id["1450"], "debit_cents": 265_000_00, "credit_cents": 0,
+                     "description": "أثاث ومكاتب"},
+                    {"account_id": code_to_id["2110"], "debit_cents": 0, "credit_cents": 265_000_00,
+                     "vendor_id": vendors["V-2003"], "description": "مورد أثاث"},
+                ])
+            conn.execute("UPDATE journal_entries SET status='approved' WHERE id=?", (pending2,))
 
         # --- settings ---
-        for k, v in [("company_name", "شركة الطرانيسي للتجارة والتوزيع"),
+        for k, v in [("company_name", "شركة سي سيرفيس للشحن والتفريغ والوكالة الملاحية"),
                      ("default_tax_rate_bp", "1400"),
                      ("approval_threshold_cents", str(accounting.APPROVAL_THRESHOLD_CENTS)),
                      ("inventory_valuation", "weighted_average"),
@@ -611,7 +638,7 @@ def seed():
     # deployments can write to /tmp instead of the read-only project directory
     out = Path(os.environ.get("ERP_CREDENTIALS_FILE")
                or (Path(__file__).resolve().parent / "data" / "dev-credentials.txt"))
-    lines = ["Eltaranisi ERP — بيانات دخول التطوير / DEVELOPMENT LOGIN CREDENTIALS",
+    lines = ["ELTARANISI ERP — بيانات دخول التطوير / DEVELOPMENT LOGIN CREDENTIALS",
              "=" * 62,
              ("كلمات مرور ثابتة لبيئة التطوير فقط — لا تصلح للإنتاج."
               if FIXED_PASSWORDS else

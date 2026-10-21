@@ -31,11 +31,11 @@ APPROVAL_THRESHOLD_CENTS = 20_000_000  # 200,000 EGP
 
 
 class ValidationError(Exception):
-    def __init__(self, message, details=None):
+    def __init__(self, message, details=None, status=422):
         super().__init__(message)
         self.message = message
         self.details = details or {}
-        self.status = 422
+        self.status = status
 
 
 # --------------------------------------------------------------------------

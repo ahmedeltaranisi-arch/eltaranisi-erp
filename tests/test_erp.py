@@ -1,4 +1,4 @@
-"""Integration test suite for Eltaranisi ERP.
+"""Integration test suite for ELTARANISI ERP.
 
 Runs against a live server (default http://127.0.0.1:8000) and a seeded database.
 
@@ -87,6 +87,9 @@ class Client:
 
     def patch(self, path, body=None):
         return self.request("PATCH", path, body or {})
+
+    def delete(self, path, body=None):
+        return self.request("DELETE", path, body if body is not None else {})
 
 
 class ERPTestCase(unittest.TestCase):
@@ -643,6 +646,107 @@ class ERPTestCase(unittest.TestCase):
     def test_56_company_settings_need_permission(self):
         status, res = self.accountant.patch("/api/company", {"name_ar": "محاولة"})
         self.assertEqual(status, 403)
+
+    # ================================================================
+    # 7. DELETION SAFETY (every create has a matching delete)
+    # ================================================================
+    def _make_invoice(self, qty=2, price=150):
+        status, cust = self.owner.get("/api/customers")
+        customer = cust["customers"][0]
+        status, prods = self.owner.get("/api/products")
+        product = next(p for p in prods["products"] if not p["is_service"] and p["stock_value_cents"] > 0)
+        status, meta = self.owner.get("/api/meta")
+        status, res = self.sales.post("/api/sales-invoices", {
+            "customer_id": customer["id"], "invoice_date": self.today(), "due_date": self.today(),
+            "warehouse_id": meta["warehouses"][0]["id"],
+            "lines": [{"product_id": product["id"], "qty": qty, "unit_price": price, "tax_rate_bp": 1400}],
+            "post": True,
+        })
+        self.assertEqual(status, 200, res)
+        return res["id"], customer
+
+    def test_80_delete_requires_confirmation(self):
+        invoice_id, _ = self._make_invoice()
+        status, data = self.owner.delete(f"/api/sales-invoices/{invoice_id}")
+        self.assertEqual(status, 428, data)
+        self.assertIn("CONFIRM_REQUIRED", data["error"])
+        # still there
+        status, _ = self.owner.get(f"/api/sales-invoices/{invoice_id}")
+        self.assertEqual(status, 200)
+
+    def test_81_receipt_delete_unlinks_invoice(self):
+        invoice_id, customer = self._make_invoice()
+        banks = self.owner.get("/api/banks")[1]
+        gl_bank = next(b["gl_account_id"] for b in banks["accounts"] if b["code"] == "BNK-01")
+        status, pay = self.owner.post("/api/payments", {
+            "payment_type": "receipt", "payment_date": self.today(), "party_type": "customer",
+            "party_id": customer["id"], "method": "bank", "gl_account_id": gl_bank,
+            "amount": 100, "post": True,
+            "allocations": [{"invoice_kind": "sales", "invoice_id": invoice_id, "amount": 100}],
+        })
+        self.assertEqual(status, 200, pay)
+
+        # an invoice with money against it must not vanish
+        status, blocked = self.owner.delete(f"/api/sales-invoices/{invoice_id}", {"confirm": True})
+        self.assertEqual(status, 409, blocked)
+        self.assertIn("HAS_PAYMENTS", blocked["error"])
+
+        status, res = self.owner.delete(f"/api/payments/{pay['id']}", {"confirm": True})
+        self.assertEqual(status, 200, res)
+        detail = self.owner.get(f"/api/sales-invoices/{invoice_id}")[1]["invoice"]
+        self.assertEqual(detail["paid_cents"], 0)
+        self.assertEqual(detail["status"], "posted")
+        self.assertTrue(self.tb()["balanced"], "trial balance must stay balanced after deleting a receipt")
+
+    def test_82_invoice_delete_removes_lines_and_entry(self):
+        invoice_id, _ = self._make_invoice(qty=1, price=90)
+        detail = self.owner.get(f"/api/sales-invoices/{invoice_id}")[1]
+        entry_id = detail["invoice"]["journal_entry_id"]
+        self.assertIsNotNone(entry_id)
+
+        status, res = self.owner.delete(f"/api/sales-invoices/{invoice_id}", {"confirm": True})
+        self.assertEqual(status, 200, res)
+        self.assertEqual(self.owner.get(f"/api/sales-invoices/{invoice_id}")[0], 404)
+        self.assertEqual(self.owner.get(f"/api/journal-entries/{entry_id}")[0], 404)
+        self.assertTrue(self.tb()["balanced"])
+
+    def test_83_master_delete_blocked_when_documents_exist(self):
+        status, cust = self.owner.get("/api/customers")
+        busy = next(c for c in cust["customers"] if c["outstanding_cents"] or c["id"])
+        status, data = self.owner.delete(f"/api/customers/{cust['customers'][0]['id']}", {"confirm": True})
+        # either it is referenced (409) or it was clean (200) — never a 500
+        self.assertIn(status, (200, 409), data)
+        if status == 409:
+            self.assertIn("HAS_DOCUMENTS", data["error"])
+
+        # a brand-new customer is deletable
+        status, made = self.owner.post("/api/customers", {
+            "code": "C-DEL" + str(int(time.time())), "name_ar": "عميل للحذف", "name_en": "Deletable customer"})
+        self.assertEqual(status, 200, made)
+        status, res = self.owner.delete(f"/api/customers/{made['id']}", {"confirm": True})
+        self.assertEqual(status, 200, res)
+        status, again = self.owner.delete(f"/api/customers/{made['id']}", {"confirm": True})
+        self.assertEqual(status, 404)
+
+    def test_84_delete_permission_enforced(self):
+        invoice_id, _ = self._make_invoice(qty=1, price=100)
+        status, data = self.sales.delete(f"/api/sales-invoices/{invoice_id}", {"confirm": True})
+        self.assertEqual(status, 403, data)
+        # the sales role cannot delete master data either
+        status, _ = self.sales.delete("/api/customers/1", {"confirm": True})
+        self.assertEqual(status, 403)
+        self.assertEqual(self.owner.get(f"/api/sales-invoices/{invoice_id}")[0], 200)
+
+    def test_85_deletion_is_audited_with_snapshot(self):
+        invoice_id, _ = self._make_invoice(qty=1, price=70)
+        number = self.owner.get(f"/api/sales-invoices/{invoice_id}")[1]["invoice"]["invoice_no"]
+        self.owner.delete(f"/api/sales-invoices/{invoice_id}", {"confirm": True})
+        status, data = self.owner.get("/api/audit-logs?per_page=200")
+        self.assertEqual(status, 200, data)
+        rows = [r for r in data["logs"] if r["action"] == "sales_invoice.delete" and str(invoice_id) == str(r["entity_id"])]
+        self.assertTrue(rows, "deletion must be written to the audit trail")
+        self.assertEqual(rows[0]["username"], "ahmed.taranisi")
+        self.assertIn(number, rows[0]["details"] or "")
 
     # ================================================================
     # 6. DEMO ACCOUNTS ENDPOINT (development only)

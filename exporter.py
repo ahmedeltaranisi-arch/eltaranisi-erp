@@ -1,4 +1,4 @@
-"""Eltaranisi ERP — document exports.
+"""ELTARANISI ERP — document exports.
 
 * Tax invoice PDF (Arabic RTL by default, or English) with embedded Arabic font
 * Tax invoice Excel workbook
@@ -242,6 +242,50 @@ def brand_mark(pdf, x, y, size=30, mono=False):
     pdf.rect(bx, by, size * 0.36, size * 0.09, fill=white)
 
 
+# ---------------------------------------------------------------- header fitting
+def fit_name(pdf, name: str, max_w: float, rtl: bool, start: float = 14.0,
+             floor: float = 8.0, max_lines: int = 2):
+    """Shrink-to-fit (then word-wrap) a company name for a fixed header band.
+
+    Long legal names used to be drawn at a fixed size from the right margin and
+    simply ran into the logo plate on the other side of the page; the header is
+    now measured with the real font metrics before it is drawn.
+    """
+    name = (name or "").strip()
+    if not name:
+        return [], start
+    size = start
+    while size > floor and pdf.measure(name, size, rtl) > max_w:
+        size -= 0.5
+    if pdf.measure(name, size, rtl) <= max_w:
+        return [name], size
+    words = name.split()
+    lines, cur = [], ""
+    for w in words:
+        trial = (cur + " " + w).strip()
+        if not cur or pdf.measure(trial, floor, rtl) <= max_w:
+            cur = trial
+        else:
+            lines.append(cur)
+            cur = w
+    if cur:
+        lines.append(cur)
+    return lines[:max_lines], floor
+
+
+def draw_name_block(pdf, name, right_x, left_x, top_y, rtl, start=14.0, floor=8.0,
+                    color=(255, 255, 255), line_gap=12.5):
+    """Draw the company name inside [left_x, right_x] and return the y of the last line."""
+    max_w = max(60.0, right_x - left_x)
+    lines, size = fit_name(pdf, name, max_w, rtl, start=start, floor=floor)
+    y = top_y
+    for line in lines:
+        pdf.text(right_x if rtl else left_x, y, line, size, color,
+                 align="right" if rtl else "left", rtl=rtl)
+        y -= line_gap * (size / start) if len(lines) > 1 else 0
+    return (top_y if len(lines) < 2 else top_y - line_gap * (size / start)), size, len(lines)
+
+
 # ---------------------------------------------------------------- invoice PDF
 def invoice_pdf(conn, company_id: int, kind: str, invoice_id: int, lang: str = "ar") -> bytes:
     data = invoice_data(conn, company_id, kind, invoice_id)
@@ -262,21 +306,39 @@ def invoice_pdf(conn, company_id: int, kind: str, invoice_id: int, lang: str = "
     # ---------- header band ----------
     pdf.rect(0, H - 118, W, 118, fill=(11, 47, 107))
     pdf.rect(0, H - 122, W, 4, fill=GOLD)
-    name = (company.get("name_ar") if ar else company.get("name_en")) or "Eltaranisi ERP"
-    pdf.text(W - M, H - 46, name, 17, WHITE, align="right", rtl=rtl)
+    name = (company.get("name_ar") if ar else company.get("name_en")) or "ELTARANISI ERP"
+    doc_title = T("فاتورة ضريبية", "TAX INVOICE") if kind == "sales" else T("فاتورة مشتريات", "PURCHASE INVOICE")
+    # the left column (logo + document title + status badge) owns `left_x`:
+    # the name block is always right-aligned and never draws under it.
+    left_x = M + 40 + pdf.measure(doc_title, 14, ar) + 16
+    right_x = W - M
+    avail = right_x - left_x
+    lines, name_size = fit_name(pdf, name, avail, True, start=17.0, floor=10.0)
+    ny = H - 44
+    for line in lines:
+        pdf.text(right_x, ny, line, name_size, WHITE, align="right", rtl=True)
+        ny -= 13
     sub = (company.get("name_en") if ar else company.get("name_ar")) or ""
-    pdf.text(W - M, H - 64, sub, 9.5, (205, 200, 240), align="right", rtl=not rtl)
+    sub_size = 9.5
+    while sub_size > 7.0 and pdf.measure(sub, sub_size, not ar) > avail:
+        sub_size -= 0.4
+    if sub:
+        pdf.text(right_x, ny + 1, sub, sub_size, (205, 200, 240), align="right",
+                 rtl=not ar if _has_ar(sub) else ar)
     contact = " · ".join(x for x in [company.get("address"), company.get("phone"),
                                      f'{T("الرقم الضريبي", "Tax No.")}: {company.get("tax_number") or "—"}'] if x)
-    pdf.text(W - M, H - 82, contact, 8.5, (196, 191, 235), align="right", rtl=not ar and _has_ar(contact))
-    brand_mark(pdf, M + 2, H - 58, 30)
-    doc_title = T("فاتورة ضريبية", "TAX INVOICE") if kind == "sales" else T("فاتورة مشتريات", "PURCHASE INVOICE")
-    pdf.text(M + 40, H - 46, doc_title, 14, WHITE, align="left", rtl=ar)
+    c_size = 8.5
+    while c_size > 6.6 and pdf.measure(contact, c_size, True) > avail:
+        c_size -= 0.3
+    pdf.text(right_x, ny - 13, contact, c_size, (196, 191, 235), align="right",
+             rtl=True if _has_ar(contact) else False)
+    brand_mark(pdf, M + 2, H - 62, 30)
+    pdf.text(M + 40, H - 50, doc_title, 14, WHITE, align="left", rtl=ar)
     status = inv.get("status") or "draft"
     badge_text = STATUS_AR.get(status, status) if ar else STATUS_EN.get(status, status)
     bw = pdf.measure(badge_text, 9) + 22
-    pdf.rect(M + 2, H - 88, bw, 20, fill=(255, 255, 255), radius=10)
-    pdf.text(M + 2 + bw / 2, H - 82, badge_text, 8.6, (11, 47, 107), align="center", rtl=rtl)
+    pdf.rect(M + 2, H - 92, bw, 20, fill=(255, 255, 255), radius=10)
+    pdf.text(M + 2 + bw / 2, H - 86, badge_text, 8.6, (11, 47, 107), align="center", rtl=rtl)
 
     y = H - 150
     # ---------- meta boxes ----------
@@ -314,7 +376,7 @@ def invoice_pdf(conn, company_id: int, kind: str, invoice_id: int, lang: str = "
     # ---------- items table ----------
     y = y - box_h - 26
     cols_ar = [
-        ("#", 26, "center"),
+        (T("الرمز التعريفي", "Reference ID"), 46, "center"),
         (T("الصنف / الوصف", "Item / description"), 0, "right"),
         (T("الكمية", "Qty"), 52, "center"),
         (T("السعر", "Price"), 66, "right"),
@@ -453,8 +515,8 @@ def invoice_pdf(conn, company_id: int, kind: str, invoice_id: int, lang: str = "
     pdf.line(M, 112, W - M, 112, color=LINE)
     half = (W - 2 * M) - 14
     footer_text = company.get("invoice_footer") or T(
-        "شكراً لتعاملكم معنا — هذه الفاتورة صادرة إلكترونياً من نظام الطرانيسي ERP",
-        "Thank you — this invoice was generated by Eltaranisi ERP")
+        "شكراً لتعاملكم معنا — هذه الفاتورة صادرة إلكترونياً من نظام ELTARANISI ERP",
+        "Thank you — this invoice was generated by ELTARANISI ERP")
     foot_ar = _has_ar(footer_text)
     for i, line in enumerate(_wrap(pdf, footer_text, 7.4, half * 0.66, foot_ar)[:2]):
         pdf.text(W - M, 98 - i * 10, line, 7.4, MUTED, align="right", rtl=foot_ar)
@@ -519,7 +581,7 @@ def invoice_xlsx(conn, company_id: int, kind: str, invoice_id: int, lang: str = 
     rows.append([T("الحالة", "Status"), (STATUS_AR if ar else STATUS_EN).get(inv.get("status"), inv.get("status")),
                  T("الرقم الضريبي للطرف", "Party tax No."), inv.get("party_tax") or "—"])
     rows.append([])
-    header = [T("م", "#"), T("الصنف / الوصف", "Item / description"), T("الكود", "Code"),
+    header = [T("الرمز التعريفي", "Reference ID"), T("الصنف / الوصف", "Item / description"), T("الكود", "Code"),
               T("الكمية", "Qty"), T("السعر", "Unit price"), T("الخصم", "Discount"),
               T("نسبة الضريبة", "VAT %"), T("قيمة الضريبة", "VAT amount"), T("الإجمالي", "Line total")]
     rows.append(header)
@@ -573,16 +635,27 @@ def report_pdf(title_ar: str, title_en: str, columns, rows, company=None, lang="
     pdf.new_page()
     pdf.rect(0, H - 92, W, 92, fill=(11, 47, 107))
     pdf.rect(0, H - 95, W, 3, fill=BRAND)
-    name = (company or {}).get("name_ar" if ar else "name_en") or "Eltaranisi ERP"
-    pdf.text(W - M, H - 40, name, 14, WHITE, align="right" if ar else "left", rtl=ar)
-    pdf.text(W - M, H - 58, (title_ar if ar else title_en), 11.5, (226, 222, 250),
+    name = (company or {}).get("name_ar" if ar else "name_en") or "ELTARANISI ERP"
+    # the logo plate owns the outer 122pt of the band: never draw text under it
+    left_x = M + 122
+    right_x = W - M
+    lines, name_size = fit_name(pdf, name, right_x - left_x, ar, start=14.0, floor=8.4)
+    two_lines = len(lines) > 1
+    ny = H - 38
+    for line in lines:
+        pdf.text(right_x if ar else left_x, ny, line, name_size, WHITE,
+                 align="right" if ar else "left", rtl=ar)
+        ny -= 11.5
+    title_y = H - 56 if not two_lines else H - 62
+    pdf.text(right_x if ar else left_x, title_y, (title_ar if ar else title_en), 11.5, (226, 222, 250),
              align="right" if ar else "left", rtl=ar)
     sub = subtitle_ar if ar else subtitle_en
     if sub:
-        pdf.text(W - M, H - 74, sub, 8.4, (198, 193, 238), align="right" if ar else "left", rtl=ar)
-    brand_mark(pdf, M, H - 74, 26)
-    pdf.text(M + 34, H - 40, T("نظام الطرانيسي ERP", "Eltaranisi ERP"), 8.6, (198, 193, 238), align="left", rtl=ar)
-    pdf.text(M, H - 56, datetime.now().strftime("%Y-%m-%d %H:%M"), 8.2, (198, 193, 238), align="left", rtl=False)
+        pdf.text(right_x if ar else left_x, title_y - 15, sub, 8.4, (198, 193, 238),
+                 align="right" if ar else "left", rtl=ar)
+    brand_mark(pdf, M, H - 74, 24)
+    pdf.text(M + 30, H - 40, "ELTARANISI ERP", 8.8, WHITE, align="left", rtl=False)
+    pdf.text(M + 30, H - 56, datetime.now().strftime("%Y-%m-%d %H:%M"), 8.0, (198, 193, 238), align="left", rtl=False)
 
     # distribute columns
     total_cfg = sum(c.get("w", 1) for c in columns)
@@ -642,8 +715,8 @@ def report_pdf(title_ar: str, title_en: str, columns, rows, company=None, lang="
         pdf.text(W - M, yy, note, 8, MUTED, align="right" if ar else "left", rtl=ar)
         yy -= 13
     pdf.line(M, 58, W - M, 58, color=LINE)
-    pdf.text(W - M, 44, T("تم التوليد آلياً من نظام الطرانيسي ERP — بيانات من القيود المرحّلة فقط",
-                          "Generated by Eltaranisi ERP — posted ledger data only"), 7.6, MUTED,
+    pdf.text(W - M, 44, T("تم التوليد آلياً من نظام ELTARANISI ERP — بيانات من القيود المرحّلة فقط",
+                          "Generated by ELTARANISI ERP — posted ledger data only"), 7.6, MUTED,
              align="right" if ar else "left", rtl=ar)
     pdf.text(M, 44, f"{T('صفحة', 'Page')} {page_no}", 7.6, MUTED, align="left", rtl=ar)
     return pdf.to_bytes()

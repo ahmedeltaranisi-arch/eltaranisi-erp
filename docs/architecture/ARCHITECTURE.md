@@ -1,4 +1,4 @@
-# المعمارية — Eltaranisi ERP
+# المعمارية — ELTARANISI ERP
 
 ## 1. النمط المعماري: Modular Monolith
 

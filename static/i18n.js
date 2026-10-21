@@ -1,9 +1,9 @@
-/* Eltaranisi ERP — translations (Arabic default, English full parity) */
+/* ELTARANISI ERP — translations (Arabic default, English full parity) */
 const I18N = {
   ar: {
-    "app.name": "الطرانيسي ERP",
-    "app.tagline": "منصة محاسبية وإدارية متكاملة",
-    "app.company": "شركة الطرانيسي للتجارة والتوزيع",
+    "app.name": "ELTARANISI ERP",
+    "app.tagline": "شحن وتفريغ ووكالة ملاحية — منصة محاسبية وإدارية متكاملة",
+    "app.company": "شركة سي سيرفيس للشحن والتفريغ والوكالة الملاحية",
     "login.title": "تسجيل الدخول",
     "login.subtitle": "استخدم بيانات حسابك المؤسسي. كل إجراء يُسجَّل في سجل التدقيق.",
     "login.username": "اسم المستخدم",
@@ -355,7 +355,7 @@ const I18N = {
     "pl.header": "تفاصيل"
   },
   en: {
-    "app.name": "Eltaranisi ERP",
+    "app.name": "ELTARANISI ERP",
     "app.tagline": "Integrated accounting & business platform",
     "app.company": "Eltaranisi Trading & Distribution Co.",
     "login.title": "Sign in",

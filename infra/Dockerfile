@@ -1,4 +1,4 @@
-# Eltaranisi ERP — production-style image (no external Python dependencies)
+# ELTARANISI ERP — production-style image (no external Python dependencies)
 FROM python:3.12-slim AS base
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

@@ -1,4 +1,4 @@
-"""Eltaranisi ERP — compact PDF generator (pure standard library).
+"""ELTARANISI ERP — compact PDF generator (pure standard library).
 
 Why hand-rolled: the deployment target runs on Python stdlib only (no pip), so
 invoices must be produced server-side without reportlab/weasyprint.
@@ -328,7 +328,7 @@ class PDF:
         self.pages = []
         self._ops = []
         self.used = [{} for _ in self.fonts]     # per font: gid -> char
-        self.meta = {"Title": "", "Author": "Eltaranisi ERP", "Creator": "Eltaranisi ERP"}
+        self.meta = {"Title": "", "Author": "ELTARANISI ERP", "Creator": "ELTARANISI ERP"}
 
     # ---- primitives -----------------------------------------------------
     def _emit(self, op: str):
@@ -557,7 +557,7 @@ class PDF:
             return "".join(ch if 32 <= ord(ch) < 127 else " " for ch in v).replace("(", " ").replace(")", " ")
 
         info = (f"<< /Title ({pdftext(self.meta['Title'])}) /Author ({pdftext(self.meta['Author'])}) "
-                f"/Creator ({pdftext(self.meta['Creator'])}) /Producer (Eltaranisi ERP) "
+                f"/Creator ({pdftext(self.meta['Creator'])}) /Producer (ELTARANISI ERP) "
                 f"/CreationDate (D:{datetime.now().strftime('%Y%m%d%H%M%S')}) >>")
         info_obj = add(info.encode("latin-1"))
 

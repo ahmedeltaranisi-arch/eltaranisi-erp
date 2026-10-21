@@ -1,9 +1,10 @@
 openapi: 3.1.0
 info:
-  title: Eltaranisi ERP API
-  version: 1.0.0
+  title: ELTARANISI ERP API
+  version: 1.1.0
   description: >
-    REST API for Eltaranisi ERP (Arabic-first, multi-company double-entry accounting).
+    REST API for ELTARANISI ERP (Arabic-first, multi-company double-entry accounting).
+    Destructive endpoints (DELETE) additionally require `{"confirm": true}` in the body.
     All monetary values are integer piastres (`*_cents`); quantities are `*_milli`.
 servers:
   - url: http://localhost:8000
@@ -16,6 +17,7 @@ tags:
   - name: purchases
   - name: payables
   - name: reports
+  - name: deletions
   - name: system
 paths:
   /api/health:
@@ -167,6 +169,102 @@ paths:
         - { in: query, name: kind, schema: { type: string, enum: [trial-balance, income-statement, balance-sheet, vendor-payables] } }
       responses:
         "200": { description: XLSX (rightToLeft="1"), content: { application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: { schema: { type: string, format: binary } } } }
+  /api/sales-invoices/{id}:
+    delete:
+      tags: [deletions]
+      summary: Delete a sales invoice with its lines, journal entry and stock movements
+      description: >-
+        Requires the `sales.delete` permission and a body of {"confirm": true}.
+        Answers 409 HAS_PAYMENTS while receipts are allocated to the invoice.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ConfirmBody" }
+      responses:
+        "200": { description: Deleted, content: { application/json: { schema: { $ref: "#/components/schemas/DeleteResult" } } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "428": { $ref: "#/components/responses/Error" }
+  /api/purchase-invoices/{id}:
+    delete:
+      tags: [deletions]
+      summary: Delete a purchase invoice with its lines, journal entry and stock movements
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ConfirmBody" }
+      responses:
+        "200": { description: Deleted, content: { application/json: { schema: { $ref: "#/components/schemas/DeleteResult" } } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "428": { $ref: "#/components/responses/Error" }
+  /api/payments/{id}:
+    delete:
+      tags: [deletions]
+      summary: Delete a receipt/payment, release its allocations and restore invoice balances
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ConfirmBody" }
+      responses:
+        "200": { description: Deleted, content: { application/json: { schema: { $ref: "#/components/schemas/DeleteResult" } } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "428": { $ref: "#/components/responses/Error" }
+  /api/customers/{id}:
+    delete:
+      tags: [deletions]
+      summary: Delete a customer (409 HAS_DOCUMENTS when invoices or receipts reference it)
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ConfirmBody" }
+      responses:
+        "200": { description: Deleted, content: { application/json: { schema: { $ref: "#/components/schemas/DeleteResult" } } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /api/vendors/{id}:
+    delete:
+      tags: [deletions]
+      summary: Delete a vendor (409 HAS_DOCUMENTS when purchase documents reference it)
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ConfirmBody" }
+      responses:
+        "200": { description: Deleted, content: { application/json: { schema: { $ref: "#/components/schemas/DeleteResult" } } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /api/journal-entries/{id}:
+    delete:
+      tags: [deletions]
+      summary: Delete a manual journal entry (system-generated entries answer 409 SYSTEM_ENTRY)
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ConfirmBody" }
+      responses:
+        "200": { description: Deleted, content: { application/json: { schema: { $ref: "#/components/schemas/DeleteResult" } } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
   /api/sales-invoices/{id}/pdf:
     get:
       summary: Tax invoice PDF — requires `sales.view`
@@ -266,6 +364,19 @@ paths:
       summary: Scoped financial assistant (read-only, permission-bound, no posting)
       responses: { "200": { description: OK }, "403": { $ref: "#/components/responses/Error" } }
 components:
+  schemas:
+    ConfirmBody:
+      type: object
+      required: [confirm]
+      properties:
+        confirm: { type: boolean, example: true }
+    DeleteResult:
+      type: object
+      properties:
+        ok: { type: boolean, example: true }
+        deleted: { type: string, example: sales_invoice }
+        id: { type: integer, example: 51 }
+        number: { type: string, example: SI-2026-00051 }
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer }
   responses:

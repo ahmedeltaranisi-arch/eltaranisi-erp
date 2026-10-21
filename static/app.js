@@ -1,5 +1,5 @@
 /* ============================================================
-   Eltaranisi ERP — front-end core (state, API, shell, router, UI kit)
+   ELTARANISI ERP — front-end core (state, API, shell, router, UI kit)
    ============================================================ */
 const APP = {
   token: localStorage.getItem("erp_token") || null,
@@ -93,7 +93,7 @@ function toast(msg, kind = "ok") {
   const root = $("#toast-root");
   const div = document.createElement("div");
   div.className = "toast " + kind;
-  div.innerHTML = `<span>${kind === "err" ? "⚠️" : "✅"}</span><div>${ESC(msg)}</div>`;
+  div.innerHTML = `<span class="toast-ico">${kind === "err" ? icon("alert") : icon("check")}</span><div>${ESC(msg)}</div>`;
   root.appendChild(div);
   setTimeout(() => { div.style.opacity = "0"; div.style.transform = "translateY(8px)"; }, 3600);
   setTimeout(() => div.remove(), 4100);
@@ -106,7 +106,7 @@ function openModal({ title, body, footer = "", wide = false, narrow = false, onM
     <div class="modal ${wide ? "wide" : ""} ${narrow ? "narrow" : ""}">
       <div class="modal-head">
         <h3>${ESC(title)}</h3><div class="spacer"></div>
-        <button class="icon-btn" data-close>✕</button>
+        <button class="icon-btn" data-close aria-label="close">${icon("close")}</button>
       </div>
       <div class="modal-body">${body}</div>
       ${footer ? `<div class="modal-foot">${footer}</div>` : ""}
@@ -129,6 +129,43 @@ function confirmDialog(message, onConfirm, { danger = false, title = "تأكيد
     }
   });
 }
+
+/* ------------------------------- deletions --------------------------------
+ * One button factory + one delegated handler for every "delete" action in the
+ * app. The API additionally requires {"confirm": true} and re-checks
+ * permissions server-side, so a forged click cannot delete anything.
+ * ------------------------------------------------------------------------ */
+function deleteButton(path, subjectAr, subjectEn, { cls = "danger", delBack = "" } = {}) {
+  const label = APP.lang === "ar" ? "حذف" : "Delete";   // L() lives inside pages.js
+  return `<button class="icon-btn ${cls}" data-del-path="${ESC(path)}"${delBack ? ` data-del-back="${ESC(delBack)}"` : ""}
+      data-del-ar="${ESC(subjectAr)}" data-del-en="${ESC(subjectEn)}"
+      title="${ESC(label)}" aria-label="${ESC(label)}">${icon("trash")}</button>`;
+}
+
+document.addEventListener("click", (ev) => {
+  const btn = ev.target.closest("[data-del-path]");
+  if (!btn) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  const ar = APP.lang === "ar";
+  const subject = ar ? btn.dataset.delAr : btn.dataset.delEn;
+  const message = ar
+    ? `هل أنت متأكد من حذف ${subject}؟\nسيتم حذف القيد المحاسبي المرتبط وتأثيره على الأرصدة، ولا يمكن التراجع عن هذه العملية.`
+    : `Are you sure you want to delete ${subject}?\nIts journal entry and balance effects are removed too. This cannot be undone.`;
+  confirmDialog(message, async () => {
+    btn.disabled = true;
+    try {
+      await api(btn.dataset.delPath, { method: "DELETE", body: { confirm: true } });
+      toast(ar ? "تم الحذف بنجاح" : "Deleted successfully");
+      const back = btn.dataset.delBack;
+      if (back) location.hash = back; else await render();
+    } catch (err) {
+      toast(err.message, "err");
+    } finally {
+      btn.disabled = false;
+    }
+  }, { danger: true, title: ar ? "تأكيد الحذف" : "Confirm deletion" });
+});
 
 /**
  * Generic form modal.
@@ -215,7 +252,7 @@ function fieldHtml(f) {
  */
 function renderTable(cols, rows, opts = {}) {
   if (!rows || !rows.length) {
-    return `<div class="empty"><span class="big">◍</span>${ESC(opts.empty || t("common.empty"))}</div>`;
+    return `<div class="empty"><span class="big">${icon("reports", "ico-lg")}</span>${ESC(opts.empty || t("common.empty"))}</div>`;
   }
   const head = cols.map(c => `<th class="${c.cls || ""}">${ESC(c.label)}</th>`).join("");
   const body = rows.map((r, i) => {
@@ -356,9 +393,9 @@ function applyTheme() {
   document.documentElement.dataset.theme = theme;
   localStorage.setItem("erp_theme", APP.theme);
   const btn = $("#theme-btn");
-  if (btn) btn.textContent = theme === "dark" ? "☀️" : "🌙";
+  if (btn) btn.innerHTML = icon(theme === "dark" ? "sun" : "moon");
   const lbtn = $("#login-theme");
-  if (lbtn) lbtn.textContent = theme === "dark" ? "☀️" : "🌙";
+  if (lbtn) lbtn.innerHTML = icon(theme === "dark" ? "sun" : "moon");
 }
 function applyLang() {
   document.documentElement.lang = APP.lang;
@@ -408,33 +445,102 @@ async function logout() {
 }
 
 /* ------------------------------ shell ------------------------------ */
+
+/* ------------------------------------------------------------------
+   Icon set — inline SVG (stroke icons, 24×24 grid).
+   Emoji were removed: they render differently per OS and break the
+   visual rhythm. These inherit `currentColor`, so they theme for free.
+   ------------------------------------------------------------------ */
+const ICONS = {
+  dashboard: '<rect x="3" y="3" width="7" height="9" rx="2"/><rect x="14" y="3" width="7" height="5" rx="2"/><rect x="14" y="12" width="7" height="9" rx="2"/><rect x="3" y="16" width="7" height="5" rx="2"/>',
+  accounts: '<path d="M4 5.5C4 4.1 5.1 3 6.5 3H19a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6.5A2.5 2.5 0 0 1 4 18.5z"/><path d="M4 17.5h16"/><path d="M9 7h7M9 11h5"/>',
+  journal: '<path d="M4 7h13l-3-3M20 17H7l3 3"/>',
+  reports: '<path d="M6 3h9l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v5h5"/><path d="M9 17v-4M12 17v-7M15 17v-2"/>',
+  sales: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+  purchases: '<circle cx="9" cy="20" r="1.6"/><circle cx="18" cy="20" r="1.6"/><path d="M2 3h2.5l2.2 11.2A2 2 0 0 0 8.7 16H19l2-9H6"/>',
+  payments: '<rect x="2" y="6" width="20" height="12" rx="3"/><circle cx="12" cy="12" r="2.6"/><path d="M6 12h.01M18 12h.01"/>',
+  payables: '<path d="M12 2v20"/><path d="M17 6.5C17 4.6 14.8 3.5 12 3.5S7 4.6 7 6.5s2.2 2.7 5 3.2 5 1.3 5 3.3-2.2 3.5-5 3.5-5-1.2-5-3"/>',
+  receivables: '<circle cx="9" cy="8" r="3.2"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M17 8h5M19.5 5.5v5"/>',
+  customers: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+  vendors: '<path d="M2 17h2l1.5-4h11L18 17h2"/><rect x="5" y="7" width="11" height="6" rx="2"/><circle cx="7" cy="19" r="1.6"/><circle cx="17" cy="19" r="1.6"/>',
+  inventory: '<path d="M3 8.5 12 4l9 4.5-9 4.5z"/><path d="M3 8.5v7L12 20l9-4.5v-7"/><path d="M12 13v7"/>',
+  banks: '<path d="M3 10h18M5 10V6l7-3 7 3v4"/><path d="M6 10v7M10 10v7M14 10v7M18 10v7"/><path d="M3 21h18"/>',
+  assets: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M9 7h6M9 11h6M9 15h4"/>',
+  payroll: '<circle cx="9" cy="7" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><path d="M16 4h5v5"/>',
+  budgets: '<circle cx="12" cy="12" r="9"/><path d="M12 3v9h9"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>',
+  users: '<circle cx="9" cy="8" r="3.2"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M17 11a3 3 0 1 0 0-6"/><path d="M18 20a5.5 5.5 0 0 0-3-4.9"/>',
+  periods: '<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/><path d="M8 15h3"/>',
+  audit: '<path d="M7 3h7l5 5v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v5h5"/><path d="M9 13l2 2 4-4"/>',
+  assistant: '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M18 16l.9 2.1L21 19l-2.1.9L18 22l-.9-2.1L15 19l2.1-.9z"/>',
+  menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  bell: '<path d="M18 15V10a6 6 0 1 0-12 0v5l-2 3h16z"/><path d="M10 21a2.5 2.5 0 0 0 4 0"/>',
+  moon: '<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5z"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/>',
+  close: '<path d="M6 6l12 12M18 6L6 18"/>',
+  trash: '<path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/><path d="M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13"/><path d="M10 11v6M14 11v6"/>',
+  chevron: '<path d="M6 9l6 6 6-6"/>',
+  check: '<path d="M20 6L9 17l-5-5"/>',
+  alert: '<path d="M12 3l9 16H3z"/><path d="M12 9v4M12 17h.01"/>',
+  lock: '<rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>',
+  refresh: '<path d="M20 11a8 8 0 1 0-.6 4"/><path d="M20 5v6h-6"/>',
+  grid: '<rect x="3" y="3" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="2"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="2"/>',
+  list: '<path d="M8 6h13M8 12h13M8 18h13"/><path d="M3.5 6h.01M3.5 12h.01M3.5 18h.01"/>',
+  chart: '<path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6" rx="1"/><rect x="12" y="8" width="3" height="10" rx="1"/><rect x="17" y="5" width="3" height="13" rx="1"/>',
+  pie: '<path d="M12 3a9 9 0 1 0 9 9h-9z"/><path d="M15 2.5A8.5 8.5 0 0 1 21.5 9H15z"/>',
+  target: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.4"/>',
+  percent: '<path d="M5 19L19 5"/><circle cx="7.5" cy="7.5" r="2.5"/><circle cx="16.5" cy="16.5" r="2.5"/>',
+  transfer: '<path d="M4 8h13l-3.5-3.5M20 16H7l3.5 3.5"/>',
+  coins: '<ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>',
+  box: '<path d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path d="M4 8l8 4 8-4M12 12v8"/>',
+  arrowUp: '<path d="M12 20V4M6 10l6-6 6 6"/>',
+  arrowDown: '<path d="M12 4v16M6 14l6 6 6-6"/>',
+  download: '<path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 19h16"/>',
+  file: '<path d="M7 3h7l4 4v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v5h5"/>',
+  eye: '<path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  printer: '<path d="M7 8V3h10v5"/><rect x="3" y="8" width="18" height="8" rx="2"/><path d="M7 14h10v7H7z"/>',
+  upload: '<path d="M12 17V5M7 10l5-5 5 5"/><path d="M4 19h16"/>',
+  undo: '<path d="M4 10h9a5.5 5.5 0 0 1 0 11H8"/><path d="M8 6l-4 4 4 4"/>',
+  bank: '<path d="M3 9.5 12 4l9 5.5"/><path d="M5 10v8M10 10v8M14 10v8M19 10v8"/><path d="M3 21h18"/>',
+  sparkle: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/>',
+};
+
+function icon(name, cls = "") {
+  const path = ICONS[name] || ICONS.dashboard;
+  return `<svg class="ico-svg ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
+}
+window.icon = icon;
+
 const NAV = [
   { section: "nav.section.main" },
-  { id: "dashboard", icon: "◈", label: "nav.dashboard", perm: "dashboard.view" },
+  { id: "dashboard", icon: "dashboard", label: "nav.dashboard", perm: "dashboard.view" },
   { section: "nav.accounting" },
-  { id: "accounts", icon: "⛁", label: "nav.accounts", perm: "accounts.view" },
-  { id: "journal", icon: "⇄", label: "nav.journal", perm: "journal.view" },
-  { id: "reports", icon: "▤", label: "nav.reports", perm: "reports.view" },
+  { id: "accounts", icon: "accounts", label: "nav.accounts", perm: "accounts.view" },
+  { id: "journal", icon: "journal", label: "nav.journal", perm: "journal.view" },
+  { id: "reports", icon: "reports", label: "nav.reports", perm: "reports.view" },
   { section: "nav.operations" },
-  { id: "sales", icon: "▦", label: "nav.sales", perm: "sales.view" },
-  { id: "purchases", icon: "▧", label: "nav.purchases", perm: "purchases.view" },
-  { id: "payments", icon: "₪", label: "nav.payments", perm: "payments.view" },
-  { id: "payables", icon: "◫", label: "nav.payables", perm: "payables.view" },
-  { id: "receivables", icon: "◨", label: "nav.receivables", perm: "customers.view" },
+  { id: "sales", icon: "sales", label: "nav.sales", perm: "sales.view" },
+  { id: "purchases", icon: "purchases", label: "nav.purchases", perm: "purchases.view" },
+  { id: "payments", icon: "payments", label: "nav.payments", perm: "payments.view" },
+  { id: "payables", icon: "payables", label: "nav.payables", perm: "payables.view" },
+  { id: "receivables", icon: "receivables", label: "nav.receivables", perm: "customers.view" },
   { section: "nav.masters" },
-  { id: "customers", icon: "☺", label: "nav.customers", perm: "customers.view" },
-  { id: "vendors", icon: "⌂", label: "nav.vendors", perm: "vendors.view" },
-  { id: "inventory", icon: "▩", label: "nav.inventory", perm: "inventory.view" },
-  { id: "banks", icon: "▬", label: "nav.banks", perm: "banks.view" },
-  { id: "assets", icon: "▣", label: "nav.assets", perm: "assets.view" },
-  { id: "payroll", icon: "◍", label: "nav.payroll", perm: "payroll.view" },
-  { id: "budgets", icon: "◑", label: "nav.budgets", perm: "budgets.view" },
+  { id: "customers", icon: "customers", label: "nav.customers", perm: "customers.view" },
+  { id: "vendors", icon: "vendors", label: "nav.vendors", perm: "vendors.view" },
+  { id: "inventory", icon: "inventory", label: "nav.inventory", perm: "inventory.view" },
+  { id: "banks", icon: "banks", label: "nav.banks", perm: "banks.view" },
+  { id: "assets", icon: "assets", label: "nav.assets", perm: "assets.view" },
+  { id: "payroll", icon: "payroll", label: "nav.payroll", perm: "payroll.view" },
+  { id: "budgets", icon: "budgets", label: "nav.budgets", perm: "budgets.view" },
   { section: "nav.admin" },
-  { id: "settings", icon: "⚙", label: "nav.settings", perm: "settings.manage" },
-  { id: "users", icon: "⚇", label: "nav.users", perm: "users.manage" },
-  { id: "periods", icon: "▤", label: "nav.periods", perm: "periods.view" },
-  { id: "audit", icon: "✎", label: "nav.audit", perm: "audit.view" },
-  { id: "assistant", icon: "✦", label: "nav.assistant", perm: "ai.use" },
+  { id: "settings", icon: "settings", label: "nav.settings", perm: "settings.manage" },
+  { id: "users", icon: "users", label: "nav.users", perm: "users.manage" },
+  { id: "periods", icon: "periods", label: "nav.periods", perm: "periods.view" },
+  { id: "audit", icon: "audit", label: "nav.audit", perm: "audit.view" },
+  { id: "assistant", icon: "assistant", label: "nav.assistant", perm: "ai.use" },
 ];
 
 function canViewPeriods() { return can("reports.view") || can("period.close"); }
@@ -451,7 +557,7 @@ function renderNav() {
     if (item.id === "periods") allowed = canViewPeriods();
     if (!allowed) return "";
     return `<button class="nav-item ${current === item.id ? "active" : ""}" data-route="${item.id}">
-        <span class="ico">${item.icon}</span><span>${ESC(t(item.label))}</span></button>`;
+        <span class="ico">${icon(item.icon)}</span><span>${ESC(t(item.label))}</span></button>`;
   }).join("");
   $$(".nav-item", nav).forEach(b => b.onclick = () => { location.hash = "#/" + b.dataset.route; closeSidebar(); });
 }
@@ -548,13 +654,13 @@ function setupSearch() {
           can("vendors.view") ? api("/api/vendors") : Promise.resolve({ vendors: [] }),
           can("sales.view") ? api("/api/sales-invoices") : Promise.resolve({ invoices: [] }),
         ]);
-        je.entries.forEach(e => items.push({ icon: "⇄", title: `${e.entry_no} — ${e.memo}`, sub: fmtMoney(e.total_debit_cents), hash: "#/journal/" + e.id }));
+        je.entries.forEach(e => items.push({ icon: icon("journal"), title: `${e.entry_no} — ${e.memo}`, sub: fmtMoney(e.total_debit_cents), hash: "#/journal/" + e.id }));
         cust.customers.filter(c => (c.name_ar + c.name_en + c.code).toLowerCase().includes(q.toLowerCase()))
-          .slice(0, 4).forEach(c => items.push({ icon: "☺", title: c.name_ar, sub: c.code, hash: "#/customers" }));
+          .slice(0, 4).forEach(c => items.push({ icon: icon("customers"), title: c.name_ar, sub: c.code, hash: "#/customers" }));
         vend.vendors.filter(c => (c.name_ar + c.name_en + c.code).toLowerCase().includes(q.toLowerCase()))
-          .slice(0, 4).forEach(c => items.push({ icon: "⌂", title: c.name_ar, sub: c.code, hash: "#/vendors" }));
+          .slice(0, 4).forEach(c => items.push({ icon: icon("vendors"), title: c.name_ar, sub: c.code, hash: "#/vendors" }));
         sinv.invoices.filter(i => (i.invoice_no + (i.customer_ar || "")).toLowerCase().includes(q.toLowerCase()))
-          .slice(0, 4).forEach(i => items.push({ icon: "▦", title: i.invoice_no + " — " + i.customer_ar, sub: fmtMoney(i.total_cents), hash: "#/sales/" + i.id }));
+          .slice(0, 4).forEach(i => items.push({ icon: icon("sales"), title: i.invoice_no + " — " + i.customer_ar, sub: fmtMoney(i.total_cents), hash: "#/sales/" + i.id }));
       } catch (e) { /* ignore */ }
       box.innerHTML = items.length
         ? items.map(i => `<div class="sr-item" data-hash="${ESC(i.hash)}"><span>${i.icon}</span>
@@ -575,10 +681,10 @@ function setupSearch() {
 function setupQuickCreate() {
   $("#quick-create").onclick = () => {
     const items = [];
-    if (can("journal.create")) items.push(["⇄", t("dash.newEntry"), () => PAGES.journal.newEntry()]);
-    if (can("sales.create")) items.push(["▦", t("dash.newInvoice"), () => PAGES.sales.newInvoice()]);
-    if (can("payments.create")) items.push(["₪", t("dash.newReceipt"), () => PAGES.payments.newVoucher("receipt")]);
-    if (can("purchases.create")) items.push(["▧", t("nav.purchases"), () => PAGES.purchases.newInvoice()]);
+    if (can("journal.create")) items.push([icon("journal"), t("dash.newEntry"), () => PAGES.journal.newEntry()]);
+    if (can("sales.create")) items.push([icon("sales"), t("dash.newInvoice"), () => PAGES.sales.newInvoice()]);
+    if (can("payments.create")) items.push([icon("coins"), t("dash.newReceipt"), () => PAGES.payments.newVoucher("receipt")]);
+    if (can("purchases.create")) items.push([icon("purchases"), t("nav.purchases"), () => PAGES.purchases.newInvoice()]);
     openModal({
       title: t("dash.quickActions"), narrow: true,
       body: items.map((it, i) => `<button class="menu-item" data-i="${i}" style="padding:12px">
@@ -633,20 +739,20 @@ function setupCompanySwitcher() {
 
 /* ------------------------------ mobile bottom nav ------------------------------ */
 const BOTTOM_NAV = [
-  { id: "dashboard", icon: "◈", label: "nav.dashboard", perm: "dashboard.view" },
-  { id: "journal", icon: "⇄", label: "nav.journal", perm: "journal.view" },
-  { id: "", icon: "＋", label: "", fab: true },
-  { id: "sales", icon: "▦", label: "nav.sales", perm: "sales.view" },
-  { id: "reports", icon: "▤", label: "nav.reports", perm: "reports.view" },
+  { id: "dashboard", icon: "dashboard", label: "nav.dashboard", perm: "dashboard.view" },
+  { id: "journal", icon: "journal", label: "nav.journal", perm: "journal.view" },
+  { id: "", icon: "plus", label: "", fab: true },
+  { id: "sales", icon: "sales", label: "nav.sales", perm: "sales.view" },
+  { id: "reports", icon: "reports", label: "nav.reports", perm: "reports.view" },
 ];
 function renderBottomNav() {
   const el = $("#bottom-nav");
   if (!el) return;
   const current = (location.hash.replace(/^#\/?/, "").split("?")[0].split("/")[0]) || "dashboard";
   el.innerHTML = BOTTOM_NAV.filter(i => i.fab || !i.perm || can(i.perm)).map(i => {
-    if (i.fab) return `<button class="fab" data-fab aria-label="quick create"><span class="ico">＋</span></button>`;
+    if (i.fab) return `<button class="fab" data-fab aria-label="quick create"><span class="ico">${icon("plus")}</span></button>`;
     return `<button data-route="${i.id}" class="${current === i.id ? "active" : ""}">
-      <span class="ico">${i.icon}</span><span>${ESC(t(i.label))}</span></button>`;
+      <span class="ico">${icon(i.icon)}</span><span>${ESC(t(i.label))}</span></button>`;
   }).join("");
   $$("[data-route]", el).forEach(b => b.onclick = () => { location.hash = "#/" + b.dataset.route; });
   const fab = $("[data-fab]", el);

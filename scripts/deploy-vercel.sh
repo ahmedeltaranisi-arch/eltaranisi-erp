@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy Eltaranisi ERP to Vercel.
+# Deploy ELTARANISI ERP to Vercel.
 #
 #   VERCEL_TOKEN=... ./scripts/deploy-vercel.sh            # production
 #   VERCEL_TOKEN=... ./scripts/deploy-vercel.sh --preview  # preview URL

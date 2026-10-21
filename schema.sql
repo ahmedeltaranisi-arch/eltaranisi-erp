@@ -1,5 +1,5 @@
 -- =====================================================================
--- Eltaranisi ERP — Database Schema (SQLite / PostgreSQL-compatible core)
+-- ELTARANISI ERP — Database Schema (SQLite / PostgreSQL-compatible core)
 -- All monetary amounts are stored as INTEGER minor units (cents/piastres)
 -- to avoid floating point rounding errors in financial calculations.
 -- All quantities are stored as INTEGER thousandths (qty * 1000).

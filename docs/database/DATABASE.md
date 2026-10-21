@@ -1,4 +1,4 @@
-# قاعدة البيانات — Eltaranisi ERP
+# قاعدة البيانات — ELTARANISI ERP
 
 المخطط الكامل في `schema.sql` (42 جدولًا + عرض `v_posted_lines`).
 

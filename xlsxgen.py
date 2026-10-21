@@ -1,4 +1,4 @@
-"""Eltaranisi ERP — minimal XLSX writer (pure standard library).
+"""ELTARANISI ERP — minimal XLSX writer (pure standard library).
 
 Produces a real Office Open XML workbook (`.xlsx`) that opens in Excel,
 Numbers, LibreOffice and Google Sheets, with:
@@ -52,7 +52,7 @@ def _cell(ref: str, value, style: int = 0, fmt=None) -> str:
 
 
 class Workbook:
-    def __init__(self, rtl: bool = True, title: str = "", creator: str = "Eltaranisi ERP"):
+    def __init__(self, rtl: bool = True, title: str = "", creator: str = "ELTARANISI ERP"):
         self.sheets = []          # (name, rows, options)
         self.rtl = rtl
         self.title = title
@@ -134,7 +134,7 @@ class Workbook:
     def _app(self):
         return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
                 '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties">'
-                '<Application>Eltaranisi ERP</Application></Properties>')
+                '<Application>ELTARANISI ERP</Application></Properties>')
 
     def _workbook(self):
         sheets = "".join(

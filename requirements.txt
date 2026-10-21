@@ -1,3 +1,3 @@
-# Eltaranisi ERP runs on the Python standard library only — no runtime packages.
+# ELTARANISI ERP runs on the Python standard library only — no runtime packages.
 # This file exists so Vercel's Python builder detects the project as Python.
 # (PDF + Excel generation is implemented from scratch in pdfgen.py / xlsxgen.py.)

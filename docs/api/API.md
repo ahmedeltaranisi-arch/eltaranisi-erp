@@ -1,4 +1,4 @@
-# واجهات API — Eltaranisi ERP
+# واجهات API — ELTARANISI ERP
 
 - الأساس: `http://localhost:8000`
 - المنسّق: JSON (`Content-Type: application/json`)
@@ -70,6 +70,8 @@
 | GET | `/api/vendors` | `vendors.view` |
 | POST | `/api/vendors` | `vendors.create` |
 | GET | `/api/vendors/{id}/statement` | `vendors.view` |
+| DELETE | `/api/customers/{id}` | `customers.delete` |
+| DELETE | `/api/vendors/{id}` | `vendors.delete` |
 
 ## المبيعات
 
@@ -79,6 +81,7 @@
 | GET | `/api/sales-invoices/{id}` | `sales.view` |
 | POST | `/api/sales-invoices` | `sales.create` |
 | POST | `/api/sales-invoices/{id}/post` | `sales.post` |
+| DELETE | `/api/sales-invoices/{id}` | `sales.delete` |
 
 طلب الإنشاء:
 ```json
@@ -98,6 +101,7 @@
 | GET | `/api/purchase-invoices/{id}` | `purchases.view` |
 | POST | `/api/purchase-invoices` | `purchases.create` |
 | POST | `/api/purchase-invoices/{id}/post` | `purchases.post` |
+| DELETE | `/api/purchase-invoices/{id}` | `purchases.delete` |
 
 طلب الإنشاء يدعم `supplier_ref` (لمنع التكرار)، `po_number` و`grn_number` (للمطابقة الثلاثية).
 
@@ -108,6 +112,7 @@
 | GET | `/api/payments` | `payments.view` |
 | POST | `/api/payments` | `payments.create` |
 | POST | `/api/payments/{id}/post` | `payments.post` |
+| DELETE | `/api/payments/{id}` | `payments.delete` |
 
 ```json
 {
@@ -162,6 +167,43 @@
 | POST | `/api/payroll/run` | `payroll.manage` | `{period: "YYYY-MM"}` |
 | GET | `/api/budgets?fiscal_year_id=` | `budgets.view` |
 | POST | `/api/budgets` | `budgets.manage` |
+
+## الحذف (DELETE) — العقد الكامل
+
+كل حذف يتطلب جسم الطلب:
+
+```json
+{ "confirm": true }
+```
+
+وبدونه يرد الخادم `428 CONFIRM_REQUIRED` (حماية من طلب مُلفَّق/نقرة خاطئة).
+
+| Method | Path | الصلاحية | ملاحظات |
+|---|---|---|---|
+| DELETE | `/api/sales-invoices/{id}` | `sales.delete` | يحذف السطور + القيد + حركات المخزون + مستند الفاتورة الإلكترونية |
+| DELETE | `/api/purchase-invoices/{id}` | `purchases.delete` | نفس السلوك |
+| DELETE | `/api/payments/{id}` | `payments.delete` | يفكّ التخصيصات ويعيد رصيد الفواتير إلى `posted` |
+| DELETE | `/api/customers/{id}` | `customers.delete` | `409 HAS_DOCUMENTS` إن كان مرتبطًا بفواتير/سندات |
+| DELETE | `/api/vendors/{id}` | `vendors.delete` | نفس القاعدة |
+| DELETE | `/api/journal-entries/{id}` | `journal.delete` | قيد يدوي فقط؛ القيود النظامية `409 SYSTEM_ENTRY` |
+| DELETE | `/api/products/{id}` | `inventory.manage` | `409 IN_USE` إن استُخدم في فواتير/حركات |
+| DELETE | `/api/bank-transactions/{id}` | `banks.manage` | `409 RECONCILED` للحركات المطابَقة |
+| DELETE | `/api/inventory/movements/{id}` | `inventory.manage` | حركة يدوية فقط |
+| DELETE | `/api/assets/{id}` | `assets.manage` | `409 HAS_DEPRECIATION` بعد الإهلاك |
+| DELETE | `/api/employees/{id}` | `payroll.manage` | `409 HAS_PAYROLL` بعد دخوله مسير رواتب |
+| DELETE | `/api/budgets/{id}` | `budgets.manage` | بند موازنة واحد |
+| DELETE | `/api/accounts/{id}` | `accounts.create` | حساب بلا حركات |
+
+أكواد الأخطاء: `CONFIRM_REQUIRED` (428)، `HAS_PAYMENTS` / `HAS_DOCUMENTS` / `SYSTEM_ENTRY` /
+`IN_USE` / `RECONCILED` / `HAS_DEPRECIATION` / `HAS_PAYROLL` (409)، `PERIOD_CLOSED` (422)، `NOT_FOUND` (404).
+
+استجابة ناجحة:
+
+```json
+{ "ok": true, "deleted": "sales_invoice", "id": 51, "number": "SI-2026-00051" }
+```
+
+كل حذف يُسجَّل في `audit_logs` **بلقطة كاملة للسجل قبل الحذف** (`action = "<entity>.delete"`).
 
 ## التقارير
 

@@ -1,4 +1,4 @@
-"""Database access layer for Eltaranisi ERP (SQLite, stdlib only)."""
+"""Database access layer for ELTARANISI ERP (SQLite, stdlib only)."""
 from __future__ import annotations
 
 import os
@@ -80,8 +80,33 @@ def migrate() -> None:
                     conn.execute(stmt)
                 except sqlite3.Error:
                     pass
+        _sync_system_roles(conn)
     finally:
         conn.close()
+
+
+def _sync_system_roles(conn) -> None:
+    """Refresh the DB copy of the built-in roles from code.
+
+    Permissions are defined in `security.ROLE_DEFINITIONS`; the table is only a
+    projection of them. Without this, a permission added in a new release would
+    stay invisible on a database created by an older seed.
+    """
+    import json
+    try:
+        from security import ROLE_DEFINITIONS
+    except Exception:
+        return
+    for role in ROLE_DEFINITIONS:
+        try:
+            conn.execute(
+                """UPDATE roles SET name_ar=?, name_en=?, permissions=?, data_scope=?
+                   WHERE code=? AND COALESCE(is_system,1)=1""",
+                (role["name_ar"], role["name_en"], json.dumps(role["permissions"]),
+                 role["data_scope"], role["code"]))
+        except sqlite3.Error:
+            pass
+    conn.commit()
 
 
 # --------------------------------------------------------------------------

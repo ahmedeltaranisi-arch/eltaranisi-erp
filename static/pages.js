@@ -1,5 +1,5 @@
 /* ============================================================
-   Eltaranisi ERP — pages
+   ELTARANISI ERP — pages
    ============================================================ */
 (function () {
   const today = () => (APP.meta && APP.meta.today) || new Date().toISOString().slice(0, 10);
@@ -18,7 +18,7 @@
   }
   function exportBtn(kind, params = {}) {
     const q = new URLSearchParams({ kind, ...params }).toString();
-    return `<button class="btn btn-sm" data-export="/api/reports/export?${q}" data-name="${kind}.csv">⬇ ${ESC(t("common.export"))}</button>`;
+    return `<button class="btn btn-sm" data-export="/api/reports/export?${q}" data-name="${kind}.csv">${icon("download")} ${ESC(t("common.export"))}</button>`;
   }
 
   /** Export menu for a report: CSV / Excel / PDF (AR & EN) — all via authenticated fetch. */
@@ -27,10 +27,10 @@
     const pairs = [
       ["pdf", "ar", L("عربي", "Arabic"), "📄", "PDF · A4"],
       ["pdf", "en", L("إنجليزي", "English"), "📄", "PDF · A4"],
-      ["xlsx", "ar", L("Excel", "Excel"), "📊", "XLSX · RTL"],
-      ["csv", "ar", L("CSV", "CSV"), "🧾", "CSV · UTF-8"],
+      ["xlsx", "ar", L("Excel", "Excel"), icon("chart"), "XLSX · RTL"],
+      ["csv", "ar", L("CSV", "CSV"), icon("file"), "CSV · UTF-8"],
     ];
-    return `<details class="export-menu"><summary>⬇ ${ESC(L("تصدير", "Export"))} <span class="caret">▾</span></summary>
+    return `<details class="export-menu"><summary>${icon("download")} ${ESC(L("تصدير", "Export"))} <span class="caret">${icon("chevron")}</span></summary>
       <div class="menu">
         ${pairs.map(([fmt, lang, label, icon, hint]) => {
           const url = fmt === "csv" ? `/api/reports/export?${q({})}` : `/api/reports/${fmt}?${q({ lang })}`;
@@ -44,14 +44,14 @@
   function docToolbar(kind, id) {
     const base = kind === "sales" ? "sales-invoices" : "purchase-invoices";
     return `<div class="doc-toolbar">
-      <details class="export-menu"><summary>📄 ${ESC(L("PDF / طباعة", "PDF / print"))} <span class="caret">▾</span></summary>
+      <details class="export-menu"><summary>${icon("file")} ${ESC(L("PDF / طباعة", "PDF / print"))} <span class="caret">${icon("chevron")}</span></summary>
         <div class="menu">
-          <button data-preview="/api/${base}/${id}/pdf?lang=${APP.lang}">👁 ${ESC(L("معاينة وطباعة", "Preview & print"))}</button>
-          <button data-export="/api/${base}/${id}/pdf?lang=ar" data-name="invoice-ar.pdf">📄 ${ESC(L("تنزيل PDF عربي", "Arabic PDF"))}</button>
-          <button data-export="/api/${base}/${id}/pdf?lang=en" data-name="invoice-en.pdf">📄 ${ESC(L("تنزيل PDF إنجليزي", "English PDF"))}</button>
+          <button data-preview="/api/${base}/${id}/pdf?lang=${APP.lang}">${icon("eye")} ${ESC(L("معاينة وطباعة", "Preview & print"))}</button>
+          <button data-export="/api/${base}/${id}/pdf?lang=ar" data-name="invoice-ar.pdf">${icon("file")} ${ESC(L("تنزيل PDF عربي", "Arabic PDF"))}</button>
+          <button data-export="/api/${base}/${id}/pdf?lang=en" data-name="invoice-en.pdf">${icon("file")} ${ESC(L("تنزيل PDF إنجليزي", "English PDF"))}</button>
         </div></details>
-      <button class="btn btn-sm" data-export="/api/${base}/${id}/xlsx?lang=${APP.lang}" data-name="invoice.xlsx">📊 Excel</button>
-      <button class="btn btn-sm" data-einv="/api/${base}/${id}/einvoice">🏛 ${ESC(L("فاتورة إلكترونية", "E-invoice"))}</button>
+      <button class="btn btn-sm" data-export="/api/${base}/${id}/xlsx?lang=${APP.lang}" data-name="invoice.xlsx">${icon("chart")} Excel</button>
+      <button class="btn btn-sm" data-einv="/api/${base}/${id}/einvoice">${icon("bank")} ${ESC(L("فاتورة إلكترونية", "E-invoice"))}</button>
     </div>`;
   }
 
@@ -98,7 +98,7 @@
   const I18N_EINV_NOTE_AR = "مستند جاهزية غير موقّع — الإرسال إلى مصلحة الضرائب يتطلب تكاملًا معتمدًا وشهادة ختم إلكتروني. لم يتم إرسال أي بيانات خارج النظام.";
   const I18N_EINV_NOTE_EN = "Unsigned readiness document — transmission to the tax authority requires an accredited integration and e-seal certificate. No data has been sent outside the system.";
   function printBtn() {
-    return `<button class="btn btn-sm" onclick="window.print()">🖨 ${ESC(t("common.print"))}</button>`;
+    return `<button class="btn btn-sm" onclick="window.print()">${icon("printer")} ${ESC(t("common.print"))}</button>`;
   }
 
   /* ==================================================================
@@ -134,7 +134,7 @@
             ${field("co-footer", L("نص تذييل الفاتورة", "Invoice footer text"), st.invoice_footer)}
             <div class="doc-toolbar" style="margin-top:6px">
               ${d.can_edit ? `<button class="btn btn-primary" id="co-save">${ESC(t("common.save"))}</button>` : ""}
-              <button class="btn" data-export="/api/reports/pdf?kind=vendor-payables" data-name="sample.pdf">📄 ${ESC(L("معاينة ترويسة التقارير", "Preview report header"))}</button>
+              <button class="btn" data-export="/api/reports/pdf?kind=vendor-payables" data-name="sample.pdf">${icon("file")} ${ESC(L("معاينة ترويسة التقارير", "Preview report header"))}</button>
             </div>
             <p class="field-hint" style="margin-top:10px">${ESC(L(
               "هذه البيانات تُستخدم في رأس الفاتورة الضريبية وملفات PDF/Excel وفي مستند الجاتوزية.",
@@ -199,23 +199,23 @@
       const main = `
         ${pageHead("dash.title", "dash.subtitle", `
           <span class="chip">${ESC(t("common.asOf"))}: ${fmtDate(d.as_of)}</span>
-          ${can("assistant") || can("ai.use") ? `<a class="btn btn-sm" href="#/assistant">✦ ${ESC(t("nav.assistant"))}</a>` : ""}
-          <a class="btn btn-sm" href="#/reports">▤ ${ESC(t("nav.reports"))}</a>`)}
+          ${can("assistant") || can("ai.use") ? `<a class="btn btn-sm" href="#/assistant">${icon("sparkle")} ${ESC(t("nav.assistant"))}</a>` : ""}
+          <a class="btn btn-sm" href="#/reports">${icon("reports")} ${ESC(t("nav.reports"))}</a>`)}
 
         <div class="grid cols-4">
-          ${kpi({ label: t("dash.revenue"), value: k.revenue_cents, icon: "▲", tone: "ok" })}
-          ${kpi({ label: t("dash.expenses"), value: k.expenses_cents, icon: "▼", tone: "danger" })}
-          ${kpi({ label: t("dash.netProfit"), value: k.net_profit_cents, icon: "◈", tone: k.net_profit_cents >= 0 ? "ok" : "danger",
+          ${kpi({ label: t("dash.revenue"), value: k.revenue_cents, icon: icon("arrowUp"), tone: "ok" })}
+          ${kpi({ label: t("dash.expenses"), value: k.expenses_cents, icon: icon("arrowDown"), tone: "danger" })}
+          ${kpi({ label: t("dash.netProfit"), value: k.net_profit_cents, icon: icon("assets"), tone: k.net_profit_cents >= 0 ? "ok" : "danger",
                   sub: `${ESC(t("common.total"))}: ${pct(k.net_profit_cents, k.revenue_cents || 1)}` })}
-          ${kpi({ label: t("dash.cash"), value: k.cash_cents, icon: "▬" })}
+          ${kpi({ label: t("dash.cash"), value: k.cash_cents, icon: icon("banks") })}
         </div>
         <div class="grid cols-4" style="margin-top:16px">
-          ${kpi({ label: t("dash.ap"), value: k.ap_cents, icon: "◫", tone: "warn",
+          ${kpi({ label: t("dash.ap"), value: k.ap_cents, icon: icon("reports"), tone: "warn",
                   sub: `${ESC(t("payables.overdue"))}: ${fmtMoney(k.vendor_overdue_cents)}` })}
-          ${kpi({ label: t("dash.ar"), value: k.ar_cents, icon: "◨",
+          ${kpi({ label: t("dash.ar"), value: k.ar_cents, icon: icon("chart"),
                   sub: `${ESC(t("dash.overdue"))}: ${k.overdue_count}` })}
-          ${kpi({ label: t("dash.inventory"), value: k.inventory_value_cents, icon: "▩" })}
-          ${kpi({ label: t("dash.pending"), value: k.pending_approvals, icon: "◔", raw: true,
+          ${kpi({ label: t("dash.inventory"), value: k.inventory_value_cents, icon: icon("grid") })}
+          ${kpi({ label: t("dash.pending"), value: k.pending_approvals, icon: icon("pie"), raw: true,
                   sub: `<a href="#/journal?status=review">${ESC(t("common.viewAll"))}</a>` })}
         </div>
 
@@ -240,7 +240,7 @@
             { key: "overdue_cents", label: t("payables.overdue"), cls: "num", render: r => r.overdue_cents ? `<span class="neg">${fmtMoney(r.overdue_cents)}</span>` : "—" },
           ], d.top_vendors, { compact: true }), `<a class="btn btn-sm btn-ghost" href="#/payables">${ESC(t("common.viewAll"))}</a>`)}
           ${card(t("dash.recent"), renderTable([
-            { key: "entry_no", label: "#", render: r => `<a href="#/journal/${r.id}">${ESC(r.entry_no)}</a>` },
+            { key: "entry_no", label: L("الرمز التعريفي", "Reference ID"), render: r => `<a href="#/journal/${r.id}">${ESC(r.entry_no)}</a>` },
             { key: "entry_date", label: t("common.date"), render: r => fmtDate(r.entry_date) },
             { key: "memo", label: t("common.description"), cls: "wrap", render: r => `<span title="${ESC(r.memo)}">${ESC(r.memo.slice(0, 34))}${r.memo.length > 34 ? "…" : ""}</span>` },
             { key: "total_debit_cents", label: t("common.amount"), cls: "num", render: r => fmtMoney(r.total_debit_cents) },
@@ -277,7 +277,7 @@
       setTitle("nav.accounts");
       const data = await api("/api/accounts");
       const typeNames = { asset: "accounts.asset", liability: "accounts.liability", equity: "accounts.equity", revenue: "accounts.revenue", expense: "accounts.expense" };
-      const actions = `${can("accounts.create") ? `<button class="btn btn-primary btn-sm" id="new-acc">＋ ${ESC(t("accounts.new"))}</button>` : ""}`;
+      const actions = `${can("accounts.create") ? `<button class="btn btn-primary btn-sm" id="new-acc">${icon("plus")} ${ESC(t("accounts.new"))}</button>` : ""}`;
       const groups = {};
       data.accounts.forEach(a => { (groups[a.type] = groups[a.type] || []).push(a); });
 
@@ -346,7 +346,7 @@
           ${exportBtn("journal", { from, to })}</div>
         ${renderTable([
           { key: "entry_date", label: t("common.date") },
-          { key: "entry_no", label: "#" },
+          { key: "entry_no", label: L("الرمز التعريفي", "Reference ID") },
           { key: "description", label: t("common.description") },
           { key: "debit_cents", label: t("common.debit"), cls: "num", render: r => r.debit_cents ? fmtMoney(r.debit_cents) : "" },
           { key: "credit_cents", label: t("common.credit"), cls: "num", render: r => r.credit_cents ? fmtMoney(r.credit_cents) : "" },
@@ -370,7 +370,7 @@
       setTitle("nav.journal");
       const state = { status: new URLSearchParams((location.hash.split("?")[1] || "")).get("status") || "all", q: "", from: "", to: "" };
       view.innerHTML = `${pageHead("journal.title", "journal.subtitle",
-        can("journal.create") ? `<button class="btn btn-primary btn-sm" id="new-je">＋ ${ESC(t("journal.new"))}</button>` : "")}
+        can("journal.create") ? `<button class="btn btn-primary btn-sm" id="new-je">${icon("plus")} ${ESC(t("journal.new"))}</button>` : "")}
         <div class="card">
           <div class="table-toolbar">
             <div class="chip-row" id="status-chips">
@@ -381,19 +381,22 @@
             <input id="je-from" type="date" value="" />
             <input id="je-to" type="date" value="" />
           </div>
-          <div id="je-table">${renderTable([{ key: "entry_no", label: "#" }], [], {})}</div>
+          <div id="je-table">${renderTable([{ key: "entry_no", label: L("الرمز التعريفي", "Reference ID") }], [], {})}</div>
         </div>`;
       const load = async () => {
         const qs = new URLSearchParams({ status: state.status, q: state.q, from: state.from, to: state.to, per_page: 60 });
         const data = await api("/api/journal-entries?" + qs.toString());
         $("#je-table").innerHTML = renderTable([
-          { key: "entry_no", label: "#", render: r => `<a href="#/journal/${r.id}"><strong>${ESC(r.entry_no)}</strong></a>` },
+          { key: "entry_no", label: L("الرمز التعريفي", "Reference ID"), render: r => `<a href="#/journal/${r.id}"><strong>${ESC(r.entry_no)}</strong></a>` },
           { key: "entry_date", label: t("common.date"), render: r => fmtDate(r.entry_date) },
           { key: "memo", label: t("common.description"), cls: "wrap", render: r => `<span title="${ESC(r.memo)}">${ESC(r.memo.slice(0, 52))}${r.memo.length > 52 ? "…" : ""}</span>` },
           { key: "entry_type", label: t("journal.type"), render: r => `<span class="pill">${ESC(r.entry_type)}</span>` },
           { key: "total_debit_cents", label: t("common.debit"), cls: "num", render: r => fmtMoney(r.total_debit_cents) },
           { key: "status", label: t("common.status"), render: r => statusBadge(r.status) },
           { key: "created_by_name", label: t("journal.createdBy"), render: r => ESC(r.created_by_name || "—") },
+          { key: "act", label: t("common.actions"), render: r => (can("journal.delete") && !r.source_type)
+              ? deleteButton(`/api/journal-entries/${r.id}`, `القيد ${r.entry_no}`, `entry ${r.entry_no}`)
+              : "" },
         ], data.entries, {
           onRowClick: null,
           empty: t("common.empty")
@@ -424,24 +427,25 @@
       setTitle("journal.details", [e.entry_no]);
       const total = data.lines.reduce((s, l) => s + l.debit_cents, 0);
       const actions = [];
-      if (e.status === "draft" && can("journal.create")) actions.push(`<button class="btn btn-primary btn-sm" id="act-submit">⇧ ${ESC(t("common.submit"))}</button>`);
+      if (e.status === "draft" && can("journal.create")) actions.push(`<button class="btn btn-primary btn-sm" id="act-submit">${icon("upload")} ${ESC(t("common.submit"))}</button>`);
       if (e.status === "review" && can("journal.review")) {
-        actions.push(`<button class="btn btn-ok btn-sm" id="act-review">✓ ${ESC(t("common.review"))}</button>`);
-        actions.push(`<button class="btn btn-danger btn-sm" id="act-reject">✕ ${ESC(t("common.reject"))}</button>`);
+        actions.push(`<button class="btn btn-ok btn-sm" id="act-review">${icon("check")} ${ESC(t("common.review"))}</button>`);
+        actions.push(`<button class="btn btn-danger btn-sm" id="act-reject">${icon("close")} ${ESC(t("common.reject"))}</button>`);
       }
-      if (e.status === "approved" && can("journal.post")) actions.push(`<button class="btn btn-primary btn-sm" id="act-post">⇩ ${ESC(t("common.post"))}</button>`);
-      if (e.status === "posted" && can("journal.reverse")) actions.push(`<button class="btn btn-danger btn-sm" id="act-reverse">↺ ${ESC(t("common.reverse"))}</button>`);
+      if (e.status === "approved" && can("journal.post")) actions.push(`<button class="btn btn-primary btn-sm" id="act-post">${icon("download")} ${ESC(t("common.post"))}</button>`);
+      if (e.status === "posted" && can("journal.reverse")) actions.push(`<button class="btn btn-danger btn-sm" id="act-reverse">${icon("undo")} ${ESC(t("common.reverse"))}</button>`);
+      if (can("journal.delete") && !e.source_type) actions.push(deleteButton(`/api/journal-entries/${id}`, `القيد ${e.entry_no}`, `entry ${e.entry_no}`, { delBack: "#/journal" }));
       actions.push(printBtn());
 
       view.innerHTML = `${pageHead("journal.details", "journal.subtitle", actions.join(""))}
         <div class="grid cols-4" style="margin-bottom:16px">
-          ${kpi({ label: t("common.amount"), value: total, icon: "◈" })}
-          ${kpi({ label: t("common.status"), value: statusBadge(e.status), icon: "◔", raw: true })}
-          ${kpi({ label: t("common.date"), value: fmtDate(e.entry_date), icon: "▤", raw: true })}
-          ${kpi({ label: t("journal.type"), value: ESC(e.entry_type), icon: "⌘", raw: true })}
+          ${kpi({ label: t("common.amount"), value: total, icon: icon("assets") })}
+          ${kpi({ label: t("common.status"), value: statusBadge(e.status), icon: icon("pie"), raw: true })}
+          ${kpi({ label: t("common.date"), value: fmtDate(e.entry_date), icon: icon("list"), raw: true })}
+          ${kpi({ label: t("journal.type"), value: ESC(e.entry_type), icon: icon("settings"), raw: true })}
         </div>
         ${card(t("journal.lines"), renderTable([
-            { key: "line_no", label: "#", cls: "num" },
+            { key: "line_no", label: L("الرمز التعريفي", "Reference ID"), cls: "num" },
             { key: "account_code", label: t("common.code"), render: r => `<span class="mono">${ESC(r.account_code)}</span>` },
             { key: "account_ar", label: t("common.account"), render: r => ESC(APP.lang === "ar" ? r.account_ar : r.account_en) },
             { key: "description", label: t("common.description") },
@@ -464,10 +468,10 @@
                 <strong><a href="#/journal/${e.reversed_by_id}">#${e.reversed_by_id}</a></strong></div>` : ""}
             `)}
             ${card(t("journal.workflow"), `
-              <div class="stat-line"><span>1. ${ESC(t("status.draft"))}</span><strong>✓</strong></div>
-              <div class="stat-line"><span>2. ${ESC(t("status.review"))}</span><strong>${["review", "approved", "posted", "reversed"].includes(e.status) ? "✓" : "—"}</strong></div>
-              <div class="stat-line"><span>3. ${ESC(t("status.approved"))}</span><strong>${["approved", "posted", "reversed"].includes(e.status) ? "✓" : "—"}</strong></div>
-              <div class="stat-line"><span>4. ${ESC(t("status.posted"))}</span><strong>${["posted", "reversed"].includes(e.status) ? "✓" : "—"}</strong></div>
+              <div class="stat-line"><span>1. ${ESC(t("status.draft"))}</span><strong>${icon("check", "ico-sm")}</strong></div>
+              <div class="stat-line"><span>2. ${ESC(t("status.review"))}</span><strong>${["review", "approved", "posted", "reversed"].includes(e.status) ? icon("check", "ico-sm") : "—"}</strong></div>
+              <div class="stat-line"><span>3. ${ESC(t("status.approved"))}</span><strong>${["approved", "posted", "reversed"].includes(e.status) ? icon("check", "ico-sm") : "—"}</strong></div>
+              <div class="stat-line"><span>4. ${ESC(t("status.posted"))}</span><strong>${["posted", "reversed"].includes(e.status) ? icon("check", "ico-sm") : "—"}</strong></div>
               <p class="field-hint" style="margin-top:10px">${ESC(L("القيود التي تتجاوز 200,000 ج.م تحتاج اعتماد المدير المالي، ولا يمكن للمنشئ اعتماد قيده.",
                 "Entries above EGP 200,000 require Financial Manager approval; creators cannot approve their own entries."))}</p>
             `)}
@@ -511,7 +515,7 @@
           <td><input class="input line-desc" placeholder="${ESC(t("common.description"))}"/></td>
           <td><input class="input line-debit" type="number" step="0.01" min="0" placeholder="0.00"/></td>
           <td><input class="input line-credit" type="number" step="0.01" min="0" placeholder="0.00"/></td>
-          <td><button class="icon-btn rm-line" title="حذف">✕</button></td>
+          <td><button class="icon-btn rm-line" title="حذف">${icon("close")}</button></td>
         </tr>`;
       openModal({
         title: t("journal.new"), wide: true,
@@ -528,7 +532,7 @@
             </table>
           </div>
           <div style="display:flex;gap:16px;align-items:center;margin-top:12px;flex-wrap:wrap">
-            <button class="btn btn-sm" id="add-line">＋ ${ESC(t("journal.addLine"))}</button>
+            <button class="btn btn-sm" id="add-line">${icon("plus")} ${ESC(t("journal.addLine"))}</button>
             <span class="muted small">${ESC(t("common.debit"))}: <strong id="sum-d">0.00</strong></span>
             <span class="muted small">${ESC(t("common.credit"))}: <strong id="sum-c">0.00</strong></span>
             <span id="balance-flag" class="badge gray">—</span>
@@ -603,9 +607,9 @@
       setTitle("nav.sales");
       const data = await api("/api/sales-invoices");
       view.innerHTML = `${pageHead("sales.title", "sales.subtitle",
-        `${can("sales.create") ? `<button class="btn btn-primary btn-sm" id="new-si">＋ ${ESC(t("sales.new"))}</button>` : ""}`)}
+        `${can("sales.create") ? `<button class="btn btn-primary btn-sm" id="new-si">${icon("plus")} ${ESC(t("sales.new"))}</button>` : ""}`)}
         ${card("", renderTable([
-          { key: "invoice_no", label: "#", render: r => `<a href="#/sales/${r.id}"><strong>${ESC(r.invoice_no)}</strong></a>` },
+          { key: "invoice_no", label: L("الرمز التعريفي", "Reference ID"), render: r => `<a href="#/sales/${r.id}"><strong>${ESC(r.invoice_no)}</strong></a>` },
           { key: "invoice_date", label: t("common.date"), render: r => fmtDate(r.invoice_date) },
           { key: "customer_ar", label: t("common.customer"), render: r => ESC(APP.lang === "ar" ? r.customer_ar : r.customer_en) },
           { key: "due_date", label: t("common.dueDate"), render: r => fmtDate(r.due_date) },
@@ -613,11 +617,14 @@
           { key: "paid_cents", label: t("common.paid"), cls: "num", render: r => fmtMoney(r.paid_cents) },
           { key: "remaining", label: t("common.remaining"), cls: "num", render: r => fmtMoney(r.total_cents - r.paid_cents) },
           { key: "status", label: t("common.status"), render: r => statusBadge(r.status) },
+          { key: "act", label: t("common.actions"), render: r => can("sales.delete")
+              ? deleteButton(`/api/sales-invoices/${r.id}`, `فاتورة المبيعات ${r.invoice_no}`, `sales invoice ${r.invoice_no}`)
+              : "" },
         ], data.invoices, {
           footer: `<tr><td colspan="4">${ESC(t("common.total"))}</td>
             <td class="num">${fmtMoney(data.invoices.reduce((s, r) => s + r.total_cents, 0))}</td>
             <td class="num">${fmtMoney(data.invoices.reduce((s, r) => s + r.paid_cents, 0))}</td>
-            <td class="num">${fmtMoney(data.invoices.reduce((s, r) => s + r.total_cents - r.paid_cents, 0))}</td><td></td></tr>`
+            <td class="num">${fmtMoney(data.invoices.reduce((s, r) => s + r.total_cents - r.paid_cents, 0))}</td><td></td><td></td></tr>`
         }))}`;
       if (can("sales.create")) $("#new-si").onclick = () => PAGES.sales.newInvoice();
     },
@@ -632,7 +639,7 @@
           <td><input class="input li-price" type="number" step="0.01" min="0"/></td>
           <td><input class="input li-tax" type="number" step="0.01" min="0" value="14"/></td>
           <td class="num li-total mono">0.00</td>
-          <td><button class="icon-btn rm">✕</button></td></tr>`;
+          <td><button class="icon-btn rm">${icon("close")}</button></td></tr>`;
       openModal({
         title: t("sales.new"), wide: true,
         body: `
@@ -653,7 +660,7 @@
             </table>
           </div>
           <div style="display:flex;gap:18px;align-items:center;margin-top:12px;flex-wrap:wrap">
-            <button class="btn btn-sm" id="si-add">＋ ${ESC(t("common.add"))}</button>
+            <button class="btn btn-sm" id="si-add">${icon("plus")} ${ESC(t("common.add"))}</button>
             <span class="muted small">${ESC(t("common.subtotal"))}: <strong id="si-sub">0.00</strong></span>
             <span class="muted small">${ESC(t("common.tax"))}: <strong id="si-tax">0.00</strong></span>
             <span class="muted small">${ESC(t("common.total"))}: <strong id="si-total">0.00</strong></span>
@@ -726,18 +733,19 @@
     const inv = d.invoice;
     setTitle("sales.title", [inv.invoice_no]);
     const actions = [];
-    if (inv.status === "draft" && can("sales.post")) actions.push(`<button class="btn btn-primary btn-sm" id="si-post-now">⇩ ${ESC(t("common.post"))}</button>`);
-    if (["posted", "partially_paid"].includes(inv.status) && can("payments.create")) actions.push(`<button class="btn btn-ok btn-sm" id="si-receipt">₪ ${ESC(t("payments.receipt"))}</button>`);
+    if (inv.status === "draft" && can("sales.post")) actions.push(`<button class="btn btn-primary btn-sm" id="si-post-now">${icon("download")} ${ESC(t("common.post"))}</button>`);
+    if (["posted", "partially_paid"].includes(inv.status) && can("payments.create")) actions.push(`<button class="btn btn-ok btn-sm" id="si-receipt">${icon("coins")} ${ESC(t("payments.receipt"))}</button>`);
+    if (can("sales.delete")) actions.push(deleteButton(`/api/sales-invoices/${id}`, `فاتورة المبيعات ${inv.invoice_no}`, `sales invoice ${inv.invoice_no}`, { delBack: "#/sales" }));
     actions.push(docToolbar("sales", id));
     view.innerHTML = `${pageHead(inv.invoice_no, "sales.subtitle", actions.join(""))}
       <div class="grid cols-4" style="margin-bottom:16px">
-        ${kpi({ label: t("common.total"), value: inv.total_cents, icon: "◈" })}
-        ${kpi({ label: t("common.paid"), value: inv.paid_cents, icon: "✓", tone: "ok" })}
-        ${kpi({ label: t("common.remaining"), value: inv.total_cents - inv.paid_cents, icon: "◔", tone: "warn" })}
-        ${kpi({ label: t("common.status"), value: statusBadge(inv.status), icon: "▤", raw: true })}
+        ${kpi({ label: t("common.total"), value: inv.total_cents, icon: icon("assets") })}
+        ${kpi({ label: t("common.paid"), value: inv.paid_cents, icon: icon("check"), tone: "ok" })}
+        ${kpi({ label: t("common.remaining"), value: inv.total_cents - inv.paid_cents, icon: icon("pie"), tone: "warn" })}
+        ${kpi({ label: t("common.status"), value: statusBadge(inv.status), icon: icon("list"), raw: true })}
       </div>
       ${card(L("سطور الفاتورة", "Invoice lines"), renderTable([
-          { key: "line_no", label: "#", cls: "num" },
+          { key: "line_no", label: L("الرمز التعريفي", "Reference ID"), cls: "num" },
           { key: "product_ar", label: L("الصنف", "Product"), cls: "wrap" },
           { key: "qty_milli", label: t("common.qty"), cls: "num", render: r => fmtNum(r.qty_milli / 1000, 0) },
           { key: "unit_price_cents", label: t("common.price"), cls: "num", render: r => fmtMoney(r.unit_price_cents) },
@@ -782,9 +790,9 @@
       setTitle("nav.purchases");
       const data = await api("/api/purchase-invoices");
       view.innerHTML = `${pageHead("purchases.title", "purchases.subtitle",
-        can("purchases.create") ? `<button class="btn btn-primary btn-sm" id="new-pi">＋ ${ESC(t("purchases.new"))}</button>` : "")}
+        can("purchases.create") ? `<button class="btn btn-primary btn-sm" id="new-pi">${icon("plus")} ${ESC(t("purchases.new"))}</button>` : "")}
         ${card("", renderTable([
-          { key: "invoice_no", label: "#", render: r => `<a href="#/purchases/${r.id}"><strong>${ESC(r.invoice_no)}</strong></a>` },
+          { key: "invoice_no", label: L("الرمز التعريفي", "Reference ID"), render: r => `<a href="#/purchases/${r.id}"><strong>${ESC(r.invoice_no)}</strong></a>` },
           { key: "invoice_date", label: t("common.date"), render: r => fmtDate(r.invoice_date) },
           { key: "vendor_ar", label: t("common.vendor"), render: r => ESC(APP.lang === "ar" ? r.vendor_ar : r.vendor_en) },
           { key: "supplier_ref", label: t("purchases.supplierRef") },
@@ -792,11 +800,14 @@
           { key: "total_cents", label: t("common.total"), cls: "num", render: r => fmtMoney(r.total_cents) },
           { key: "paid_cents", label: t("common.paid"), cls: "num", render: r => fmtMoney(r.paid_cents) },
           { key: "status", label: t("common.status"), render: r => statusBadge(r.status) },
-          { key: "three_way_match", label: t("purchases.threeWay"), render: r => r.three_way_match ? `<span class="badge green">✓</span>` : `<span class="badge gray">—</span>` },
+          { key: "three_way_match", label: t("purchases.threeWay"), render: r => r.three_way_match ? `<span class="badge green">${icon("check", "ico-sm")}</span>` : `<span class="badge gray">—</span>` },
+          { key: "act", label: t("common.actions"), render: r => can("purchases.delete")
+              ? deleteButton(`/api/purchase-invoices/${r.id}`, `فاتورة المشتريات ${r.invoice_no}`, `purchase invoice ${r.invoice_no}`)
+              : "" },
         ], data.invoices, {
           footer: `<tr><td colspan="5">${ESC(t("common.total"))}</td>
             <td class="num">${fmtMoney(data.invoices.reduce((s, r) => s + r.total_cents, 0))}</td>
-            <td class="num">${fmtMoney(data.invoices.reduce((s, r) => s + r.paid_cents, 0))}</td><td colspan="2"></td></tr>`
+            <td class="num">${fmtMoney(data.invoices.reduce((s, r) => s + r.paid_cents, 0))}</td><td colspan="2"></td><td></td></tr>`
         }))}`;
       if (can("purchases.create")) $("#new-pi").onclick = () => PAGES.purchases.newInvoice();
     },
@@ -811,7 +822,7 @@
           <td><input class="input li-price" type="number" step="0.01" min="0"/></td>
           <td><input class="input li-tax" type="number" step="0.01" min="0" value="14"/></td>
           <td class="num li-total mono">0.00</td>
-          <td><button class="icon-btn rm">✕</button></td></tr>`;
+          <td><button class="icon-btn rm">${icon("close")}</button></td></tr>`;
       openModal({
         title: t("purchases.new"), wide: true,
         body: `
@@ -833,7 +844,7 @@
               <tbody>${rowHtml()}</tbody></table>
           </div>
           <div style="display:flex;gap:18px;align-items:center;margin-top:12px;flex-wrap:wrap">
-            <button class="btn btn-sm" id="pi-add">＋ ${ESC(t("common.add"))}</button>
+            <button class="btn btn-sm" id="pi-add">${icon("plus")} ${ESC(t("common.add"))}</button>
             <span class="muted small">${ESC(t("common.total"))}: <strong id="pi-total">0.00</strong></span>
             <div style="flex:1"></div>
             <label class="checkbox"><input type="checkbox" id="pi-post" checked/> ${ESC(L("ترحيل الفاتورة فورًا", "Post invoice immediately"))}</label>
@@ -899,17 +910,18 @@
     const inv = d.invoice;
     setTitle("purchases.title", [inv.invoice_no]);
     const actions = [];
-    if (inv.status === "draft" && can("purchases.post")) actions.push(`<button class="btn btn-primary btn-sm" id="pi-post-now">⇩ ${ESC(t("common.post"))}</button>`);
+    if (inv.status === "draft" && can("purchases.post")) actions.push(`<button class="btn btn-primary btn-sm" id="pi-post-now">${icon("download")} ${ESC(t("common.post"))}</button>`);
+    if (can("purchases.delete")) actions.push(deleteButton(`/api/purchase-invoices/${id}`, `فاتورة المشتريات ${inv.invoice_no}`, `purchase invoice ${inv.invoice_no}`, { delBack: "#/purchases" }));
     actions.push(docToolbar("purchase", id));
     view.innerHTML = `${pageHead(inv.invoice_no, "purchases.subtitle", actions.join(""))}
       <div class="grid cols-4" style="margin-bottom:16px">
-        ${kpi({ label: t("common.total"), value: inv.total_cents, icon: "◈" })}
-        ${kpi({ label: t("common.paid"), value: inv.paid_cents, icon: "✓", tone: "ok" })}
-        ${kpi({ label: t("common.remaining"), value: inv.total_cents - inv.paid_cents, icon: "◔", tone: "warn" })}
-        ${kpi({ label: t("common.status"), value: statusBadge(inv.status), icon: "▤", raw: true })}
+        ${kpi({ label: t("common.total"), value: inv.total_cents, icon: icon("assets") })}
+        ${kpi({ label: t("common.paid"), value: inv.paid_cents, icon: icon("check"), tone: "ok" })}
+        ${kpi({ label: t("common.remaining"), value: inv.total_cents - inv.paid_cents, icon: icon("pie"), tone: "warn" })}
+        ${kpi({ label: t("common.status"), value: statusBadge(inv.status), icon: icon("list"), raw: true })}
       </div>
       ${card(L("سطور الفاتورة", "Invoice lines"), renderTable([
-          { key: "line_no", label: "#", cls: "num" },
+          { key: "line_no", label: L("الرمز التعريفي", "Reference ID"), cls: "num" },
           { key: "product_ar", label: L("الصنف", "Product"), cls: "wrap" },
           { key: "qty_milli", label: t("common.qty"), cls: "num", render: r => fmtNum(r.qty_milli / 1000, 0) },
           { key: "unit_price_cents", label: t("common.price"), cls: "num", render: r => fmtMoney(r.unit_price_cents) },
@@ -927,7 +939,7 @@
           <div class="stat-line"><span>${ESC(t("purchases.supplierRef"))}</span><strong>${ESC(inv.supplier_ref || "—")}</strong></div>
           <div class="stat-line"><span>${ESC(t("purchases.po"))}</span><strong>${ESC(inv.po_number || "—")}</strong></div>
           <div class="stat-line"><span>${ESC(t("purchases.grn"))}</span><strong>${ESC(inv.grn_number || "—")}</strong></div>
-          <div class="stat-line"><span>${ESC(t("purchases.threeWay"))}</span><strong>${inv.three_way_match ? "✓" : "—"}</strong></div>
+          <div class="stat-line"><span>${ESC(t("purchases.threeWay"))}</span><strong>${inv.three_way_match ? icon("check", "ico-sm") : "—"}</strong></div>
           <div class="stat-line"><span>${ESC(t("common.dueDate"))}</span><strong>${fmtDate(inv.due_date)}</strong></div>
           <div class="stat-line"><span>${ESC(t("journal.createdBy"))}</span><strong>${ESC(inv.created_by_name || "—")}</strong></div>
           <div class="stat-line"><span>${ESC(t("journal.postedAt"))}</span><strong>${ESC(inv.posted_at || "—")}</strong></div>`)}
@@ -949,9 +961,9 @@
       setTitle("nav.payments");
       const data = await api("/api/payments");
       view.innerHTML = `${pageHead("payments.title", "payments.subtitle",
-        can("payments.create") ? `<button class="btn btn-primary btn-sm" id="new-pay">＋ ${ESC(t("payments.new"))}</button>` : "")}
+        can("payments.create") ? `<button class="btn btn-primary btn-sm" id="new-pay">${icon("plus")} ${ESC(t("payments.new"))}</button>` : "")}
         ${card("", renderTable([
-          { key: "payment_no", label: "#", render: r => `<strong>${ESC(r.payment_no)}</strong>` },
+          { key: "payment_no", label: L("الرمز التعريفي", "Reference ID"), render: r => `<strong>${ESC(r.payment_no)}</strong>` },
           { key: "payment_date", label: t("common.date"), render: r => fmtDate(r.payment_date) },
           { key: "payment_type", label: t("payments.type"), render: r => `<span class="badge ${r.payment_type === "receipt" ? "green" : "amber"}">${ESC(r.payment_type === "receipt" ? t("payments.receipt") : t("payments.payment"))}</span>` },
           { key: "party_name", label: t("payments.party"), render: r => ESC(r.party_name || "—") },
@@ -959,6 +971,11 @@
           { key: "amount_cents", label: t("common.amount"), cls: "num", render: r => fmtMoney(r.amount_cents) },
           { key: "unallocated", label: t("payments.unallocated"), cls: "num", render: r => r.amount_cents - r.allocated_cents ? `<span class="neg">${fmtMoney(r.amount_cents - r.allocated_cents)}</span>` : "—" },
           { key: "status", label: t("common.status"), render: r => statusBadge(r.status) },
+          { key: "act", label: t("common.actions"), render: r => can("payments.delete")
+              ? deleteButton(`/api/payments/${r.id}`,
+                  `${r.payment_type === "receipt" ? "سند التحصيل" : "سند الدفع"} ${r.payment_no}`,
+                  `${r.payment_type === "receipt" ? "receipt" : "payment"} ${r.payment_no}`)
+              : "" },
         ], data.payments))}`;
       if (can("payments.create")) $("#new-pay").onclick = () => PAGES.payments.newVoucher("receipt");
     },
@@ -1063,12 +1080,12 @@
       view.innerHTML = `${pageHead("payables.title", "payables.subtitle",
         `<div class="doc-toolbar">${exportBtn("vendor-payables", { as_of: data.as_of })}
            ${reportExports("vendor-payables", { as_of: data.as_of })}
-           <a class="btn btn-sm" href="#/reports?tab=vendor-payables">▤ ${ESC(t("reports.vendorPayables"))}</a></div>`)}
+           <a class="btn btn-sm" href="#/reports?tab=vendor-payables">${icon("reports")} ${ESC(t("reports.vendorPayables"))}</a></div>`)}
         <div class="grid cols-4">
-          ${kpi({ label: t("payables.outstanding"), value: T.outstanding_cents, icon: "◫", tone: "warn" })}
-          ${kpi({ label: t("payables.overdue"), value: T.overdue_cents, icon: "⚠", tone: "danger" })}
-          ${kpi({ label: t("payables.invoiced"), value: T.invoiced_cents, icon: "▦" })}
-          ${kpi({ label: t("payables.paid"), value: T.paid_cents, icon: "✓", tone: "ok" })}
+          ${kpi({ label: t("payables.outstanding"), value: T.outstanding_cents, icon: icon("reports"), tone: "warn" })}
+          ${kpi({ label: t("payables.overdue"), value: T.overdue_cents, icon: icon("alert"), tone: "danger" })}
+          ${kpi({ label: t("payables.invoiced"), value: T.invoiced_cents, icon: icon("grid") })}
+          ${kpi({ label: t("payables.paid"), value: T.paid_cents, icon: icon("check"), tone: "ok" })}
         </div>
         <div class="split" style="margin-top:16px">
           ${card(t("payables.aging"), doughnut([
@@ -1097,7 +1114,8 @@
           { key: "overdue_cents", label: t("payables.overdue"), cls: "num", render: r => r.overdue_cents ? `<span class="neg">${fmtMoney(r.overdue_cents)}</span>` : "—" },
           { key: "next_due_date", label: t("payables.nextDue"), render: r => r.next_due_date ? fmtDate(r.next_due_date) : "—" },
           { key: "terms", label: t("customers.terms"), render: r => r.payment_terms_days },
-          { key: "act", label: t("common.actions"), render: r => `<button class="btn btn-sm btn-ghost" data-stmt="${r.id}">${ESC(t("payables.statement"))}</button>` },
+          { key: "act", label: t("common.actions"), render: r => `<button class="btn btn-sm btn-ghost" data-stmt="${r.id}">${ESC(t("payables.statement"))}</button>
+              ${can("vendors.delete") ? deleteButton(`/api/vendors/${r.id}`, `المورد «${r.name_ar}» (${r.code})`, `vendor “${r.name_en}” (${r.code})`) : ""}` },
         ], data.vendors, {
           footer: `<tr><td colspan="2">${ESC(t("common.total"))}</td>
             <td class="num">${fmtMoney(T.invoiced_cents)}</td><td class="num">${fmtMoney(T.paid_cents)}</td>
@@ -1118,13 +1136,13 @@
     openModal({
       title: `${ESC(v.code)} — ${ESC(APP.lang === "ar" ? v.name_ar : v.name_en)}`, wide: true,
       body: `<div class="grid cols-3" style="margin-bottom:14px">
-          ${kpi({ label: t("payables.invoiced"), value: invoiced, icon: "▦" })}
-          ${kpi({ label: t("payables.paid"), value: paid, icon: "✓", tone: "ok" })}
-          ${kpi({ label: t("payables.outstanding"), value: invoiced - paid, icon: "◫", tone: "warn" })}
+          ${kpi({ label: t("payables.invoiced"), value: invoiced, icon: icon("grid") })}
+          ${kpi({ label: t("payables.paid"), value: paid, icon: icon("check"), tone: "ok" })}
+          ${kpi({ label: t("payables.outstanding"), value: invoiced - paid, icon: icon("reports"), tone: "warn" })}
         </div>
         <h4 style="margin:6px 0 8px">${ESC(t("nav.purchases"))}</h4>
         ${renderTable([
-          { key: "invoice_no", label: "#" },
+          { key: "invoice_no", label: L("الرمز التعريفي", "Reference ID") },
           { key: "invoice_date", label: t("common.date") },
           { key: "due_date", label: t("common.dueDate") },
           { key: "total_cents", label: t("common.total"), cls: "num", render: r => fmtMoney(r.total_cents) },
@@ -1134,7 +1152,7 @@
         ], d.invoices, { compact: true })}
         <h4 style="margin:16px 0 8px">${ESC(t("nav.payments"))}</h4>
         ${renderTable([
-          { key: "payment_no", label: "#" },
+          { key: "payment_no", label: L("الرمز التعريفي", "Reference ID") },
           { key: "payment_date", label: t("common.date") },
           { key: "reference", label: t("common.description") },
           { key: "amount_cents", label: t("common.amount"), cls: "num", render: r => fmtMoney(r.amount_cents) },
@@ -1155,10 +1173,10 @@
         `<div class="doc-toolbar">${exportBtn("aging", { as_of: ag.as_of, type: "sales" })}
            ${reportExports("aging", { as_of: ag.as_of, type: "sales" })}</div>`)}
         <div class="grid cols-4">
-          ${kpi({ label: t("dash.ar"), value: pos.total_cents, icon: "◨" })}
-          ${kpi({ label: t("reports.bucket.current"), value: ag.buckets.current, icon: "◔" })}
-          ${kpi({ label: t("reports.bucket.1_30"), value: ag.buckets["1_30"], icon: "⚠", tone: "warn" })}
-          ${kpi({ label: t("reports.bucket.over_90"), value: ag.buckets.over_90, icon: "⛔", tone: "danger" })}
+          ${kpi({ label: t("dash.ar"), value: pos.total_cents, icon: icon("chart") })}
+          ${kpi({ label: t("reports.bucket.current"), value: ag.buckets.current, icon: icon("pie") })}
+          ${kpi({ label: t("reports.bucket.1_30"), value: ag.buckets["1_30"], icon: icon("alert"), tone: "warn" })}
+          ${kpi({ label: t("reports.bucket.over_90"), value: ag.buckets.over_90, icon: icon("lock"), tone: "danger" })}
         </div>
         <div class="section-title"><span>${ESC(t("customers.title"))}</span><span class="line"></span></div>
         ${card("", renderTable([
@@ -1175,7 +1193,7 @@
         ], pos.customers))}
         <div class="section-title"><span>${ESC(t("reports.agingAR"))}</span><span class="line"></span></div>
         ${card("", renderTable([
-          { key: "invoice_no", label: "#" },
+          { key: "invoice_no", label: L("الرمز التعريفي", "Reference ID") },
           { key: "party_ar", label: t("common.customer"), cls: "wrap" },
           { key: "due_date", label: t("common.dueDate") },
           { key: "remaining_cents", label: t("common.remaining"), cls: "num", render: r => fmtMoney(r.remaining_cents) },
@@ -1194,7 +1212,7 @@
       setTitle("nav.customers");
       const data = await api("/api/customers");
       view.innerHTML = `${pageHead("customers.title", "nav.masters",
-        can("customers.create") ? `<button class="btn btn-primary btn-sm" id="new-cust">＋ ${ESC(t("customers.new"))}</button>` : "")}
+        can("customers.create") ? `<button class="btn btn-primary btn-sm" id="new-cust">${icon("plus")} ${ESC(t("customers.new"))}</button>` : "")}
         ${card("", renderTable([
           { key: "code", label: t("common.code") },
           { key: "name_ar", label: t("common.name"), render: r => `<strong>${ESC(APP.lang === "ar" ? r.name_ar : r.name_en)}</strong>` },
@@ -1203,6 +1221,9 @@
           { key: "credit_limit_cents", label: t("sales.creditLimit"), cls: "num", render: r => fmtMoney(r.credit_limit_cents) },
           { key: "outstanding_cents", label: t("payables.outstanding"), cls: "num", render: r => fmtMoney(r.outstanding_cents) },
           { key: "is_active", label: t("common.status"), render: r => statusBadge(r.is_active ? "active" : "inactive") },
+          { key: "act", label: t("common.actions"), render: r => can("customers.delete")
+              ? deleteButton(`/api/customers/${r.id}`, `العميل «${r.name_ar}» (${r.code})`, `customer “${r.name_en}” (${r.code})`)
+              : "" },
         ], data.customers))}`;
       if (can("customers.create")) $("#new-cust").onclick = () => openForm({
         title: t("customers.new"),
@@ -1225,7 +1246,7 @@
       setTitle("nav.vendors");
       const data = await api("/api/vendors");
       view.innerHTML = `${pageHead("vendors.title", "nav.masters",
-        can("vendors.create") ? `<button class="btn btn-primary btn-sm" id="new-vend">＋ ${ESC(t("vendors.new"))}</button>` : "")}
+        can("vendors.create") ? `<button class="btn btn-primary btn-sm" id="new-vend">${icon("plus")} ${ESC(t("vendors.new"))}</button>` : "")}
         ${card("", renderTable([
           { key: "code", label: t("common.code") },
           { key: "name_ar", label: t("common.name"), render: r => `<strong>${ESC(APP.lang === "ar" ? r.name_ar : r.name_en)}</strong>` },
@@ -1260,11 +1281,11 @@
       const data = await api("/api/inventory");
       const stock = data.stock.filter(r => r.qty_milli !== 0 || r.value_cents !== 0);
       view.innerHTML = `${pageHead("inventory.title", "inventory.subtitle",
-        can("inventory.manage") ? `<button class="btn btn-primary btn-sm" id="new-move">＋ ${ESC(t("inventory.newMovement"))}</button>` : "")}
+        can("inventory.manage") ? `<button class="btn btn-primary btn-sm" id="new-move">${icon("plus")} ${ESC(t("inventory.newMovement"))}</button>` : "")}
         <div class="grid cols-3">
-          ${kpi({ label: t("inventory.value"), value: data.totals.value_cents, icon: "▩" })}
-          ${kpi({ label: L("عدد الأصناف", "SKUs"), value: new Set(stock.map(s => s.product_id)).size, icon: "▦", raw: true })}
-          ${kpi({ label: L("أصناف تحت حد إعادة الطلب", "Below reorder level"), value: stock.filter(s => s.reorder_level_milli && s.qty_milli <= s.reorder_level_milli).length, icon: "⚠", tone: "warn", raw: true })}
+          ${kpi({ label: t("inventory.value"), value: data.totals.value_cents, icon: icon("grid") })}
+          ${kpi({ label: L("عدد الأصناف", "SKUs"), value: new Set(stock.map(s => s.product_id)).size, icon: icon("grid"), raw: true })}
+          ${kpi({ label: L("أصناف تحت حد إعادة الطلب", "Below reorder level"), value: stock.filter(s => s.reorder_level_milli && s.qty_milli <= s.reorder_level_milli).length, icon: icon("alert"), tone: "warn", raw: true })}
         </div>
         <div class="section-title"><span>${ESC(t("inventory.stock"))}</span><span class="line"></span></div>
         ${card("", renderTable([
@@ -1327,9 +1348,9 @@
       const [banks, txns] = await Promise.all([api("/api/banks"), api("/api/bank-transactions")]);
       const unreconciled = txns.transactions.filter(t => !t.is_reconciled);
       view.innerHTML = `${pageHead("banks.title", "banks.subtitle",
-        can("banks.manage") ? `<button class="btn btn-primary btn-sm" id="new-txn">＋ ${ESC(t("banks.newTransaction"))}</button>` : "")}
+        can("banks.manage") ? `<button class="btn btn-primary btn-sm" id="new-txn">${icon("plus")} ${ESC(t("banks.newTransaction"))}</button>` : "")}
         <div class="grid cols-3">
-          ${banks.position.accounts.map(a => kpi({ label: APP.lang === "ar" ? a.name_ar : (a.name_en || a.name_ar), value: a.balance_cents, icon: a.account_type === "cash" ? "₪" : "▬",
+          ${banks.position.accounts.map(a => kpi({ label: APP.lang === "ar" ? a.name_ar : (a.name_en || a.name_ar), value: a.balance_cents, icon: a.account_type === "cash" ? icon("coins") : icon("banks"),
             sub: `${a.account_type === "cash" ? t("payments.cash") : t("payments.bank")} · ${a.gl_code}` })).join("")}
         </div>
         <div class="section-title"><span>${ESC(t("banks.transactions"))}</span><span class="line"></span>
@@ -1343,7 +1364,10 @@
           { key: "credit_cents", label: t("common.credit"), cls: "num", render: r => r.credit_cents ? fmtMoney(r.credit_cents) : "" },
           { key: "matched_payment_no", label: t("payments.receipt"), render: r => ESC(r.matched_payment_no || "—") },
           { key: "is_reconciled", label: t("common.status"), render: r => r.is_reconciled ? `<span class="badge green">${ESC(t("banks.reconciled"))}</span>` : `<span class="badge amber">${ESC(t("banks.unreconciled"))}</span>` },
-          { key: "act", label: "", render: r => !r.is_reconciled && can("banks.manage") ? `<button class="btn btn-sm btn-ghost" data-rec="${r.id}">${ESC(t("banks.reconcile"))}</button>` : "" },
+          { key: "act", label: "", render: r => !r.is_reconciled && can("banks.manage")
+              ? `<button class="btn btn-sm btn-ghost" data-rec="${r.id}">${ESC(t("banks.reconcile"))}</button>
+                 ${deleteButton(`/api/bank-transactions/${r.id}`, `الحركة البنكية «${r.description}»`, `bank transaction “${r.description}”`)}`
+              : "" },
         ], txns.transactions))}`;
 
       if (can("banks.manage")) {
@@ -1404,12 +1428,12 @@
       const totalCost = data.assets.reduce((s, a) => s + a.cost_cents, 0);
       const totalAcc = data.assets.reduce((s, a) => s + a.accumulated_cents, 0);
       view.innerHTML = `${pageHead("assets.title", "assets.subtitle",
-        `${can("assets.manage") ? `<button class="btn btn-primary btn-sm" id="new-asset">＋ ${ESC(t("assets.new"))}</button>
-          <button class="btn btn-sm" id="run-dep">↻ ${ESC(t("assets.runDepreciation"))}</button>` : ""}`)}
+        `${can("assets.manage") ? `<button class="btn btn-primary btn-sm" id="new-asset">${icon("plus")} ${ESC(t("assets.new"))}</button>
+          <button class="btn btn-sm" id="run-dep">${icon("refresh")} ${ESC(t("assets.runDepreciation"))}</button>` : ""}`)}
         <div class="grid cols-3">
-          ${kpi({ label: t("assets.cost"), value: totalCost, icon: "▣" })}
-          ${kpi({ label: t("assets.accumulated"), value: totalAcc, icon: "▼", tone: "warn" })}
-          ${kpi({ label: t("assets.bookValue"), value: totalCost - totalAcc, icon: "◈", tone: "ok" })}
+          ${kpi({ label: t("assets.cost"), value: totalCost, icon: icon("box") })}
+          ${kpi({ label: t("assets.accumulated"), value: totalAcc, icon: icon("arrowDown"), tone: "warn" })}
+          ${kpi({ label: t("assets.bookValue"), value: totalCost - totalAcc, icon: icon("assets"), tone: "ok" })}
         </div>
         <div class="section-title"><span>${ESC(t("assets.title"))}</span><span class="line"></span></div>
         ${card("", renderTable([
@@ -1421,10 +1445,13 @@
           { key: "useful_life_months", label: t("assets.life"), cls: "num" },
           { key: "bv", label: t("assets.bookValue"), cls: "num", render: r => fmtMoney(r.cost_cents - r.accumulated_cents) },
           { key: "status", label: t("common.status"), render: r => statusBadge(r.status === "active" ? "active" : "inactive") },
+          { key: "act", label: t("common.actions"), render: r => can("assets.manage")
+              ? deleteButton(`/api/assets/${r.id}`, `الأصل «${r.name_ar}» (${r.code})`, `asset “${r.name_en}” (${r.code})`)
+              : "" },
         ], data.assets))}
         <div class="section-title"><span>${ESC(t("assets.runs"))}</span><span class="line"></span></div>
         ${card("", renderTable([
-          { key: "run_no", label: "#" },
+          { key: "run_no", label: L("الرمز التعريفي", "Reference ID") },
           { key: "period_start", label: t("common.from"), render: r => fmtDate(r.period_start) },
           { key: "period_end", label: t("common.to"), render: r => fmtDate(r.period_end) },
           { key: "total_cents", label: t("common.amount"), cls: "num", render: r => fmtMoney(r.total_cents) },
@@ -1476,12 +1503,12 @@
       const gross = data.employees.reduce((s, e) => s + e.basic_salary_cents + e.allowances_cents, 0);
       const net = data.employees.reduce((s, e) => s + e.basic_salary_cents + e.allowances_cents - e.deductions_cents - e.insurance_cents - e.tax_cents, 0);
       view.innerHTML = `${pageHead("payroll.title", "payroll.subtitle",
-        `${can("payroll.manage") ? `<button class="btn btn-primary btn-sm" id="run-pay">↻ ${ESC(t("payroll.run"))}</button>
-          <button class="btn btn-sm" id="new-emp">＋ ${ESC(t("payroll.newEmployee"))}</button>` : ""}`)}
+        `${can("payroll.manage") ? `<button class="btn btn-primary btn-sm" id="run-pay">${icon("refresh")} ${ESC(t("payroll.run"))}</button>
+          <button class="btn btn-sm" id="new-emp">${icon("plus")} ${ESC(t("payroll.newEmployee"))}</button>` : ""}`)}
         <div class="grid cols-3">
-          ${kpi({ label: t("payroll.gross"), value: gross, icon: "◍" })}
-          ${kpi({ label: t("payroll.net"), value: net, icon: "◈", tone: "ok" })}
-          ${kpi({ label: L("عدد الموظفين", "Employees"), value: data.employees.filter(e => e.is_active).length, icon: "☺", raw: true })}
+          ${kpi({ label: t("payroll.gross"), value: gross, icon: icon("target") })}
+          ${kpi({ label: t("payroll.net"), value: net, icon: icon("assets"), tone: "ok" })}
+          ${kpi({ label: L("عدد الموظفين", "Employees"), value: data.employees.filter(e => e.is_active).length, icon: icon("users"), raw: true })}
         </div>
         <div class="section-title"><span>${ESC(t("payroll.employees"))}</span><span class="line"></span></div>
         ${card("", renderTable([
@@ -1493,10 +1520,13 @@
           { key: "allowances_cents", label: t("payroll.allowances"), cls: "num", render: r => fmtMoney(r.allowances_cents) },
           { key: "ded", label: t("payroll.deductions"), cls: "num", render: r => fmtMoney(r.deductions_cents + r.insurance_cents + r.tax_cents) },
           { key: "net", label: t("payroll.net"), cls: "num", render: r => fmtMoney(r.basic_salary_cents + r.allowances_cents - r.deductions_cents - r.insurance_cents - r.tax_cents) },
+          { key: "act", label: t("common.actions"), render: r => can("payroll.manage")
+              ? deleteButton(`/api/employees/${r.id}`, `الموظف «${r.name_ar}» (${r.code})`, `employee “${r.name_en}” (${r.code})`)
+              : "" },
         ], data.employees))}
         <div class="section-title"><span>${ESC(t("payroll.runs"))}</span><span class="line"></span></div>
         ${card("", renderTable([
-          { key: "run_no", label: "#" },
+          { key: "run_no", label: L("الرمز التعريفي", "Reference ID") },
           { key: "period", label: t("payroll.period") },
           { key: "gross_cents", label: t("payroll.gross"), cls: "num", render: r => fmtMoney(r.gross_cents) },
           { key: "deductions_cents", label: t("payroll.deductions"), cls: "num", render: r => fmtMoney(r.deductions_cents) },
@@ -1541,12 +1571,12 @@
       const rows = data.variance;
       const over = rows.filter(r => r.variance_cents < 0);
       view.innerHTML = `${pageHead("budgets.title", "budgets.subtitle",
-        `${can("budgets.manage") ? `<button class="btn btn-primary btn-sm" id="new-budget">＋ ${ESC(t("budgets.new"))}</button>` : ""}
-         <a class="btn btn-sm" href="#/reports?tab=vendor-payables">▤ ${ESC(t("nav.reports"))}</a>`)}
+        `${can("budgets.manage") ? `<button class="btn btn-primary btn-sm" id="new-budget">${icon("plus")} ${ESC(t("budgets.new"))}</button>` : ""}
+         <a class="btn btn-sm" href="#/reports?tab=vendor-payables">${icon("reports")} ${ESC(t("nav.reports"))}</a>`)}
         <div class="grid cols-3">
-          ${kpi({ label: t("budgets.budget"), value: rows.reduce((s, r) => s + r.budget_cents, 0), icon: "◑" })}
-          ${kpi({ label: t("budgets.actual"), value: rows.reduce((s, r) => s + r.actual_cents, 0), icon: "▦" })}
-          ${kpi({ label: L("بنود تجاوزت الموازنة", "Over-budget lines"), value: over.length, icon: "⚠", tone: "danger", raw: true })}
+          ${kpi({ label: t("budgets.budget"), value: rows.reduce((s, r) => s + r.budget_cents, 0), icon: icon("pie") })}
+          ${kpi({ label: t("budgets.actual"), value: rows.reduce((s, r) => s + r.actual_cents, 0), icon: icon("grid") })}
+          ${kpi({ label: L("بنود تجاوزت الموازنة", "Over-budget lines"), value: over.length, icon: icon("alert"), tone: "danger", raw: true })}
         </div>
         <div class="section-title"><span>${ESC(L("الموازنة مقابل الفعلي", "Budget vs actual"))}</span><span class="line"></span></div>
         ${card("", renderTable([
@@ -1648,9 +1678,9 @@
             ${card(t("reports.expenses"), d.expenses.map(line).join("") + `<div class="stat-line" style="border-top:2px solid var(--border-strong)"><strong>${ESC(t("common.total"))}</strong><strong>${fmtMoney(d.total_expenses_cents)}</strong></div>`)}
           </div>
           <div class="grid cols-3" style="margin-top:16px">
-            ${kpi({ label: t("reports.grossProfit"), value: d.gross_profit_cents, icon: "◈" })}
-            ${kpi({ label: t("reports.profit"), value: d.net_profit_cents, icon: "▲", tone: d.net_profit_cents >= 0 ? "ok" : "danger" })}
-            ${kpi({ label: L("هامش صافي الربح", "Net margin"), value: d.total_revenue_cents ? ((d.net_profit_cents / d.total_revenue_cents) * 100).toFixed(1) + "%" : "—", icon: "％", raw: true })}
+            ${kpi({ label: t("reports.grossProfit"), value: d.gross_profit_cents, icon: icon("assets") })}
+            ${kpi({ label: t("reports.profit"), value: d.net_profit_cents, icon: icon("arrowUp"), tone: d.net_profit_cents >= 0 ? "ok" : "danger" })}
+            ${kpi({ label: L("هامش صافي الربح", "Net margin"), value: d.total_revenue_cents ? ((d.net_profit_cents / d.total_revenue_cents) * 100).toFixed(1) + "%" : "—", icon: icon("percent"), raw: true })}
           </div>`;
         } else if (tab === "balance-sheet") {
           $("#r-export").innerHTML = reportExports("balance-sheet", { as_of: t2 });
@@ -1662,18 +1692,18 @@
             ${card(t("reports.equity"), d.equity.map(line).join("") + `<div class="stat-line"><strong>${ESC(t("common.total"))}</strong><strong>${fmtMoney(d.total_equity_cents)}</strong></div>`)}
           </div>
           <p class="field-hint" style="margin-top:10px">${ESC(L("تحقق التوازن: الأصول = الالتزامات + حقوق الملكية", "Balance check: assets = liabilities + equity"))}:
-            <span class="badge ${d.balanced ? "green" : "red"}">${d.balanced ? "✓" : "✗"}</span></p>`;
+            <span class="badge ${d.balanced ? "green" : "red"}">${d.balanced ? icon("check","ico-sm") : icon("close","ico-sm")}</span></p>`;
         } else if (tab === "cash-flow") {
           $("#r-export").innerHTML = "";
           const d = await api(`/api/reports/cash-flow?from=${f}&to=${t2}`);
           body.innerHTML = `<div class="grid cols-3">
-            ${kpi({ label: t("reports.inflow"), value: d.inflow_cents, icon: "▲", tone: "ok" })}
-            ${kpi({ label: t("reports.outflow"), value: d.outflow_cents, icon: "▼", tone: "danger" })}
-            ${kpi({ label: t("reports.netCash"), value: d.net_cents, icon: "◈" })}
+            ${kpi({ label: t("reports.inflow"), value: d.inflow_cents, icon: icon("arrowUp"), tone: "ok" })}
+            ${kpi({ label: t("reports.outflow"), value: d.outflow_cents, icon: icon("arrowDown"), tone: "danger" })}
+            ${kpi({ label: t("reports.netCash"), value: d.net_cents, icon: icon("assets") })}
           </div>
           ${card(t("reports.cashFlow"), renderTable([
             { key: "entry_date", label: t("common.date") },
-            { key: "entry_no", label: "#" },
+            { key: "entry_no", label: L("الرمز التعريفي", "Reference ID") },
             { key: "description", label: t("common.description") },
             { key: "d", label: t("common.debit"), cls: "num", render: r => fmtMoney(r.d) },
             { key: "c", label: t("common.credit"), cls: "num", render: r => fmtMoney(r.c) },
@@ -1688,7 +1718,7 @@
                   <div class="kpi-value" style="font-size:17px">${fmtMoney(d.buckets[b])}</div></div></div>`).join("")}
             </div>
             ${card(t("payables.invoices"), renderTable([
-              { key: "invoice_no", label: "#" },
+              { key: "invoice_no", label: L("الرمز التعريفي", "Reference ID") },
               { key: "party_ar", label: kind === "sales" ? t("common.customer") : t("common.vendor") },
               { key: "invoice_date", label: t("common.date") },
               { key: "due_date", label: t("common.dueDate") },
@@ -1701,10 +1731,10 @@
           $("#r-export").innerHTML = reportExports("vendor-payables", { as_of: t2 });
           const d = await api(`/api/reports/vendor-payables?as_of=${t2}`);
           body.innerHTML = `<div class="grid cols-4">
-              ${kpi({ label: t("payables.outstanding"), value: d.totals.outstanding_cents, icon: "◫", tone: "warn" })}
-              ${kpi({ label: t("payables.overdue"), value: d.totals.overdue_cents, icon: "⚠", tone: "danger" })}
-              ${kpi({ label: t("payables.invoiced"), value: d.totals.invoiced_cents, icon: "▦" })}
-              ${kpi({ label: t("payables.journal"), value: d.totals.journal_balance_cents, icon: "⇄" })}
+              ${kpi({ label: t("payables.outstanding"), value: d.totals.outstanding_cents, icon: icon("reports"), tone: "warn" })}
+              ${kpi({ label: t("payables.overdue"), value: d.totals.overdue_cents, icon: icon("alert"), tone: "danger" })}
+              ${kpi({ label: t("payables.invoiced"), value: d.totals.invoiced_cents, icon: icon("grid") })}
+              ${kpi({ label: t("payables.journal"), value: d.totals.journal_balance_cents, icon: icon("transfer") })}
             </div>
             ${card(t("reports.vendorPayables"), renderTable([
               { key: "code", label: t("common.code") },
@@ -1734,7 +1764,7 @@
       setTitle("nav.users");
       const data = await api("/api/users");
       view.innerHTML = `${pageHead("users.title", "users.subtitle",
-        can("users.manage") ? `<button class="btn btn-primary btn-sm" id="new-user">＋ ${ESC(t("users.new"))}</button>` : "")}
+        can("users.manage") ? `<button class="btn btn-primary btn-sm" id="new-user">${icon("plus")} ${ESC(t("users.new"))}</button>` : "")}
         ${card("", renderTable([
           { key: "username", label: t("users.username"), render: r => `<strong>${ESC(r.username)}</strong>` },
           { key: "full_name_ar", label: t("common.name"), render: r => `${ESC(APP.lang === "ar" ? r.full_name_ar : r.full_name_en)}<br><small class="muted">${ESC(r.email || "")}</small>` },
@@ -1853,7 +1883,7 @@
       const suggestions = APP.lang === "ar"
         ? ["ما إجمالي مديونية الموردين؟", "ما صافي الربح هذا العام؟", "ما هي السيولة المتاحة؟", "أكبر بنود المصروفات؟", "أعمار ديون العملاء؟", "ملخص الأداء"]
         : ["What are total vendor payables?", "What is the net profit this year?", "What is the available liquidity?", "Largest expense lines?", "Receivables aging?", "Performance summary"];
-      view.innerHTML = `${pageHead("assistant.title", "assistant.subtitle", `<span class="badge violet">✦ ${ESC(L("تحليلات من القيود المرحّلة", "Analytics from posted entries"))}</span>`)}
+      view.innerHTML = `${pageHead("assistant.title", "assistant.subtitle", `<span class="badge violet">${icon("sparkle")} ${ESC(L("تحليلات من القيود المرحّلة", "Analytics from posted entries"))}</span>`)}
         <div class="split">
           ${card("", `<div class="assistant" id="chat">
             <div class="msg bot">${ESC(L("مرحبًا. اسألني عن الأرباح، المصروفات، السيولة، أو مديونية الموردين. كل إجابة مبنية على بياناتك الفعلية وضمن صلاحياتك.",
@@ -1884,7 +1914,7 @@
           document.getElementById(loadingId).outerHTML =
             `<div class="msg bot">${ESC(res.answer)}<span class="src">${ESC(t("assistant.source"))}: ${ESC(res.source)}</span></div>`;
         } catch (e) {
-          document.getElementById(loadingId).outerHTML = `<div class="msg bot">⚠️ ${ESC(e.message)}</div>`;
+          document.getElementById(loadingId).outerHTML = `<div class="msg bot">${icon("alert")} ${ESC(e.message)}</div>`;
         }
         chat.scrollIntoView({ block: "end" });
       };

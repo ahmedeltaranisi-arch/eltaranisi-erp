@@ -1,4 +1,4 @@
-"""Vercel entrypoint for Eltaranisi ERP.
+"""Vercel entrypoint for ELTARANISI ERP.
 
 The application itself is a plain `http.server` app (`server.py`) — no framework.
 This module is a thin **WSGI bridge**: it rebuilds an HTTP request from the WSGI
@@ -6,7 +6,7 @@ environment, runs it through the *unchanged* request handler, and turns the raw
 HTTP response back into a WSGI response. Nothing in the business logic moves, so
 the serverless deployment behaves exactly like `python3 server.py`.
 
-Why a bridge instead of a rewrite?  `server.py` is battle-tested (28 integration
+Why a bridge instead of a rewrite?  `server.py` is battle-tested (34 integration
 tests, byte-exact PDF/Excel exports) and `http.server` is part of the stdlib; a
 rewrite to Flask/FastAPI would add dependencies and risk. Vercel's Python runtime
 speaks WSGI, so a ~70-line adapter is enough.
