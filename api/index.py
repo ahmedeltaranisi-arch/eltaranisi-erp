@@ -61,7 +61,10 @@ def ensure_database() -> None:
         import seed as seed_module
 
         seed_module.seed()
-        os.environ.setdefault("ERP_STARTED_AT", "cold-start-seeded")
+        try:
+            db.migrate()                      # additive migrations (same as server startup)
+        except Exception:
+            traceback.print_exc()
 
 
 try:
@@ -69,7 +72,11 @@ try:
 except Exception:                                    # pragma: no cover
     traceback.print_exc()                            # surfaced in Vercel logs
 
-import server                                        # noqa: E402
+try:
+    import server                                    # noqa: E402
+except Exception:                                    # pragma: no cover - deployment guard
+    traceback.print_exc()
+    server = None
 
 # --------------------------------------------------------------------------
 # 2) WSGI → BaseHTTPRequestHandler bridge
@@ -168,8 +175,22 @@ def _split_response(raw: bytes) -> tuple[str, list[tuple[str, str]], bytes]:
     return status_line, headers, body
 
 
+def _broken_app(environ, start_response):
+    """Readable diagnostic when the deployment bundle is missing project files."""
+    payload = (
+        b'{"error": "DEPLOYMENT_INCOMPLETE: server.py could not be imported. '
+        b'Check includeFiles in vercel.json (*.py, schema.sql, assets/**)."}'
+    )
+    start_response("500 Internal Server Error",
+                   [("Content-Type", "application/json; charset=utf-8"),
+                    ("Content-Length", str(len(payload)))])
+    return [payload]
+
+
 def app(environ, start_response):
     """WSGI entrypoint."""
+    if server is None:
+        return _broken_app(environ, start_response)
     try:
         length = int(environ.get("CONTENT_LENGTH") or 0)
     except ValueError:
