@@ -669,9 +669,12 @@ def vendors_list(ctx):
 def vendors_create(ctx):
     cid = ensure_company(ctx.user)
     b = ctx.body
-    for f in ("code", "name_ar", "name_en"):
+    # only the code and the Arabic name are mandatory: a supplier is often known
+    # by its Arabic trade name alone, so the English name falls back to it
+    for f in ("code", "name_ar"):
         if not b.get(f):
             raise ApiError(f"MISSING_FIELD: {f} مطلوب / required")
+    b["name_en"] = (b.get("name_en") or "").strip() or b["name_ar"]
     if q1(ctx.conn, "SELECT 1 FROM vendors WHERE company_id=? AND code=?", (cid, b["code"])):
         raise ApiError("DUPLICATE: كود المورد مستخدم / Vendor code already exists")
     ap_acc = q1(ctx.conn, "SELECT id FROM accounts WHERE company_id=? AND code='2110'", (cid,))["id"]
@@ -681,6 +684,38 @@ def vendors_create(ctx):
          int(b.get("payment_terms_days") or 30), ap_acc))
     audit(ctx.conn, ctx.user, "vendors.create", "vendor", cur.lastrowid, b, company_id=cid)
     return {"id": cur.lastrowid}
+
+
+@route("GET", r"/api/vendors/(\d+)", "vendors.view")
+def vendor_detail(ctx, vendor_id):
+    """One vendor with its outstanding balance, payment history and open invoices.
+
+    This is what the vendor edit panel on screen reads, so the balance and the
+    payments are always the server's numbers, never a browser-side guess.
+    """
+    cid = ensure_company(ctx.user)
+    v = q1(ctx.conn, "SELECT * FROM vendors WHERE id=? AND company_id=?", (vendor_id, cid))
+    if v is None:
+        raise ApiError("NOT_FOUND: المورد غير موجود / Vendor not found", 404)
+    invoices = qall(ctx.conn, """SELECT id, invoice_no, invoice_date, due_date, total_cents,
+            paid_cents, total_cents - paid_cents AS remaining_cents, status
+        FROM purchase_invoices WHERE vendor_id=? AND company_id=?
+        ORDER BY invoice_date DESC, id DESC""", (vendor_id, cid))
+    outstanding = sum(i["remaining_cents"] for i in invoices
+                      if i["status"] in ("posted", "partially_paid"))
+    payments = qall(ctx.conn, """SELECT p.id, p.payment_no, p.payment_date, p.amount_cents,
+            p.allocated_cents, p.amount_cents - p.allocated_cents AS unallocated_cents,
+            p.method, p.status, p.reference, p.notes
+        FROM payments p WHERE p.company_id=? AND p.party_type='vendor' AND p.party_id=?
+        ORDER BY p.payment_date DESC, p.id DESC""", (cid, vendor_id))
+    return {
+        "vendor": dict(v),
+        "outstanding_cents": outstanding,
+        "invoices": invoices,
+        "open_invoices": [i for i in invoices if i["status"] in ("posted", "partially_paid")],
+        "payments": payments,
+        "paid_total_cents": sum(p["amount_cents"] for p in payments if p["status"] == "posted"),
+    }
 
 
 @route("GET", r"/api/vendors/(\d+)/statement", "vendors.view")

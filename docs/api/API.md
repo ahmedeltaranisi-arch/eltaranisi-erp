@@ -333,3 +333,39 @@ opens the same validated form used for creation, pre-filled with the current
 values; saving asks **«هل أنت متأكد من تعديل …؟»** naming the record. Nothing is
 sent until the user confirms, and if the server rejects the change the form is
 restored with the typed values so no input is lost.
+
+### الموردون — لوحة المورد / Vendors
+
+`GET /api/vendors/{id}` — بروفايل المورد مع كل ما تحتاجه شاشة التعديل:
+
+```json
+{
+  "vendor": { "id": 3, "code": "V-2001", "name_ar": "…", "name_en": "…", "payment_terms_days": 30 },
+  "outstanding_cents": 73901900,
+  "paid_total_cents": 51200000,
+  "invoices": [ { "invoice_no": "PI-2026-00011", "remaining_cents": 120000, "status": "partially_paid" } ],
+  "open_invoices": [ "… posted / partially_paid only …" ],
+  "payments": [ { "payment_no": "PV-2026-00016", "payment_date": "2026-10-21", "amount_cents": 47395500,
+                  "allocated_cents": 47395500, "unallocated_cents": 0, "status": "posted" } ]
+}
+```
+
+* `outstanding_cents` is the **same number** the vendors list shows (posted +
+  partially-paid purchase invoices), so the balance in the edit panel can never
+  disagree with the table.
+* كل دفعة تحمل `payment_date` و`payment_no` والمبلغ والمخصّص وغير المخصّص والحالة.
+* Permission: `vendors.view`. Unknown id or another company → **404**.
+
+**الاسم الإنجليزي اختياري.** `POST /api/vendors` يتطلب `code` و`name_ar` فقط؛
+`name_en` الفارغ أو الغائب يُخزَّن بالاسم العربي. نفس القاعدة في
+`PATCH /api/vendors/{id}`: إرسال `name_en: ""` يعيده إلى الاسم العربي بدل خطأ 500.
+
+**تسجيل دفعة للمورد** — نفس نقطة الدفع العامة، مع تخصيص للفواتير:
+
+```http
+POST /api/payments
+{ "payment_type": "payment", "payment_date": "2026-10-21", "party_type": "vendor",
+  "party_id": 3, "method": "bank", "gl_account_id": 7, "amount": 250.00,
+  "allocations": [{ "invoice_kind": "purchase", "invoice_id": 11, "amount": 250.00 }],
+  "post": true }
+```

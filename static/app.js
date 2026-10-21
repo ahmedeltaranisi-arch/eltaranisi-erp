@@ -317,7 +317,7 @@ function showErr(root, msg) {
 }
 function fieldHtml(f) {
   const val = f.value ?? "";
-  const common = `name="${f.name}" id="fld-${f.name}" ${f.required ? "required" : ""}`;
+  const common = `name="${f.name}" id="fld-${f.name}" ${f.required ? "required" : ""} ${f.readonly ? "readonly" : ""} ${f.disabled ? "disabled" : ""}`;
   let input;
   if (f.type === "select") {
     input = `<select ${common}>${(f.options || []).map(o =>

@@ -854,6 +854,77 @@ class ERPTestCase(unittest.TestCase):
         status, _ = self.owner.patch(f"/api/customers/{cid}", {"name_ar": "داخل الشركة"})
         self.assertEqual(status, 200)
 
+    def test_96_vendor_english_name_is_optional(self):
+        code = f"V-NOEN{int(time.time() * 1000) % 10**8}"
+        status, res = self.owner.post("/api/vendors", {
+            "code": code, "name_ar": "مورد بدون اسم إنجليزي"})
+        self.assertEqual(status, 200, res)
+        vid = res["id"]
+
+        status, data = self.owner.get(f"/api/vendors/{vid}")
+        self.assertEqual(status, 200, data)
+        self.assertEqual(data["vendor"]["name_en"], "مورد بدون اسم إنجليزي",
+                         "an empty English name must fall back to the Arabic one")
+
+        # clearing it on an existing vendor does the same instead of blowing up
+        status, res = self.owner.patch(f"/api/vendors/{vid}", {"name_en": ""})
+        self.assertEqual(status, 200, res)
+        status, data = self.owner.get(f"/api/vendors/{vid}")
+        self.assertEqual(data["vendor"]["name_en"], "مورد بدون اسم إنجليزي")
+
+        # and it can be filled in later
+        status, _ = self.owner.patch(f"/api/vendors/{vid}", {"name_en": "Vendor w/o Arabic name"})
+        self.assertEqual(status, 200)
+        status, data = self.owner.get(f"/api/vendors/{vid}")
+        self.assertEqual(data["vendor"]["name_en"], "Vendor w/o Arabic name")
+
+    def test_97_vendor_detail_exposes_balance_payments_and_open_invoices(self):
+        vendor = self.first("vendors", "/api/vendors")
+        status, data = self.owner.get(f"/api/vendors/{vendor['id']}")
+        self.assertEqual(status, 200, data)
+        for key in ("vendor", "outstanding_cents", "payments", "open_invoices",
+                    "invoices", "paid_total_cents"):
+            self.assertIn(key, data)
+        self.assertEqual(data["outstanding_cents"], vendor["outstanding_cents"],
+                         "the panel balance must equal the vendors list balance")
+        # every payment carries a date — that is what the UI shows per vendor
+        for pay in data["payments"]:
+            self.assertTrue(pay["payment_date"])
+            self.assertIn("payment_no", pay)
+        # open invoices are exactly the posted / partially-paid ones
+        for inv in data["open_invoices"]:
+            self.assertIn(inv["status"], ("posted", "partially_paid"))
+            self.assertEqual(inv["remaining_cents"], inv["total_cents"] - inv["paid_cents"])
+
+    def test_98_vendor_payment_reduces_the_outstanding_balance(self):
+        vendor = next(v for v in self.owner.get("/api/vendors")[1]["vendors"]
+                      if v["outstanding_cents"] > 0)
+        before = self.owner.get(f"/api/vendors/{vendor['id']}")[1]
+        invoice = before["open_invoices"][0]
+        amount = min(invoice["remaining_cents"], 25_000) / 100
+        banks = self.owner.get("/api/banks")[1]
+        gl_bank = next(b["gl_account_id"] for b in banks["accounts"] if b["code"] == "BNK-01")
+
+        status, pay = self.fm.post("/api/payments", {
+            "payment_type": "payment", "payment_date": self.today(), "party_type": "vendor",
+            "party_id": vendor["id"], "method": "bank", "gl_account_id": gl_bank,
+            "amount": amount, "post": True,
+            "allocations": [{"invoice_kind": "purchase", "invoice_id": invoice["id"],
+                             "amount": amount}],
+        })
+        self.assertEqual(status, 200, pay)
+
+        after = self.owner.get(f"/api/vendors/{vendor['id']}")[1]
+        self.assertEqual(after["outstanding_cents"], before["outstanding_cents"] - int(amount * 100))
+        self.assertEqual(len(after["payments"]), len(before["payments"]) + 1)
+        self.assertEqual(after["payments"][0]["payment_date"], self.today(),
+                         "the new payment must appear first, with its date")
+
+    def test_99_vendor_panel_endpoints_require_permission(self):
+        vendor = self.first("vendors", "/api/vendors")
+        status, _ = self.sales.get(f"/api/vendors/{vendor['id']}")
+        self.assertEqual(status, 403, "the sales role has no vendors.view")
+
     def test_94_auth_survives_missing_session_rows(self):
         """Regression: /tmp-only sessions on serverless hosts must not log users out."""
         before = self.owner.get("/api/banks")

@@ -73,7 +73,9 @@ MASTER_SPECS = {
         "table": "vendors",
         "label_ar": "المورد", "label_en": "vendor",
         "unique": ["code"],
-        "required": ["code", "name_ar", "name_en"],
+        # the English name is optional: an empty value falls back to the Arabic one
+        "required": ["code", "name_ar"],
+        "fallbacks": {"name_en": "name_ar"},
         "fields": {
             "code": ("code", _txt),
             "name_ar": ("name_ar", _txt),
@@ -197,6 +199,11 @@ def update_master(conn, user, company_id: int, kind: str, row_id: int, body: dic
         changes[column] = new_value
         values.append(new_value)
 
+    # optional fields that the database stores as NOT NULL fall back to a sibling
+    for column, source in (spec.get("fallbacks") or {}).items():
+        if column in changes and not str(changes[column] or "").strip():
+            changes[column] = current[source] or changes[column]
+
     if not changes:
         raise ValidationError("NOTHING_TO_UPDATE: لا توجد حقول للتعديل / Nothing to update")
 
@@ -218,6 +225,9 @@ def update_master(conn, user, company_id: int, kind: str, row_id: int, body: dic
             "HAS_DEPRECIATION: لا يمكن تعديل تكلفة/عمر أصل بدأ إهلاكه "
             "/ Asset already depreciated — cost and life are locked", status=409)
 
+    # rebuild the parameter tuple from `changes`: fallbacks above may have replaced
+    # a value, and a stale parallel list would send the old (empty) one to SQLite
+    values = list(changes.values())
     sets = ", ".join(f"{col}=?" for col in changes)
     conn.execute(f"UPDATE {table} SET {sets} WHERE id=?", tuple(values) + (row_id,))
 

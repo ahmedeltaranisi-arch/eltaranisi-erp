@@ -358,3 +358,39 @@ The new token scheme needs a stable secret across instances. **Set
 `ERP_SECRET_KEY`** in the Vercel project environment (any long random string);
 without it each instance mints its own `data/.token-secret` and sessions break
 again. `EPHEMERAL_AUTH` is enabled automatically by the serverless entry point.
+
+---
+
+## Round «لوحة المورد» — Vendor panel & optional English name (2026-10-21)
+
+### What changed
+1. **الاسم الإنجليزي للمورد اختياري** — `POST /api/vendors` requires only `code`
+   and `name_ar`; an empty `name_en` is stored as the Arabic name (the column is
+   `NOT NULL`, so the fallback happens server-side). `PATCH` behaves the same, so
+   clearing the field in the edit form no longer errors.
+2. **رصيد المستحق داخل نموذج التعديل** — the vendor edit form shows a read-only
+   balance, taken from the new `GET /api/vendors/{id}` endpoint, which computes it
+   from posted and partially-paid purchase invoices (identical to the vendors list).
+3. **تبويب الدفعات لكل مورد** — the same endpoint returns that vendor's payments
+   with their dates, amounts, allocated/unallocated parts, method, reference and
+   status, plus their invoices with the remaining balance per invoice. A
+   «تسجيل دفعة» button opens the existing voucher form pre-filled with the vendor,
+   supporting allocation to specific invoices and immediate posting.
+4. The vendor pencil on **both** the vendors page and the vendor-payables page now
+   opens this panel; deletion stayed as-is.
+
+### Decisions
+* The balance is never computed in the browser — it comes from the API so the
+  panel, the list, the aging report and the GL cannot drift apart.
+* Payments are ordinary `payments` rows (draft → post); no parallel table was
+  invented, so receivables/payables, reconciliation and the audit trail keep working.
+* Fixing the optional name exposed a latent bug in `update_master`: it sent a stale
+  parallel value list after the fallback ran. It now rebuilds parameters from the
+  changed-fields mapping.
+
+### Tests
+`48 passed` (was 44). New: optional English name (create + clear + refill), vendor
+detail contract (balance == list balance, dated payments, open-invoice filter),
+payment lowering the outstanding balance, and permission enforcement. Headless
+render sweep: 21/21 pages, vendor panel HTML verified to contain the balance,
+payments tab, dated payment column and the payment button.

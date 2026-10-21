@@ -1170,19 +1170,10 @@
           { key: "next_due_date", label: t("payables.nextDue"), render: r => r.next_due_date ? fmtDate(r.next_due_date) : "—" },
           { key: "terms", label: t("customers.terms"), render: r => r.payment_terms_days },
           { key: "act", cls: "act", label: t("common.actions"), render: r => `<button class="btn btn-sm btn-ghost" data-stmt="${r.id}">${ESC(t("payables.statement"))}</button>
-              ${can("vendors.edit") ? editButton(`/api/vendors/${r.id}`,
-                  `المورد «${r.name_ar}» (${r.code})`, `vendor “${r.name_en}” (${r.code})`, [
-                    { name: "code", label: t("common.code"), required: true, value: r.code },
-                    { name: "name_ar", label: "الاسم بالعربية", required: true, value: r.name_ar },
-                    { name: "name_en", label: "Name (English)", required: true, value: r.name_en },
-                    { name: "phone", label: t("customers.phone"), value: r.phone || "" },
-                    { name: "email", label: L("البريد الإلكتروني", "Email"), value: r.email || "" },
-                    { name: "tax_number", label: L("الرقم الضريبي", "Tax number"), value: r.tax_number || "" },
-                    { name: "payment_terms_days", label: t("customers.terms"), type: "number", value: r.payment_terms_days ?? 30 },
-                    { name: "is_active", label: t("common.status"), type: "select", value: r.is_active ? "1" : "0",
-                      options: [{ value: "1", label: L("نشط", "Active") }, { value: "0", label: L("موقوف", "Inactive") }] },
-                  ]) : ""}
-              ${can("vendors.delete") ? deleteButton(`/api/vendors/${r.id}`, `المورد «${r.name_ar}» (${r.code})`, `vendor “${r.name_en}” (${r.code})`) : ""}` },
+              ${can("vendors.edit") ? `<button class="icon-btn edit" data-vend-edit="${r.id}"
+                  title="${ESC(L("تعديل بيانات المورد والدفعات", "Edit vendor & payments"))}"
+                  aria-label="${ESC(L("تعديل", "Edit"))}">${icon("edit")}</button>` : ""}
+              ${can("vendors.delete") ? deleteButton(`/api/vendors/${r.id}`, `المورد «${r.name_ar}» (${r.code})`, `vendor “${r.name_en || r.name_ar}” (${r.code})`) : ""}` },
         ], data.vendors, {
           footer: `<tr><td colspan="2">${ESC(t("common.total"))}</td>
             <td class="num">${fmtMoney(T.invoiced_cents)}</td><td class="num">${fmtMoney(T.paid_cents)}</td>
@@ -1336,18 +1327,9 @@
           { key: "outstanding_cents", label: t("payables.outstanding"), cls: "num", render: r => fmtMoney(r.outstanding_cents) },
           { key: "is_active", label: t("common.status"), render: r => statusBadge(r.is_active ? "active" : "inactive") },
           { key: "act", cls: "act", label: t("common.actions"), render: r => `<button class="btn btn-sm btn-ghost" data-stmt="${r.id}">${ESC(t("payables.statement"))}</button>
-              ${can("vendors.edit") ? editButton(`/api/vendors/${r.id}`,
-                  `المورد «${r.name_ar}» (${r.code})`, `vendor “${r.name_en || r.name_ar}” (${r.code})`, [
-                    { name: "code", label: t("common.code"), required: true, value: r.code },
-                    { name: "name_ar", label: "الاسم بالعربية", required: true, value: r.name_ar },
-                    { name: "name_en", label: "Name (English)", required: true, value: r.name_en || r.name_ar },
-                    { name: "phone", label: t("customers.phone"), value: r.phone || "" },
-                    { name: "email", label: L("البريد الإلكتروني", "Email"), value: r.email || "" },
-                    { name: "tax_number", label: L("الرقم الضريبي", "Tax number"), value: r.tax_number || "" },
-                    { name: "payment_terms_days", label: t("customers.terms"), type: "number", value: r.payment_terms_days ?? 30 },
-                    { name: "is_active", label: t("common.status"), type: "select", value: r.is_active ? "1" : "0",
-                      options: [{ value: "1", label: L("نشط", "Active") }, { value: "0", label: L("موقوف", "Inactive") }] },
-                  ]) : ""}
+              ${can("vendors.edit") ? `<button class="icon-btn edit" data-vend-edit="${r.id}"
+                  title="${ESC(L("تعديل بيانات المورد والدفعات", "Edit vendor & payments"))}"
+                  aria-label="${ESC(L("تعديل", "Edit"))}">${icon("edit")}</button>` : ""}
               ${can("vendors.delete") ? deleteButton(`/api/vendors/${r.id}`, `المورد «${r.name_ar}» (${r.code})`, `vendor “${r.name_en || r.name_ar}” (${r.code})`) : ""}` },
         ], data.vendors))}`;
       $$("[data-stmt]", view).forEach(b => b.onclick = () => vendorStatement(Number(b.dataset.stmt)));
@@ -1356,7 +1338,7 @@
         fields: [
           { name: "code", label: t("common.code"), required: true, value: "V-" + Math.floor(2000 + Math.random() * 900) },
           { name: "name_ar", label: "الاسم بالعربية", required: true },
-          { name: "name_en", label: "Name (English)", required: true },
+          { name: "name_en", label: "Name (English)", hint: L("اختياري — يُستخدم الاسم العربي إن تُرك فارغًا", "Optional — falls back to the Arabic name") },
           { name: "phone", label: t("customers.phone") },
           { name: "payment_terms_days", label: t("customers.terms"), type: "number", value: "30" },
         ],
@@ -1364,6 +1346,156 @@
       });
     }
   };
+
+  /* ------------------------------------------------------------------
+     VENDOR PANEL — edit the vendor, see its balance, manage its payments
+     ------------------------------------------------------------------ */
+  PAGES.vendors.panel = async function (id) {
+    const ar = APP.lang === "ar";
+    const d = await api(`/api/vendors/${id}`);
+    const v = d.vendor;
+    const subject = ar ? `المورد «${v.name_ar}» (${v.code})` : `vendor “${v.name_en || v.name_ar}” (${v.code})`;
+    const original = {
+      code: v.code, name_ar: v.name_ar, name_en: v.name_en || "",
+      phone: v.phone || "", email: v.email || "", tax_number: v.tax_number || "",
+      address: v.address || "", payment_terms_days: v.payment_terms_days ?? 30,
+      is_active: v.is_active ? "1" : "0",
+    };
+    const fld = (name, label, value, o = {}) => `<div class="field" style="${o.span ? "grid-column:span 2" : ""};margin-bottom:12px">
+        <span>${ESC(label)}${o.required ? " *" : ""}</span>
+        <input id="vp-${name}" type="${o.type || "text"}" value="${ESC(value ?? "")}"
+          ${o.readonly ? "readonly style=\"background:var(--surface-3);font-weight:700\"" : ""}
+          ${o.step ? `step="${o.step}"` : ""}/>
+        ${o.hint ? `<div class="field-hint">${ESC(o.hint)}</div>` : ""}</div>`;
+
+    const payRows = d.payments || [];
+    const body = `
+      <div class="tabs" id="vp-tabs">
+        <button type="button" class="tab active" data-tab="data">${ESC(ar ? "بيانات المورد" : "Vendor details")}</button>
+        <button type="button" class="tab" data-tab="pay">${ESC(ar ? `الدفعات (${payRows.length})` : `Payments (${payRows.length})`)}</button>
+      </div>
+
+      <div id="vp-pane-data">
+        <div class="grid cols-2" style="gap:0 16px">
+          ${fld("code", t("common.code"), original.code, { required: true })}
+          ${fld("balance", ar ? "رصيد المستحق" : "Outstanding balance",
+                fmtMoney(d.outstanding_cents || 0), { readonly: true,
+                hint: ar ? "المتبقي على المورد من الفواتير المرحّلة — يُحدَّث بالدفعات"
+                         : "Remaining on posted purchase invoices — updated by payments" })}
+          ${fld("name_ar", ar ? "الاسم بالعربية" : "Arabic name", original.name_ar, { required: true })}
+          ${fld("name_en", "Name (English)", original.name_en,
+                { hint: ar ? "اختياري — يُستخدم الاسم العربي إن تُرك فارغًا" : "Optional — falls back to the Arabic name" })}
+          ${fld("phone", t("customers.phone"), original.phone)}
+          ${fld("email", ar ? "البريد الإلكتروني" : "Email", original.email, { type: "email" })}
+          ${fld("tax_number", ar ? "الرقم الضريبي" : "Tax number", original.tax_number)}
+          ${fld("address", ar ? "العنوان" : "Address", original.address)}
+          ${fld("payment_terms_days", t("customers.terms"), original.payment_terms_days, { type: "number" })}
+          <div class="field" style="margin-bottom:12px"><span>${ESC(t("common.status"))}</span>
+            <select id="vp-is_active">
+              <option value="1" ${original.is_active === "1" ? "selected" : ""}>${ESC(ar ? "نشط" : "Active")}</option>
+              <option value="0" ${original.is_active === "0" ? "selected" : ""}>${ESC(ar ? "موقوف" : "Inactive")}</option>
+            </select></div>
+        </div>
+        <div class="form-error hidden" id="gen-error"></div>
+      </div>
+
+      <div id="vp-pane-pay" class="hidden">
+        <div class="grid cols-3" style="margin-bottom:14px">
+          ${kpi({ label: ar ? "إجمالي المستحق" : "Outstanding", value: d.outstanding_cents || 0, icon: icon("alert"), tone: (d.outstanding_cents || 0) > 0 ? "warn" : "ok" })}
+          ${kpi({ label: ar ? "إجمالي المدفوع" : "Paid to date", value: d.paid_total_cents || 0, icon: icon("coins") })}
+          ${kpi({ label: ar ? "عدد الدفعات" : "Payments", value: payRows.length, icon: icon("payments"), raw: true })}
+        </div>
+        <div class="section-title"><span>${ESC(ar ? "دفعات المورد" : "Vendor payments")}</span><span class="line"></span>
+          ${can("payments.create") ? `<button class="btn btn-primary btn-sm" id="vp-newpay">${icon("plus")} ${ESC(ar ? "تسجيل دفعة" : "Record a payment")}</button>` : ""}</div>
+        ${renderTable([
+          { key: "payment_date", label: ar ? "تاريخ الدفعة" : "Payment date", render: r => fmtDate(r.payment_date) },
+          { key: "payment_no", label: ar ? "الرمز التعريفي" : "Reference ID", render: r => `<strong>${ESC(r.payment_no)}</strong>` },
+          { key: "amount_cents", label: t("common.amount"), cls: "num", render: r => fmtMoney(r.amount_cents) },
+          { key: "allocated_cents", label: ar ? "المخصّص للفواتير" : "Allocated", cls: "num", render: r => fmtMoney(r.allocated_cents || 0) },
+          { key: "unallocated_cents", label: ar ? "غير مخصّص" : "Unallocated", cls: "num",
+            render: r => (r.unallocated_cents || 0) ? `<span class="neg">${fmtMoney(r.unallocated_cents)}</span>` : "—" },
+          { key: "method", label: ar ? "الطريقة" : "Method", render: r => ESC(r.method || "—") },
+          { key: "reference", label: ar ? "المرجع" : "Reference", render: r => ESC(r.reference || "—") },
+          { key: "status", label: t("common.status"), render: r => statusBadge(r.status) },
+        ], payRows, { compact: true, empty: ar ? "لا توجد دفعات مسجّلة لهذا المورد بعد" : "No payments recorded for this vendor yet" })}
+        <div class="section-title"><span>${ESC(ar ? "فواتير المشتريات" : "Purchase invoices")}</span><span class="line"></span></div>
+        ${renderTable([
+          { key: "invoice_no", label: t("common.invoice"), render: r => `<strong>${ESC(r.invoice_no)}</strong>` },
+          { key: "invoice_date", label: t("common.date"), render: r => fmtDate(r.invoice_date) },
+          { key: "due_date", label: t("common.dueDate"), render: r => fmtDate(r.due_date) },
+          { key: "total_cents", label: t("common.total"), cls: "num", render: r => fmtMoney(r.total_cents) },
+          { key: "paid_cents", label: t("common.paid"), cls: "num", render: r => fmtMoney(r.paid_cents) },
+          { key: "remaining_cents", label: t("common.remaining"), cls: "num",
+            render: r => `<span class="${r.remaining_cents ? "neg" : ""}">${fmtMoney(r.remaining_cents)}</span>` },
+          { key: "status", label: t("common.status"), render: r => statusBadge(r.status) },
+        ], d.invoices || [], { compact: true })}
+      </div>`;
+
+    openModal({
+      title: (ar ? "تعديل " : "Edit ") + subject,
+      body, wide: true,
+      footer: `<button class="btn" data-close>${ESC(t("common.cancel"))}</button>
+               <button class="btn btn-primary" id="vp-save">${ESC(ar ? "حفظ التعديل" : "Save changes")}</button>`,
+      onMount: (root, close) => {
+        $$("#vp-tabs .tab", root).forEach(tab => tab.onclick = () => {
+          $$("#vp-tabs .tab", root).forEach(x => x.classList.toggle("active", x === tab));
+          $("#vp-pane-data", root).classList.toggle("hidden", tab.dataset.tab !== "data");
+          $("#vp-pane-pay", root).classList.toggle("hidden", tab.dataset.tab !== "pay");
+        });
+
+        const newPay = $("#vp-newpay", root);
+        if (newPay) newPay.onclick = async () => {
+          close();
+          await PAGES.payments.newVoucher("payment", { party_id: v.id });
+        };
+
+        $("#vp-save", root).onclick = async () => {
+          const data = {
+            code: $("#vp-code", root).value.trim(),
+            name_ar: $("#vp-name_ar", root).value.trim(),
+            name_en: $("#vp-name_en", root).value.trim(),
+            phone: $("#vp-phone", root).value.trim(),
+            email: $("#vp-email", root).value.trim(),
+            tax_number: $("#vp-tax_number", root).value.trim(),
+            address: $("#vp-address", root).value.trim(),
+            payment_terms_days: Number($("#vp-payment_terms_days", root).value || 0),
+            is_active: $("#vp-is_active", root).value,
+          };
+          if (!data.code || !data.name_ar) {
+            showErr(root, ar ? "الكود والاسم بالعربية مطلوبان" : "Code and Arabic name are required");
+            return;
+          }
+          const changed = Object.keys(data).filter(k => String(data[k]) !== String(original[k]));
+          if (!changed.length) { toast(ar ? "لا يوجد تغيير لحفظه" : "Nothing changed", "err"); return; }
+          const ok = await confirmAsync(
+            ar ? `هل أنت متأكد من تعديل ${subject}؟\nسيُسجَّل التعديل في سجل التدقيق باسمك ووقته.`
+               : `Are you sure you want to edit ${subject}?\nThe change is recorded in the audit trail.`,
+            { title: ar ? "تأكيد التعديل" : "Confirm edit" });
+          if (!ok) return;
+          const btn = $("#vp-save", root);
+          btn.disabled = true;
+          try {
+            await api(`/api/vendors/${v.id}`, { method: "PATCH", body: data });
+            toast(ar ? "تم حفظ التعديل" : "Changes saved");
+            close();
+            await render();
+          } catch (e) {
+            showErr(root, e.message);
+            btn.disabled = false;
+          }
+        };
+      },
+    });
+  };
+
+  // one delegated handler for every vendor row button
+  document.addEventListener("click", (ev) => {
+    const btn = ev.target.closest("[data-vend-edit]");
+    if (!btn) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    PAGES.vendors.panel(Number(btn.dataset.vendEdit));
+  });
 
   /* ==================================================================
      INVENTORY

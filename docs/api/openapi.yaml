@@ -236,6 +236,22 @@ paths:
         "403": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
   /api/vendors/{id}:
+    get:
+      tags: [masters]
+      summary: Vendor profile with outstanding balance, invoices and payment history
+      description: >
+        Feeds the vendor edit panel: the balance is computed from posted and
+        partially-paid purchase invoices, and every payment carries its date.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: Vendor detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VendorDetail" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
     delete:
       tags: [deletions]
       summary: Delete a vendor (409 HAS_DOCUMENTS when purchase documents reference it)
@@ -744,10 +760,12 @@ components:
         address: { type: string }
     VendorInput:
       type: object
+      description: Only code and name_ar are mandatory; an empty name_en falls back to name_ar.
+      required: [code, name_ar]
       properties:
         code: { type: string }
         name_ar: { type: string }
-        name_en: { type: string }
+        name_en: { type: string, description: Optional — defaults to name_ar }
         phone: { type: string }
         email: { type: string }
         tax_number: { type: string }
@@ -848,3 +866,39 @@ components:
         payment_date: { type: string, format: date }
         reference: { type: string }
         notes: { type: string }
+
+    VendorDetail:
+      type: object
+      properties:
+        vendor: { $ref: "#/components/schemas/VendorInput" }
+        outstanding_cents: { type: integer, description: Posted + partially-paid invoice remainders }
+        paid_total_cents: { type: integer, description: Sum of posted payments to this vendor }
+        invoices:
+          type: array
+          items:
+            type: object
+            properties:
+              invoice_no: { type: string }
+              invoice_date: { type: string, format: date }
+              due_date: { type: string, format: date }
+              total_cents: { type: integer }
+              paid_cents: { type: integer }
+              remaining_cents: { type: integer }
+              status: { type: string }
+        open_invoices:
+          type: array
+          description: Only invoices in status posted / partially_paid
+          items: { type: object }
+        payments:
+          type: array
+          items:
+            type: object
+            properties:
+              payment_no: { type: string }
+              payment_date: { type: string, format: date }
+              amount_cents: { type: integer }
+              allocated_cents: { type: integer }
+              unallocated_cents: { type: integer }
+              method: { type: string }
+              reference: { type: string }
+              status: { type: string, enum: [draft, posted] }

@@ -110,3 +110,16 @@ Manual checks performed in this round:
 * the confirm modal names the record and cancels cleanly;
 * editing a *posted* invoice from the UI shows the server's Arabic explanation;
 * bank page loads repeatedly with a single token on a stateless server (no logout).
+
+### Round «vendor panel» — coverage
+
+| Test | What it proves |
+|---|---|
+| `test_96_vendor_english_name_is_optional` | creating a vendor with only `code` + `name_ar` works and `name_en` falls back to Arabic; clearing it later also falls back instead of 500 |
+| `test_97_vendor_detail_exposes_balance_payments_and_open_invoices` | `GET /api/vendors/{id}` returns the same balance as the list, payments with dates, and only posted/partially-paid open invoices |
+| `test_98_vendor_payment_reduces_the_outstanding_balance` | recording an allocated payment lowers the vendor's outstanding balance by exactly the paid amount and prepends the dated payment |
+| `test_99_vendor_panel_endpoints_require_permission` | roles without `vendors.view` get 403 |
+
+Manual checks: the vendor panel renders both tabs (details + payments) with the
+balance field, the payments table and the «تسجيل دفعة» button; the payables page
+opens the same panel.
