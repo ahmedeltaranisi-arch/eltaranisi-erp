@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  integration:
+    name: Accounting core (28 tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Seed a fresh development database
+        run: python3 seed.py
+      - name: Start the server
+        run: |
+          python3 server.py > /tmp/erp.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8000/api/health > /dev/null && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:8000/api/health
+      - name: Run integration tests
+        run: python3 tests/test_erp.py -v
+      - name: Server log (on failure)
+        if: failure()
+        run: cat /tmp/erp.log
+
+  serverless:
+    name: Vercel bridge (19 checks, no HTTP server)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python3 tests/test_wsgi_bridge.py
+
+  bundle:
+    name: Deployment bundle sanity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Required deployment files exist
+        run: |
+          test -f vercel.json
+          test -f requirements.txt
+          test -f api/index.py
+          test -f static/index.html
+          test -f assets/fonts/Amiri-Regular.ttf
+          python3 -c "import json;json.load(open('vercel.json'));print('vercel.json OK')"
+      - name: No secrets or local databases committed
+        run: |
+          ! git ls-files | grep -E '(^|/)(\.env$|erp\.db$|dev-credentials\.txt$)'

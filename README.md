@@ -1,5 +1,8 @@
 # Eltaranisi ERP — الطرانيسي ERP
 
+[![CI](https://github.com/ahmedeltaranisi-arch/eltaranisi-erp/actions/workflows/ci.yml/badge.svg)](https://github.com/ahmedeltaranisi-arch/eltaranisi-erp/actions/workflows/ci.yml)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/ahmedeltaranisi-arch/eltaranisi-erp)
+
 نظام ERP محاسبي وإداري متكامل (عربي/إنجليزي) — قاعدة بيانات حقيقية، محاسبة مزدوجة القيد، صلاحيات
 مفروضة على الخادم، مديونية موردين وأعمار ديون، وإقفال فترات مالية.
 
