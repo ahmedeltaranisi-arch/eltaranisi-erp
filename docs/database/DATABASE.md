@@ -1,6 +1,6 @@
 # قاعدة البيانات — ELTARANISI ERP
 
-المخطط الكامل في `schema.sql` (42 جدولًا + عرض `v_posted_lines`).
+المخطط الكامل في `schema.sql` (46 جدولًا + عرض `v_posted_lines`).
 
 ## 1. مبادئ التصميم
 
@@ -26,6 +26,7 @@
 | النقدية | `payments`, `payment_allocations`, `bank_accounts`, `bank_transactions` |
 | الأصول | `fixed_assets`, `depreciation_runs`, `depreciation_lines` |
 | الموارد البشرية | `employees`, `payroll_runs`, `payroll_lines` |
+| المديونية (شحن وتفريغ) | `debt_accounts`, `debt_items`, `debt_payments` |
 | التخطيط | `budgets` |
 | النظام | `notifications`, `approval_rules`, `approval_steps`, `settings`, `attachments`, `exchange_rates`, `document_sequences` |
 
@@ -51,6 +52,24 @@ journal_lines(
   UNIQUE(entry_id, line_no)
 )
 ```
+
+### 2.1.1 جداول المديونية / Debt sub-ledger
+
+الوحدة تحاكي بيان المديونية الورقي لشركة شحن وتفريغ، لذلك لا تعتمد على أصناف
+مخزنية بل على **كمية × فئة وحدة**:
+
+| الجدول | الغرض | الحقول المهمة |
+|---|---|---|
+| `debt_accounts` | حساب مديونية لكل مقاول/مورد | `code`, `kind` (contractor/labor/equipment/transport/fuel/workshop/supplies/other), `billing_unit` (ton/trip/container/hour/month/item), `expense_account_id`, `vendor_id`, `opening_balance_cents`, `is_active` |
+| `debt_items` | سطر مستحق (البيان) | `item_no` (DEB-YYYY-NNNNN), `doc_date`, `description`, `operation` (شحن/تفريغ/نقل/إيجار/مشتريات), `qty_milli`, `unit`, `unit_rate_cents`, `amount_cents`, `vessel`, `client_name`, `cargo`, `period_from`, `period_to`, `report_no`, `status`, `journal_entry_id` |
+| `debt_payments` | سداد (اذن صرف) | `payment_no` (DPV-YYYY-NNNNN), `voucher_no`, `pay_date`, `amount_cents`, `method`, `gl_account_id`, `payee`, `status`, `journal_entry_id` |
+
+* `amount_cents = round(qty_milli × unit_rate_cents / 1000)` ما لم يُدخَل المبلغ صريحًا.
+* **صافي المستحق** = `opening_balance_cents` + مجموع المستحقات المرحّلة − مجموع السدادات المرحّلة، ويُحسب دائمًا على الخادم.
+* كل مستحق/سداد مرحّل يملك `journal_entry_id`؛ وعند التعديل تُفصل العلاقة
+  (`journal_entry_id = NULL`) ثم يُحذف القيد القديم ويُنشأ قيد جديد — لذلك لا
+  تصطدم قيود المفاتيح الأجنبية عند الإلغاء وإعادة الترحيل.
+* فهارس: `(company_id, account_id, doc_date)` و`(company_id, account_id, pay_date)` و`(company_id, kind)`.
 
 ### 2.2 عرض التقارير
 

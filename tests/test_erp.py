@@ -1074,7 +1074,195 @@ class ERPTestCase(unittest.TestCase):
         self.assertEqual(status, 401)
 
     # ================================================================
-    # 6. DEMO ACCOUNTS ENDPOINT (development only)
+    # 6. ROUND J — purchase invoice with service / free-text lines
+    #    (the defect: "new purchase invoice does not save") plus the
+    #    redesigned debt (مديونية) module.
+    # ================================================================
+    def _a_vendor(self):
+        return self.owner.get("/api/vendors")[1]["vendors"][0]
+
+    def test_B110_purchase_invoice_saves_with_a_free_text_service_line(self):
+        """A shipping company buys services (نولون، تفريغ، عمالة) that are not in
+        the item master. The old form only offered stocked goods, so with a
+        service-only catalogue it produced an invoice with no valid line and the
+        save failed. A free-text line must save and post."""
+        vendor = self._a_vendor()
+        cogs_before = self.account_balance("5100")
+        inv_before = self.account_balance("1310")
+        ap_before = self.account_balance("2110")
+        status, res = self.owner.post("/api/purchase-invoices", {
+            "vendor_id": vendor["id"], "invoice_date": self.today(), "due_date": self.today(),
+            "warehouse_id": None,
+            "lines": [{"product_id": None, "description": "نولون نقل 508 طن ذرة",
+                       "qty": 508, "unit_price": 550, "tax_rate_bp": 0}],
+            "post": True,
+        })
+        self.assertEqual(status, 200, res)
+        self.assertIn("id", res)
+        inv = self.owner.get(f"/api/purchase-invoices/{res['id']}")[1]["invoice"]
+        self.assertEqual(inv["total_cents"], 27_940_000)
+        self.assertEqual(inv["status"], "posted")
+        self.assertTrue(inv["invoice_no"].startswith("PI-"), inv)
+        # a service line is a cost of service, never inventory
+        self.assertEqual(self.account_balance("5100") - cogs_before, 27_940_000)
+        self.assertEqual(self.account_balance("1310") - inv_before, 0,
+                         "a free-text service line must not touch the inventory account")
+        self.assertEqual(self.account_balance("2110") - ap_before, 27_940_000)
+
+    def test_B111_purchase_invoice_accepts_a_service_product_line(self):
+        """A catalogue service item (is_service=1) is offered by the form and posts
+        to cost of service; it must not require a warehouse."""
+        vendor = self._a_vendor()
+        products = self.owner.get("/api/products")[1]["products"]
+        service = next(p for p in products if p["is_service"])
+        status, res = self.owner.post("/api/purchase-invoices", {
+            "vendor_id": vendor["id"], "invoice_date": self.today(), "due_date": self.today(),
+            "warehouse_id": None,
+            "lines": [{"product_id": service["id"], "qty": 1, "unit_price": 900, "tax_rate_bp": 1400}],
+            "post": True,
+        })
+        self.assertEqual(status, 200, res)
+        inv = self.owner.get(f"/api/purchase-invoices/{res['id']}")[1]["invoice"]
+        self.assertEqual(inv["total_cents"], 102_600)
+        je = self.owner.get(f"/api/journal-entries/{inv['journal_entry_id']}")[1]
+        debit = next(l for l in je["lines"] if l["debit_cents"] and l["account_code"].startswith("5"))
+        self.assertEqual(debit["account_code"], "5100")
+
+    # ---------------- debt module ----------------
+    def _debt_account(self, kind="labor", unit="ton"):
+        status, res = self.owner.post("/api/debt/accounts", {
+            "name_ar": f"حساب اختبار {unit}", "kind": kind, "billing_unit": unit})
+        self.assertEqual(status, 200, res)
+        return res["id"]
+
+    def test_B120_debt_account_creation_and_seeded_chart(self):
+        status, data = self.owner.get("/api/debt/accounts")
+        self.assertEqual(status, 200, data)
+        codes = {a["code"] for a in data["accounts"]}
+        self.assertIn("DB-0003", codes)          # إبراهيم الحبشي — بالطن
+        self.assertIn("DB-0006", codes)          # مكتب القدس — حاويات
+        for a in data["accounts"]:
+            self.assertEqual(a["net_cents"], 0, "seeded balances must start at zero")
+        acc = self._debt_account()
+        got = next(a for a in self.owner.get("/api/debt/accounts")[1]["accounts"] if a["id"] == acc)
+        self.assertEqual(got["billing_unit"], "ton")
+        self.assertEqual(got["kind"], "labor")
+
+    def test_B121_debt_item_computes_quantity_by_unit_rate_and_posts(self):
+        acc = self._debt_account()
+        cogs_before = self.account_balance("5100")
+        ap_before = self.account_balance("2110")
+        status, res = self.owner.post("/api/debt/items", {
+            "account_id": acc, "doc_date": self.today(), "description": "تفريغ ذرة",
+            "operation": "تفريغ", "qty": 31882.74, "unit": "ton", "unit_rate": 3,
+            "vessel": "GREEN GENIE", "client_name": "ميدسوفت", "cargo": "ذرة",
+            "period_from": self.today(), "period_to": self.today(), "report_no": "18"})
+        self.assertEqual(status, 200, res)
+        item = self.owner.get(f"/api/debt/items?account_id={acc}")[1]["items"][0]
+        self.assertEqual(item["amount_cents"], 9_564_822)   # 31,882.74 ton × 3
+        self.assertEqual(item["status"], "posted")
+        self.assertTrue(item["item_no"].startswith("DEB-"))
+        self.assertEqual(self.account_balance("5100") - cogs_before, 9_564_822)
+        self.assertEqual(self.account_balance("2110") - ap_before, 9_564_822)
+        je = self.owner.get(f"/api/journal-entries/{item['journal_entry_id']}")[1]
+        self.assertEqual(len(je["lines"]), 2)
+        self.assertEqual(je["lines"][0]["account_code"], "5100")
+        self.assertEqual(je["lines"][1]["account_code"], "2110")
+
+    def test_B122_debt_payment_voucher_and_statement_totals(self):
+        acc = self._debt_account()
+        self.owner.post("/api/debt/items", {"account_id": acc, "doc_date": self.today(),
+                                            "description": "نقلة", "qty": 10, "unit": "trip", "unit_rate": 500})
+        status, pay = self.owner.post("/api/debt/payments", {
+            "account_id": acc, "pay_date": self.today(), "amount": 2000, "method": "cash",
+            "voucher_no": "4412", "payee": "أحمد تاج"})
+        self.assertEqual(status, 200, pay)
+        st = self.owner.get(f"/api/debt/accounts/{acc}")[1]
+        self.assertEqual(st["totals"]["due_cents"], 500_000)
+        self.assertEqual(st["totals"]["paid_cents"], 200_000)
+        self.assertEqual(st["totals"]["net_cents"], 300_000)
+        self.assertEqual(st["payments"][0]["voucher_no"], "4412")
+        je = self.owner.get(f"/api/journal-entries/{st['payments'][0]['journal_entry_id']}")[1]
+        self.assertEqual(je["lines"][0]["account_code"], "2110")
+        self.assertEqual(je["lines"][1]["account_code"], "1111")
+        summary = self.owner.get("/api/debt/summary")[1]
+        row = next(a for a in summary["accounts"] if a["id"] == acc)
+        self.assertEqual(row["net_cents"], 300_000)
+        self.assertEqual(summary["totals"]["net_cents"],
+                         sum(a["net_cents"] for a in summary["accounts"]))
+
+    def test_B123_debt_item_edit_reposts_and_keeps_the_ledger_balanced(self):
+        acc = self._debt_account()
+        item_id = self.owner.post("/api/debt/items", {
+            "account_id": acc, "doc_date": self.today(), "description": "شحن", "qty": 100,
+            "unit": "ton", "unit_rate": 122})[1]["id"]
+        before = self.owner.get(f"/api/debt/items?account_id={acc}")[1]["items"][0]
+        tb_before = self.tb()["totals"]
+        status, out = self.owner.patch(f"/api/debt/items/{item_id}", {"qty": 150})
+        self.assertEqual(status, 200, out)
+        after = self.owner.get(f"/api/debt/items?account_id={acc}")[1]["items"][0]
+        self.assertEqual(after["amount_cents"], 1_830_000)
+        self.assertNotEqual(after["journal_entry_id"], before["journal_entry_id"])
+        self.assertEqual(self.owner.get(f"/api/journal-entries/{before['journal_entry_id']}")[0], 404)
+        tb_after = self.tb()["totals"]
+        self.assertEqual(tb_after["period_debit"], tb_after["period_credit"])
+
+    def test_B124_debt_deletes_require_confirmation_and_reverse_the_ledger(self):
+        acc = self._debt_account()
+        item_id = self.owner.post("/api/debt/items", {
+            "account_id": acc, "doc_date": self.today(), "description": "حذف",
+            "qty": 1, "unit": "item", "unit_rate": 700})[1]["id"]
+        pay_id = self.owner.post("/api/debt/payments", {
+            "account_id": acc, "pay_date": self.today(), "amount": 300, "method": "cash"})[1]["id"]
+        status, _ = self.owner.request("DELETE", f"/api/debt/items/{item_id}", {}, auth=True)
+        self.assertEqual(status, 428, "deletion must be explicitly confirmed")
+        status, blocked = self.owner.request("DELETE", f"/api/debt/accounts/{acc}", {"confirm": True}, auth=True)
+        self.assertEqual(status, 409, blocked)
+        ap_before = self.account_balance("2110")
+        status, out = self.owner.request("DELETE", f"/api/debt/payments/{pay_id}", {"confirm": True}, auth=True)
+        self.assertEqual(status, 200, out)
+        status, out = self.owner.request("DELETE", f"/api/debt/items/{item_id}", {"confirm": True}, auth=True)
+        self.assertEqual(status, 200, out)
+        self.assertEqual(self.account_balance("2110"), ap_before + 300_00 - 700_00)
+        status, out = self.owner.request("DELETE", f"/api/debt/accounts/{acc}", {"confirm": True}, auth=True)
+        self.assertEqual(status, 200, out)
+        self.assertNotIn(acc, [a["id"] for a in self.owner.get("/api/debt/accounts")[1]["accounts"]])
+        logs = self.owner.get("/api/audit-logs?per_page=100")[1]["logs"]
+        actions = {r["action"] for r in logs}
+        for a in ("debt_account.create", "debt_item.create", "debt_payment.create",
+                  "debt_item.delete", "debt_payment.delete", "debt_account.delete"):
+            self.assertIn(a, actions)
+
+    def _raw_get(self, path):
+        req = urllib.request.Request(BASE + path, method="GET")
+        req.add_header("Authorization", "Bearer " + self.owner.token)
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return resp.status, resp.read(), resp.headers.get("Content-Type", "")
+
+    def test_B125_debt_summary_and_statement_exports(self):
+        acc = self._debt_account()
+        self.owner.post("/api/debt/items", {"account_id": acc, "doc_date": self.today(),
+                                            "description": "تصدير", "qty": 2, "unit": "trip", "unit_rate": 250})
+        status, body, ctype = self._raw_get("/api/debt/summary/xlsx")
+        self.assertEqual(status, 200)
+        self.assertTrue(body.startswith(b"PK"), "Excel export must be a real xlsx package")
+        status, body, ctype = self._raw_get(f"/api/debt/accounts/{acc}/statement/pdf")
+        self.assertEqual(status, 200)
+        self.assertTrue(body.startswith(b"%PDF"), "statement PDF must be a real PDF")
+        self.assertIn("application/pdf", ctype)
+
+    def test_B126_debt_permissions_are_enforced_server_side(self):
+        acc = self._debt_account()
+        status, _ = self.sales.get("/api/debt/summary")
+        self.assertEqual(status, 403, "sales users have no debt.view")
+        # auditors can read but never post
+        self.assertEqual(self.auditor.get("/api/debt/summary")[0], 200)
+        status, _ = self.auditor.post("/api/debt/items", {
+            "account_id": acc, "doc_date": self.today(), "description": "x", "amount": 10})
+        self.assertEqual(status, 403)
+
+    # ================================================================
+    # 7. DEMO ACCOUNTS ENDPOINT (development only)
     # ================================================================
     def test_57_demo_accounts_endpoint(self):
         req = urllib.request.Request(BASE + "/api/dev/accounts")

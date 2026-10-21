@@ -245,8 +245,16 @@ def post_purchase_invoice(conn, user, company_id, invoice_id: int) -> dict:
     inv_total = 0
     for ln in lines:
         prod = conn.execute("SELECT * FROM products WHERE id=?", (ln["product_id"],)).fetchone() if ln["product_id"] else None
-        debit_acc = (prod["inventory_account_id"] if prod and prod["inventory_account_id"] else None) \
-            or account_id_by_code(conn, company_id, ACC["inventory"])
+        stocked = bool(prod and not prod["is_service"])
+        # Goods go to inventory. Service lines and free-text lines (نولون، تفريغ، عمالة،
+        # صيانة، إيجار لودر) are direct operating costs and must hit cost of service,
+        # never the inventory account.
+        if stocked:
+            debit_acc = (prod["inventory_account_id"] if prod["inventory_account_id"] else None) \
+                or account_id_by_code(conn, company_id, ACC["inventory"])
+        else:
+            debit_acc = (prod["cogs_account_id"] if prod and prod["cogs_account_id"] else None) \
+                or account_id_by_code(conn, company_id, ACC["cogs"])
         je_lines.append({"account_id": debit_acc, "debit_cents": ln["line_subtotal_cents"], "credit_cents": 0,
                          "description": ln["description"] or inv["invoice_no"]})
         inv_total += ln["line_subtotal_cents"]

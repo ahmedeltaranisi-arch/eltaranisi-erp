@@ -17,6 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import accounting
+import debt
 import deletion
 import documents
 import editing
@@ -1227,6 +1228,255 @@ def budgets_create(ctx):
          to_cents(b["budget"])))
     audit(ctx.conn, ctx.user, "budgets.upsert", "budget", None, b, company_id=cid)
     return {"ok": True}
+
+
+# ------------------------- debt / مديونية --------------------------------
+# Contractor & supplier statements billed by quantity (طن، نقلة، حاوية، ساعة،
+# إيجار شهري) with settlement vouchers, mirroring the paper debt statement.
+@route("GET", r"/api/debt/meta", "debt.view")
+def debt_meta(ctx):
+    cid = ensure_company(ctx.user)
+    cash = qall(ctx.conn, "SELECT id, code, name_ar, name_en FROM accounts WHERE company_id=? "
+                          "AND is_postable=1 AND (code LIKE '111%' OR code LIKE '112%') ORDER BY code", (cid,))
+    expense = qall(ctx.conn, "SELECT id, code, name_ar, name_en FROM accounts WHERE company_id=? "
+                             "AND is_postable=1 AND code LIKE '5%' ORDER BY code", (cid,))
+    vendors = qall(ctx.conn, "SELECT id, code, name_ar, name_en FROM vendors WHERE company_id=? "
+                             "AND is_active=1 ORDER BY code", (cid,))
+    return {
+        "kinds": [{"code": k, "label_ar": v[0], "label_en": v[1]} for k, v in debt.KINDS.items()],
+        "units": [{"code": k, "label_ar": v[0], "label_en": v[1]} for k, v in debt.UNITS.items()],
+        "methods": [{"code": k, "label_ar": v} for k, v in debt.METHODS.items()],
+        "cash_accounts": cash, "expense_accounts": expense, "vendors": vendors,
+    }
+
+
+@route("GET", r"/api/debt/summary", "debt.view")
+def debt_summary(ctx):
+    cid = ensure_company(ctx.user)
+    d1 = ctx.qs.get("from") or None
+    d2 = ctx.qs.get("to") or None
+    return debt.summary(ctx.conn, cid, d1, d2)
+
+
+@route("GET", r"/api/debt/summary/xlsx", "debt.view")
+def debt_summary_xlsx(ctx):
+    cid = ensure_company(ctx.user)
+    lang = _lang(ctx)
+    ar = lang != "en"
+    d1 = ctx.qs.get("from") or None
+    d2 = ctx.qs.get("to") or None
+    data = debt.summary(ctx.conn, cid, d1, d2)
+    head = ["م", "البيان"] if ar else ["#", "Statement"]
+    head += ["النوع", "وحدة الاحتساب", "المستحق", "المدفوع", "الصافي"] if ar else \
+            ["Type", "Billing unit", "Due", "Paid", "Net"]
+    rows, i = [head], 0
+    for g in data["groups"]:
+        for a in g["accounts"]:
+            i += 1
+            rows.append([i, a["name_ar"] if ar else (a["name_en"] or a["name_ar"]),
+                         g["label_ar"] if ar else g["label_en"],
+                         a["unit_label_ar"] if ar else a["unit_label_en"],
+                         money_str(a["due_cents"]), money_str(a["paid_cents"]), money_str(a["net_cents"])])
+        rows.append(["", ("اجمالي " if ar else "Total ") + (g["label_ar"] if ar else g["label_en"]), "", "",
+                     money_str(g["due_cents"]), money_str(g["paid_cents"]), money_str(g["net_cents"])])
+    t = data["totals"]
+    rows.append(["", "إجمالي المديونية" if ar else "Total debt", "", "",
+                 money_str(t["due_cents"]), money_str(t["paid_cents"]), money_str(t["net_cents"])])
+    out = exporter.report_xlsx("حساب المديونية" if ar else "Debt summary", rows[0], rows[1:], rtl=ar)
+    audit(ctx.conn, ctx.user, "debt_summary.xlsx", "debt_summary", None, {}, company_id=cid)
+    return {"__file__": True, "content": out,
+            "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "filename": "debt-summary.xlsx"}
+
+
+@route("GET", r"/api/debt/summary/pdf", "debt.view")
+def debt_summary_pdf(ctx):
+    cid = ensure_company(ctx.user)
+    lang = _lang(ctx)
+    ar = lang != "en"
+    d1 = ctx.qs.get("from") or None
+    d2 = ctx.qs.get("to") or None
+    data = debt.summary(ctx.conn, cid, d1, d2)
+    cols = [{"ar": "م", "en": "#", "w": 0.5, "align": "center", "rtl": False},
+            {"ar": "البيان", "en": "Statement", "w": 3.2},
+            {"ar": "النوع", "en": "Type", "w": 1.4},
+            {"ar": "المستحق", "en": "Due", "w": 1.4, "align": "center", "rtl": False},
+            {"ar": "المدفوع", "en": "Paid", "w": 1.4, "align": "center", "rtl": False},
+            {"ar": "الصافي", "en": "Net", "w": 1.4, "align": "center", "rtl": False}]
+    rows, i = [], 0
+    for g in data["groups"]:
+        for a in g["accounts"]:
+            i += 1
+            rows.append([str(i), a["name_ar"] if ar else a["name_en"] or a["name_ar"],
+                         g["label_ar"] if ar else g["label_en"],
+                         money_str(a["due_cents"]), money_str(a["paid_cents"]), money_str(a["net_cents"])])
+        rows.append(["", ("اجمالي " if ar else "Total ") + (g["label_ar"] if ar else g["label_en"]), "", "",
+                     money_str(g["due_cents"]), money_str(g["paid_cents"]), money_str(g["net_cents"])])
+    t = data["totals"]
+    rows.append(["", "إجمالي المديونية" if ar else "Total debt", "", "",
+                 money_str(t["due_cents"]), money_str(t["paid_cents"]), money_str(t["net_cents"])])
+    company = exporter.company_block(ctx.conn, cid)
+    out = exporter.report_pdf("حساب المديونية", "Debt summary", cols, rows, company=company, lang=lang,
+                              subtitle_ar=f"من {d1 or 'البداية'} إلى {d2 or 'اليوم'}",
+                              subtitle_en=f"{d1 or 'start'} — {d2 or 'today'}")
+    audit(ctx.conn, ctx.user, "debt_summary.pdf", "debt_summary", None, {}, company_id=cid)
+    return {"__file__": True, "content": out, "content_type": "application/pdf",
+            "filename": "debt-summary.pdf", "inline": True}
+
+
+@route("GET", r"/api/debt/accounts", "debt.view")
+def debt_accounts_list(ctx):
+    cid = ensure_company(ctx.user)
+    return {"accounts": debt.list_accounts(ctx.conn, cid)}
+
+
+@route("POST", r"/api/debt/accounts", "debt.create")
+def debt_accounts_create(ctx):
+    cid = ensure_company(ctx.user)
+    new_id = debt.create_account(ctx.conn, ctx.user, cid, ctx.body)
+    notify(ctx.conn, cid, ctx.user["id"], "create", "تمت الإضافة", "Created",
+           f"حساب مديونية جديد: {ctx.body.get('name_ar')}",
+           f"New debt account: {ctx.body.get('name_ar')}")
+    return {"id": new_id}
+
+
+@route("GET", r"/api/debt/accounts/(\d+)", "debt.view")
+def debt_account_statement(ctx, account_id):
+    cid = ensure_company(ctx.user)
+    return debt.statement(ctx.conn, cid, int(account_id),
+                          ctx.qs.get("from") or None, ctx.qs.get("to") or None)
+
+
+@route("PATCH", r"/api/debt/accounts/(\d+)", "debt.edit")
+def debt_accounts_update(ctx, account_id):
+    cid = ensure_company(ctx.user)
+    return debt.update_account(ctx.conn, ctx.user, cid, int(account_id), ctx.body)
+
+
+@route("DELETE", r"/api/debt/accounts/(\d+)", "debt.delete")
+def debt_accounts_delete(ctx, account_id):
+    return _delete_document(ctx, lambda conn, user, cid, rid, **kw: debt.delete_account(conn, user, cid, rid),
+                            int(account_id))
+
+
+@route("GET", r"/api/debt/accounts/(\d+)/statement/xlsx", "debt.view")
+def debt_statement_xlsx(ctx, account_id):
+    cid = ensure_company(ctx.user)
+    lang = _lang(ctx)
+    ar = lang != "en"
+    st = debt.statement(ctx.conn, cid, int(account_id), ctx.qs.get("from") or None, ctx.qs.get("to") or None)
+    acc = st["account"]
+    title = ("كشف حساب " if ar else "Statement — ") + (acc["name_ar"] if ar else acc["name_en"] or acc["name_ar"])
+    cols = ["التاريخ", "البيان", "العملية", "الكمية", "الوحدة", "فئة الوحدة", "المستحق"] if ar else \
+           ["Date", "Statement", "Operation", "Qty", "Unit", "Unit rate", "Due"]
+    rows = [cols]
+    for it in sorted(st["items"], key=lambda x: (x["doc_date"], x["id"])):
+        rows.append([it["doc_date"], it["description"], it["operation"] or "",
+                     f"{it['qty_milli'] / 1000:g}" if it["qty_milli"] else "",
+                     it["unit_label_ar"] if ar else it["unit_label_en"],
+                     money_str(it["unit_rate_cents"]) if it["unit_rate_cents"] else "",
+                     money_str(it["amount_cents"])])
+    rows.append(["", "إجمالي المستحق" if ar else "Total due", "", "", "", "", money_str(st["totals"]["due_cents"])])
+    rows.append([])
+    rows.append(["اذن صرف", "التاريخ", "المبلغ", "طريقة السداد", "المستلم/الصارف"] if ar else
+                ["Voucher", "Date", "Amount", "Method", "Payee"])
+    for p in sorted(st["payments"], key=lambda x: (x["pay_date"], x["id"])):
+        rows.append([p["voucher_no"] or p["payment_no"], p["pay_date"], money_str(p["amount_cents"]),
+                     p["method_label_ar"], p["payee"] or ""])
+    rows.append(["", "اجمالي الدفعات المستلمة" if ar else "Total paid", money_str(st["totals"]["paid_cents"]), "", ""])
+    rows.append(["", "صافي المستحق" if ar else "Net due", money_str(st["totals"]["net_cents"]), "", ""])
+    out = exporter.report_xlsx(title, rows[0], rows[1:], rtl=ar)
+    audit(ctx.conn, ctx.user, "debt_statement.xlsx", "debt_account", int(account_id), {}, company_id=cid)
+    return {"__file__": True, "content": out,
+            "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "filename": f"debt-{acc['code']}.xlsx"}
+
+
+@route("GET", r"/api/debt/accounts/(\d+)/statement/pdf", "debt.view")
+def debt_statement_pdf(ctx, account_id):
+    cid = ensure_company(ctx.user)
+    lang = _lang(ctx)
+    ar = lang != "en"
+    st = debt.statement(ctx.conn, cid, int(account_id), ctx.qs.get("from") or None, ctx.qs.get("to") or None)
+    acc = st["account"]
+    cols = [{"ar": "التاريخ", "en": "Date", "w": 1.1, "align": "center", "rtl": False},
+            {"ar": "البيان", "en": "Statement", "w": 3.2},
+            {"ar": "الكمية", "en": "Qty", "w": 1.0, "align": "center", "rtl": False},
+            {"ar": "فئة الوحدة", "en": "Rate", "w": 1.1, "align": "center", "rtl": False},
+            {"ar": "المستحق", "en": "Due", "w": 1.2, "align": "center", "rtl": False}]
+    rows = []
+    for it in sorted(st["items"], key=lambda x: (x["doc_date"], x["id"])):
+        qty = f"{it['qty_milli'] / 1000:g}" if it["qty_milli"] else ""
+        unit = (it["unit_label_ar"] if ar else it["unit_label_en"])
+        rows.append([it["doc_date"], it["description"] + (f" — {it['vessel']}" if it["vessel"] else ""),
+                     f"{qty} {unit}".strip(), money_str(it["unit_rate_cents"]) if it["unit_rate_cents"] else "",
+                     money_str(it["amount_cents"])])
+    rows.append(["", "إجمالي المستحق" if ar else "Total due", "", "", money_str(st["totals"]["due_cents"])])
+    rows.append(["", "", "", "الدفعات المستلمة" if ar else "Paid", money_str(st["totals"]["paid_cents"])])
+    for p in sorted(st["payments"], key=lambda x: (x["pay_date"], x["id"])):
+        rows.append([p["pay_date"], (f"اذن صرف {p['voucher_no']}" if p["voucher_no"] else p["payment_no"]),
+                     "", p["method_label_ar"], money_str(p["amount_cents"])])
+    rows.append(["", "صافي المستحق" if ar else "Net due", "", "", money_str(st["totals"]["net_cents"])])
+    company = exporter.company_block(ctx.conn, cid)
+    out = exporter.report_pdf(f"كشف حساب — {acc['name_ar']}", f"Statement — {acc['name_en'] or acc['name_ar']}",
+                              cols, rows, company=company, lang=lang,
+                              subtitle_ar=f"{acc['code']} • {acc['kind_label_ar']} • من {st['range']['from'] or 'البداية'} إلى {st['range']['to'] or 'اليوم'}",
+                              subtitle_en=f"{acc['code']} • {acc['kind_label_en']} • {st['range']['from'] or 'start'} — {st['range']['to'] or 'today'}")
+    audit(ctx.conn, ctx.user, "debt_statement.pdf", "debt_account", int(account_id), {}, company_id=cid)
+    return {"__file__": True, "content": out, "content_type": "application/pdf",
+            "filename": f"debt-{acc['code']}.pdf", "inline": True}
+
+
+@route("GET", r"/api/debt/items", "debt.view")
+def debt_items_list(ctx):
+    cid = ensure_company(ctx.user)
+    acc = ctx.qs.get("account_id")
+    return {"items": debt.list_items(ctx.conn, cid, int(acc) if acc else None,
+                                     ctx.qs.get("from") or None, ctx.qs.get("to") or None)}
+
+
+@route("POST", r"/api/debt/items", "debt.create")
+def debt_items_create(ctx):
+    cid = ensure_company(ctx.user)
+    return {"id": debt.create_item(ctx.conn, ctx.user, cid, ctx.body)}
+
+
+@route("PATCH", r"/api/debt/items/(\d+)", "debt.edit")
+def debt_items_update(ctx, item_id):
+    cid = ensure_company(ctx.user)
+    return debt.update_item(ctx.conn, ctx.user, cid, int(item_id), ctx.body)
+
+
+@route("DELETE", r"/api/debt/items/(\d+)", "debt.delete")
+def debt_items_delete(ctx, item_id):
+    return _delete_document(ctx, lambda conn, user, cid, rid, **kw: debt.delete_item(conn, user, cid, rid),
+                            int(item_id))
+
+
+@route("GET", r"/api/debt/payments", "debt.view")
+def debt_payments_list(ctx):
+    cid = ensure_company(ctx.user)
+    acc = ctx.qs.get("account_id")
+    return {"payments": debt.list_payments(ctx.conn, cid, int(acc) if acc else None,
+                                           ctx.qs.get("from") or None, ctx.qs.get("to") or None)}
+
+
+@route("POST", r"/api/debt/payments", "debt.create")
+def debt_payments_create(ctx):
+    cid = ensure_company(ctx.user)
+    return {"id": debt.create_payment(ctx.conn, ctx.user, cid, ctx.body)}
+
+
+@route("PATCH", r"/api/debt/payments/(\d+)", "debt.edit")
+def debt_payments_update(ctx, payment_id):
+    cid = ensure_company(ctx.user)
+    return debt.update_payment(ctx.conn, ctx.user, cid, int(payment_id), ctx.body)
+
+
+@route("DELETE", r"/api/debt/payments/(\d+)", "debt.delete")
+def debt_payments_delete(ctx, payment_id):
+    return _delete_document(ctx, lambda conn, user, cid, rid, **kw: debt.delete_payment(conn, user, cid, rid),
+                            int(payment_id))
 
 
 # ------------------------------- reports ----------------------------------

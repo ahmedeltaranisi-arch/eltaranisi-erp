@@ -394,3 +394,83 @@ POST /api/payments
 * `422 NOTHING_TO_UPDATE` — لا حقول في الطلب.
 
 **`DELETE /api/payments/{id}`** — يحذف السند وقيده ويعيد التخصيصات إلى الفواتير؛ ويُرفض بـ `409 RECONCILED` إذا كان مُطابَقًا مع كشف بنكي.
+
+---
+
+## 7. المديونية / Debt module (جولة j)
+
+وحدة مديونية مبنية على بيان المديونية الورقي لشركة شحن وتفريغ: كل حساب (مقاول،
+عمالة، معدات، نقل، وقود، ورشة) له **مستحقات** محسوبة بالكمية (**طن، نقلة، حاوية،
+ساعة، إيجار شهري، بند**) و**سدادات** باذن صرف. كل مستحق/سداد يُرحَّل تلقائيًا إلى
+الأستاذ العام.
+
+**الترحيل المحاسبي**
+
+| المستند | القيد |
+|---|---|
+| مستحق (دين) | مدين `حساب المصروف` (افتراضيًا 5100 تكلفة المبيعات) / دائن `2110 الموردون` |
+| سداد (اذن صرف) | مدين `2110 الموردون` / دائن `الصندوق أو البنك` (`1111`/`1121`) |
+
+### الحسابات
+
+| الطريقة | المسار | الصلاحية |
+|---|---|---|
+| GET | `/api/debt/accounts` | `debt.view` |
+| POST | `/api/debt/accounts` | `debt.create` |
+| GET | `/api/debt/accounts/{id}` → كشف الحساب الكامل (`account`, `items`, `payments`, `totals`) | `debt.view` |
+| PATCH | `/api/debt/accounts/{id}` | `debt.edit` |
+| DELETE | `/api/debt/accounts/{id}` (يتطلب `{"confirm":true}`، ويُرفض `409 HAS_CHILDREN` إذا وُجد مستحقات/سدادات) | `debt.delete` |
+
+**POST body**
+```json
+{"code":"DB-0020","name_ar":"ح / عمالة منتصر","name_en":"Montaser labour","kind":"labor",
+ "billing_unit":"ton","opening_balance":0,"expense_account_id":45,"vendor_id":null,"notes":null}
+```
+`kind`: `contractor | labor | equipment | transport | fuel | workshop | supplies | other`.
+`billing_unit`: `ton | trip | container | hour | month | item`.
+
+### المستحقات (البيان)
+
+| الطريقة | المسار | الصلاحية |
+|---|---|---|
+| GET | `/api/debt/items?account_id=&from=&to=` | `debt.view` |
+| POST | `/api/debt/items` | `debt.create` |
+| PATCH | `/api/debt/items/{id}` | `debt.edit` |
+| DELETE | `/api/debt/items/{id}` (`confirm`) | `debt.delete` |
+
+```json
+{"account_id":8,"doc_date":"2026-04-15","description":"تفريغ ذرة","operation":"تفريغ",
+ "qty":31882.74,"unit":"ton","unit_rate":3,"vessel":"GREEN GENIE","client_name":"ميدسوفت",
+ "cargo":"ذرة","period_from":"2026-04-09","period_to":"2026-04-15","report_no":"18"}
+```
+* `amount` اختياري: إذا غاب يُحسب **الكمية × فئة الوحدة** ويُقرَّب نصفًا لأعلى.
+* التعديل على مستند مُرحَّل = إلغاء القيد القديم + إنشاء قيد جديد داخل معاملة واحدة
+  (`updated_at` و`journal_entry_id` جديدان).
+
+### السدادات (اذن صرف)
+
+| الطريقة | المسار | الصلاحية |
+|---|---|---|
+| GET | `/api/debt/payments?account_id=&from=&to=` | `debt.view` |
+| POST | `/api/debt/payments` | `debt.create` |
+| PATCH | `/api/debt/payments/{id}` | `debt.edit` |
+| DELETE | `/api/debt/payments/{id}` (`confirm`) | `debt.delete` |
+
+```json
+{"account_id":8,"pay_date":"2026-05-24","amount":50000,"method":"cash",
+ "voucher_no":"4412","payee":"أحمد تاج","gl_account_id":4}
+```
+`method`: `cash | bank | cheque | transfer` (تُقبل التسميات العربية).
+
+### الملخّص والتصدير
+
+| المسار | الوصف |
+|---|---|
+| `GET /api/debt/summary?from=&to=` | ملخّص «حساب المديونية»: مجموعات بالنوع + إجمالي كل مجموعة + الإجمالي العام |
+| `GET /api/debt/summary/xlsx` · `GET /api/debt/summary/pdf?lang=ar|en` | تصدير الملخّص |
+| `GET /api/debt/accounts/{id}/statement/xlsx` · `.../statement/pdf?lang=` | تصدير كشف الحساب (مستحقات + سدادات + الصافي) |
+| `GET /api/debt/meta` | الأنواع، الوحدات، طرق السداد، الصناديق/البنوك، حسابات المصروف، الموردون |
+
+**صافي المستحق** = رصيد افتتاحي + إجمالي المستحق − الدفعات المستلمة، ويُحسب دائمًا
+على الخادم (لا في المتصفح). كل الطلبات مقيّدة بـ `company_id`، وكل استدعاء تصدير
+يُسجَّل في سجل التدقيق.

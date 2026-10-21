@@ -728,3 +728,79 @@ CREATE TABLE IF NOT EXISTS einvoice_documents (
     created_at    TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE (invoice_kind, invoice_id)
 );
+
+
+-- ---------------------------------------------------------------------------
+-- Debt / مديونية — contractor & supplier accounts billed by quantity
+-- (طن، نقلة، حاوية، ساعة، إيجار شهري، بند). Mirrors the paper debt statement:
+-- a per-account statement built from مستحقات (debt_items) minus سدادات
+-- (debt_payments, each carrying an اذن صرف number).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS debt_accounts (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id            INTEGER NOT NULL REFERENCES companies(id),
+    code                  TEXT NOT NULL,
+    name_ar               TEXT NOT NULL,
+    name_en               TEXT NOT NULL DEFAULT '',
+    kind                  TEXT NOT NULL DEFAULT 'contractor'
+                          CHECK (kind IN ('contractor','labor','equipment','transport','fuel','workshop','supplies','other')),
+    billing_unit          TEXT NOT NULL DEFAULT 'item'
+                          CHECK (billing_unit IN ('ton','trip','container','hour','month','item')),
+    vendor_id             INTEGER REFERENCES vendors(id),
+    expense_account_id    INTEGER REFERENCES accounts(id),
+    opening_balance_cents INTEGER NOT NULL DEFAULT 0,
+    is_active             INTEGER NOT NULL DEFAULT 1,
+    notes                 TEXT,
+    created_by            INTEGER REFERENCES users(id),
+    created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (company_id, code)
+);
+
+CREATE TABLE IF NOT EXISTS debt_items (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id        INTEGER NOT NULL REFERENCES companies(id),
+    account_id        INTEGER NOT NULL REFERENCES debt_accounts(id),
+    item_no           TEXT NOT NULL,
+    doc_date          TEXT NOT NULL,
+    description       TEXT NOT NULL,
+    operation         TEXT,
+    qty_milli         INTEGER NOT NULL DEFAULT 0,
+    unit              TEXT NOT NULL DEFAULT 'item',
+    unit_rate_cents   INTEGER NOT NULL DEFAULT 0,
+    amount_cents      INTEGER NOT NULL,
+    vessel            TEXT,
+    client_name       TEXT,
+    cargo             TEXT,
+    period_from       TEXT,
+    period_to         TEXT,
+    report_no         TEXT,
+    status            TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','posted')),
+    journal_entry_id  INTEGER REFERENCES journal_entries(id),
+    notes             TEXT,
+    created_by        INTEGER REFERENCES users(id),
+    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at        TEXT
+);
+
+CREATE TABLE IF NOT EXISTS debt_payments (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id       INTEGER NOT NULL REFERENCES companies(id),
+    account_id       INTEGER NOT NULL REFERENCES debt_accounts(id),
+    payment_no       TEXT NOT NULL,
+    voucher_no       TEXT,
+    pay_date         TEXT NOT NULL,
+    amount_cents     INTEGER NOT NULL,
+    method           TEXT NOT NULL DEFAULT 'cash',
+    gl_account_id    INTEGER REFERENCES accounts(id),
+    payee            TEXT,
+    status           TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','posted')),
+    journal_entry_id INTEGER REFERENCES journal_entries(id),
+    notes            TEXT,
+    created_by       INTEGER REFERENCES users(id),
+    created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at       TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_debt_items_account ON debt_items(company_id, account_id, doc_date);
+CREATE INDEX IF NOT EXISTS idx_debt_pay_account ON debt_payments(company_id, account_id, pay_date);
+CREATE INDEX IF NOT EXISTS idx_debt_accounts_kind ON debt_accounts(company_id, kind);

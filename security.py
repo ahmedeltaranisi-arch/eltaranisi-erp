@@ -185,6 +185,11 @@ PERMISSIONS = {
     "purchases.edit": "تعديل فواتير الشراء / Edit purchase invoices",
     "payments.edit": "تعديل سندات التحصيل والدفع / Edit receipts & payments",
     "budgets.edit": "تعديل بنود الموازنة / Edit budget lines",
+    "debt.view": "عرض المديونية وكشوف المقاولين / View debt statements",
+    "debt.create": "إضافة مستحقات وسدادات / Add debt items & payments",
+    "debt.edit": "تعديل المستحقات والسدادات / Edit debt items & payments",
+    "debt.delete": "حذف المستحقات والسدادات / Delete debt items & payments",
+    "debt.post": "ترحيل المديونية على الحسابات / Post debt to the ledger",
 }
 
 # Editing is a strictly narrower right than creating/managing the same module:
@@ -204,12 +209,13 @@ EDIT_IMPLIED_BY = {
     "purchases.edit": "purchases.create",
     "payments.edit": "payments.create",
     "budgets.edit": "budgets.manage",
+    "debt.edit": "debt.create",
 }
 
 FINANCIAL_READ = [
     "dashboard.view", "accounts.view", "journal.view", "customers.view", "vendors.view",
     "sales.view", "purchases.view", "payments.view", "payables.view", "banks.view",
-    "inventory.view", "assets.view", "reports.view", "budgets.view",
+    "inventory.view", "assets.view", "reports.view", "budgets.view", "debt.view",
 ]
 
 ROLE_DEFINITIONS = [
@@ -236,6 +242,7 @@ ROLE_DEFINITIONS = [
             "reports.export", "payroll.view", "banks.manage", "ai.use", "audit.view",
             "customers.create", "vendors.create", "customers.delete", "vendors.delete",
             "sales.delete", "purchases.delete", "payments.delete", "journal.delete",
+            "debt.create", "debt.edit", "debt.delete", "debt.post",
         ],
     },
     {
@@ -248,6 +255,7 @@ ROLE_DEFINITIONS = [
             "purchases.post", "payments.create", "payments.post", "inventory.manage",
             "assets.manage", "reports.export", "ai.use",
             "sales.delete", "purchases.delete", "payments.delete", "journal.delete",
+            "debt.create", "debt.edit", "debt.delete", "debt.post",
         ],
     },
     {
@@ -256,7 +264,7 @@ ROLE_DEFINITIONS = [
         "data_scope": "company",
         "permissions": FINANCIAL_READ + [
             "journal.create", "sales.create", "purchases.create", "payments.create",
-            "inventory.view", "reports.export", "ai.use",
+            "inventory.view", "reports.export", "ai.use", "debt.create", "debt.edit",
         ],
     },
     {

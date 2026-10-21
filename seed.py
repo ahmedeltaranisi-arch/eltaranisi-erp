@@ -230,6 +230,7 @@ def seed():
                  r["data_scope"]))
 
         # ---------------- users ----------------
+        users = {}
         for username, name_ar, name_en, role, email in USERS:
             pwd = DEV_PASSWORDS[username] if FIXED_PASSWORDS else secrets.token_urlsafe(9)
             cur = conn.execute(
@@ -237,6 +238,7 @@ def seed():
                        password_hash, role_code, language, theme, password_must_change)
                    VALUES (?,?,?,?,?,?,?,?,'ar','light',0)""",
                 (company_id, br_main, username, name_ar, name_en, email, hash_password(pwd), role))
+            users[username] = cur.lastrowid
             conn.execute("INSERT INTO user_company_access (user_id, company_id) VALUES (?,?)",
                          (cur.lastrowid, company_id))
             creds.append((username, name_ar, role, pwd))
@@ -327,6 +329,40 @@ def seed():
                    VALUES (?,?,?,?,?,?,?)""",
                 (company_id, code, ar, en, phone, terms, code_to_id["2110"]))
             vendors[code] = cur.lastrowid
+
+        # ---------------- مديونية: contractor & supplier accounts ----------------
+        # The chart of accounts mirrors the owner's paper debt statement
+        # (بيان مديونية مقاولين متنوعة ميناء دمياط). Balances start at zero — the
+        # company asked for a clean slate — but the structure, units and types are
+        # the real ones: tonnage, trips, containers, monthly hire, and standing
+        # supplier accounts.
+        DEBT_ACCOUNTS = [
+            ("DB-0001", "ح / مقاولات الهندسية للتصميمات", "Engineering Designs Co.", "contractor", "item", None),
+            ("DB-0002", "ح / الهندسية للهيدروليك", "Engineering Hydraulics", "contractor", "item", None),
+            ("DB-0003", "ح / إبراهيم الحبشي — نقل بالطن", "Ibrahim El-Habashi (per ton)", "contractor", "ton", None),
+            ("DB-0004", "ح / رامي الحديدي", "Ramy El-Hadidy", "contractor", "item", None),
+            ("DB-0005", "ح / سي ترانس — نقل سيارات", "C Trans — vehicle transport", "transport", "trip", None),
+            ("DB-0006", "ح / مكتب القدس لأعمال النقل والحاويات", "Al-Quds Container Transport Office",
+             "transport", "container", None),
+            ("DB-0007", "ح / اللضام — أعمال شحن وتفريغ", "Al-Ladam stevedoring", "contractor", "ton", None),
+            ("DB-0008", "ح / عمالة منتصر السيد (بالطن)", "Montaser El-Sayed labour (per ton)", "labor", "ton", None),
+            ("DB-0009", "ح / عمالة محمود السيد (بالطن)", "Mahmoud El-Sayed labour (per ton)", "labor", "ton", None),
+            ("DB-0010", "ح / عمالة منازع شافعي (ليلي)", "Manazea Shafei labour (night)", "labor", "ton", None),
+            ("DB-0011", "ح / عمالة السيد منتصر (نهاري)", "El-Sayed Montaser labour (day)", "labor", "ton", None),
+            ("DB-0012", "ح / إيجار لودر محمد نجيب (إيجار شهري)", "Mohamed Naguib loader hire (monthly)",
+             "equipment", "month", None),
+            ("DB-0013", "ح / شراء سولار ومشتقات بترولية", "Diesel & petroleum purchases", "fuel", "item", "V-2001"),
+            ("DB-0014", "ح / مديونية مشتريات لورشة الصيانة", "Maintenance workshop purchases", "workshop", "item",
+             "V-2002"),
+            ("DB-0015", "ح / أحمد تاج — مشتريات ومصروفات", "Ahmed Tag — purchases & expenses", "supplies", "item", None),
+        ]
+        for code, ar, en, kind, unit, vendor_code in DEBT_ACCOUNTS:
+            conn.execute(
+                """INSERT INTO debt_accounts (company_id, code, name_ar, name_en, kind, billing_unit,
+                       vendor_id, expense_account_id, opening_balance_cents, is_active, created_by)
+                   VALUES (?,?,?,?,?,?,?,?,0,1,?)""",
+                (company_id, code, ar, en, kind, unit, vendors.get(vendor_code) if vendor_code else None,
+                 code_to_id["5100"], users.get("ahmed.taranisi")))
 
         # ---------------- banks ----------------
         conn.execute("""INSERT INTO bank_accounts (company_id, code, name_ar, name_en, account_type, gl_account_id, opening_balance_cents)

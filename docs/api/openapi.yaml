@@ -19,6 +19,7 @@ tags:
   - name: reports
   - name: deletions
   - name: system
+  - name: debt
 paths:
   /api/health:
     get:
@@ -189,6 +190,27 @@ paths:
         "404": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
         "428": { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [editing]
+      summary: Edit a draft sales invoice header (409 ALREADY_POSTED, 422 PERIOD_CLOSED)
+      description: >
+        Partial update. Only the fields present in the body change. Requires the
+        `sales.edit` permission (implied by the matching create/manage permission).
+        The before/after snapshot is written to the audit trail with the actor and
+        timestamp; documents can only be edited while they are still drafts.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SalesInvoicePatchInput" }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/EditResult" } } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        409: { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
   /api/purchase-invoices/{id}:
     delete:
       tags: [deletions]
@@ -205,6 +227,27 @@ paths:
         "403": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
         "428": { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [editing]
+      summary: Edit a draft purchase invoice header (409 ALREADY_POSTED)
+      description: >
+        Partial update. Only the fields present in the body change. Requires the
+        `purchases.edit` permission (implied by the matching create/manage permission).
+        The before/after snapshot is written to the audit trail with the actor and
+        timestamp; documents can only be edited while they are still drafts.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PurchaseInvoicePatchInput" }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/EditResult" } } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        409: { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
   /api/payments/{id}:
     delete:
       tags: [deletions]
@@ -220,6 +263,27 @@ paths:
         "200": { description: Deleted, content: { application/json: { schema: { $ref: "#/components/schemas/DeleteResult" } } } }
         "403": { $ref: "#/components/responses/Error" }
         "428": { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [editing]
+      summary: Edit a draft receipt/payment
+      description: >
+        Partial update. Only the fields present in the body change. Requires the
+        `payments.edit` permission (implied by the matching create/manage permission).
+        The before/after snapshot is written to the audit trail with the actor and
+        timestamp; documents can only be edited while they are still drafts.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PaymentPatchInput" }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/EditResult" } } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        409: { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
   /api/customers/{id}:
     delete:
       tags: [deletions]
@@ -235,6 +299,27 @@ paths:
         "200": { description: Deleted, content: { application/json: { schema: { $ref: "#/components/schemas/DeleteResult" } } } }
         "403": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [editing]
+      summary: Edit a customer (409 DUPLICATE on a clashing code)
+      description: >
+        Partial update. Only the fields present in the body change. Requires the
+        `customers.edit` permission (implied by the matching create/manage permission).
+        The before/after snapshot is written to the audit trail with the actor and
+        timestamp; documents can only be edited while they are still drafts.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CustomerInput" }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/EditResult" } } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        409: { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
   /api/vendors/{id}:
     get:
       tags: [masters]
@@ -266,6 +351,27 @@ paths:
         "200": { description: Deleted, content: { application/json: { schema: { $ref: "#/components/schemas/DeleteResult" } } } }
         "403": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [editing]
+      summary: Edit a vendor (409 DUPLICATE on a clashing code)
+      description: >
+        Partial update. Only the fields present in the body change. Requires the
+        `vendors.edit` permission (implied by the matching create/manage permission).
+        The before/after snapshot is written to the audit trail with the actor and
+        timestamp; documents can only be edited while they are still drafts.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/VendorInput" }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/EditResult" } } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        409: { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
   /api/journal-entries/{id}:
     delete:
       tags: [deletions]
@@ -281,6 +387,27 @@ paths:
         "200": { description: Deleted, content: { application/json: { schema: { $ref: "#/components/schemas/DeleteResult" } } } }
         "403": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [editing]
+      summary: Edit a manual draft journal entry (409 ALREADY_POSTED / SYSTEM_ENTRY)
+      description: >
+        Partial update. Only the fields present in the body change. Requires the
+        `journal.edit` permission (implied by the matching create/manage permission).
+        The before/after snapshot is written to the audit trail with the actor and
+        timestamp; documents can only be edited while they are still drafts.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/JournalPatchInput" }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/EditResult" } } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        409: { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
   /api/sales-invoices/{id}/pdf:
     get:
       summary: Tax invoice PDF — requires `sales.view`
@@ -379,51 +506,6 @@ paths:
     post:
       summary: Scoped financial assistant (read-only, permission-bound, no posting)
       responses: { "200": { description: OK }, "403": { $ref: "#/components/responses/Error" } }
-  # --------------------------------------------------------------- editing
-  /api/customers/{id}:
-    patch:
-      tags: [editing]
-      summary: Edit a customer (409 DUPLICATE on a clashing code)
-      description: >
-        Partial update. Only the fields present in the body change. Requires the
-        `customers.edit` permission (implied by the matching create/manage permission).
-        The before/after snapshot is written to the audit trail with the actor and
-        timestamp; documents can only be edited while they are still drafts.
-      parameters:
-        - { in: path, name: id, required: true, schema: { type: integer } }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/CustomerInput" }
-      responses:
-        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/EditResult" } } } }
-        "403": { $ref: "#/components/responses/Error" }
-        "404": { $ref: "#/components/responses/Error" }
-        409: { $ref: "#/components/responses/Error" }
-        "422": { $ref: "#/components/responses/Error" }
-  /api/vendors/{id}:
-    patch:
-      tags: [editing]
-      summary: Edit a vendor (409 DUPLICATE on a clashing code)
-      description: >
-        Partial update. Only the fields present in the body change. Requires the
-        `vendors.edit` permission (implied by the matching create/manage permission).
-        The before/after snapshot is written to the audit trail with the actor and
-        timestamp; documents can only be edited while they are still drafts.
-      parameters:
-        - { in: path, name: id, required: true, schema: { type: integer } }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/VendorInput" }
-      responses:
-        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/EditResult" } } } }
-        "403": { $ref: "#/components/responses/Error" }
-        "404": { $ref: "#/components/responses/Error" }
-        409: { $ref: "#/components/responses/Error" }
-        "422": { $ref: "#/components/responses/Error" }
   /api/products/{id}:
     patch:
       tags: [editing]
@@ -556,94 +638,6 @@ paths:
         "404": { $ref: "#/components/responses/Error" }
         409: { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/Error" }
-  /api/journal-entries/{id}:
-    patch:
-      tags: [editing]
-      summary: Edit a manual draft journal entry (409 ALREADY_POSTED / SYSTEM_ENTRY)
-      description: >
-        Partial update. Only the fields present in the body change. Requires the
-        `journal.edit` permission (implied by the matching create/manage permission).
-        The before/after snapshot is written to the audit trail with the actor and
-        timestamp; documents can only be edited while they are still drafts.
-      parameters:
-        - { in: path, name: id, required: true, schema: { type: integer } }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/JournalPatchInput" }
-      responses:
-        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/EditResult" } } } }
-        "403": { $ref: "#/components/responses/Error" }
-        "404": { $ref: "#/components/responses/Error" }
-        409: { $ref: "#/components/responses/Error" }
-        "422": { $ref: "#/components/responses/Error" }
-  /api/sales-invoices/{id}:
-    patch:
-      tags: [editing]
-      summary: Edit a draft sales invoice header (409 ALREADY_POSTED, 422 PERIOD_CLOSED)
-      description: >
-        Partial update. Only the fields present in the body change. Requires the
-        `sales.edit` permission (implied by the matching create/manage permission).
-        The before/after snapshot is written to the audit trail with the actor and
-        timestamp; documents can only be edited while they are still drafts.
-      parameters:
-        - { in: path, name: id, required: true, schema: { type: integer } }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/SalesInvoicePatchInput" }
-      responses:
-        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/EditResult" } } } }
-        "403": { $ref: "#/components/responses/Error" }
-        "404": { $ref: "#/components/responses/Error" }
-        409: { $ref: "#/components/responses/Error" }
-        "422": { $ref: "#/components/responses/Error" }
-  /api/purchase-invoices/{id}:
-    patch:
-      tags: [editing]
-      summary: Edit a draft purchase invoice header (409 ALREADY_POSTED)
-      description: >
-        Partial update. Only the fields present in the body change. Requires the
-        `purchases.edit` permission (implied by the matching create/manage permission).
-        The before/after snapshot is written to the audit trail with the actor and
-        timestamp; documents can only be edited while they are still drafts.
-      parameters:
-        - { in: path, name: id, required: true, schema: { type: integer } }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/PurchaseInvoicePatchInput" }
-      responses:
-        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/EditResult" } } } }
-        "403": { $ref: "#/components/responses/Error" }
-        "404": { $ref: "#/components/responses/Error" }
-        409: { $ref: "#/components/responses/Error" }
-        "422": { $ref: "#/components/responses/Error" }
-  /api/payments/{id}:
-    patch:
-      tags: [editing]
-      summary: Edit a draft receipt/payment
-      description: >
-        Partial update. Only the fields present in the body change. Requires the
-        `payments.edit` permission (implied by the matching create/manage permission).
-        The before/after snapshot is written to the audit trail with the actor and
-        timestamp; documents can only be edited while they are still drafts.
-      parameters:
-        - { in: path, name: id, required: true, schema: { type: integer } }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/PaymentPatchInput" }
-      responses:
-        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/EditResult" } } } }
-        "403": { $ref: "#/components/responses/Error" }
-        "404": { $ref: "#/components/responses/Error" }
-        409: { $ref: "#/components/responses/Error" }
-        "422": { $ref: "#/components/responses/Error" }
   /api/bank-accounts:
     post:
       tags: [editing]
@@ -669,6 +663,191 @@ paths:
         "200": { description: Unreconciled }
         "403": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
+  /api/debt/meta:
+    get:
+      tags: [debt]
+      summary: Kinds, billing units, payment methods, cash/bank and expense accounts, vendors
+      responses:
+        "200": { description: Reference data }
+        "403": { $ref: "#/components/responses/Error" }
+  /api/debt/accounts:
+    get:
+      tags: [debt]
+      summary: List debt accounts with due / paid / net balances (computed server-side)
+      responses:
+        "200": { description: Accounts }
+        "403": { $ref: "#/components/responses/Error" }
+    post:
+      tags: [debt]
+      summary: Create a debt account (contractor, labour, equipment, transport, fuel, workshop)
+      description: Requires `debt.create`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DebtAccountInput" }
+      responses:
+        "200": { description: Created, content: { application/json: { schema: { type: object, properties: { id: { type: integer } } } } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /api/debt/accounts/{id}:
+    get:
+      tags: [debt]
+      summary: Full statement — account, due lines, settlements and totals
+      description: 'totals.net_cents = opening_balance + due − paid.'
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+        - { in: query, name: from, schema: { type: string, format: date } }
+        - { in: query, name: to, schema: { type: string, format: date } }
+      responses:
+        "200": { description: Statement }
+        "404": { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [debt]
+      summary: Edit a debt account (name, type, billing unit, opening balance, expense account)
+      description: Requires `debt.edit`.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/EditResult" } } } }
+        "409": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [debt]
+      summary: Delete a debt account
+      description: 'Requires `debt.delete` and a body of {"confirm": true}; answers 409 HAS_CHILDREN while dues or settlements exist.'
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ConfirmBody" }
+      responses:
+        "200": { description: Deleted, content: { application/json: { schema: { $ref: "#/components/schemas/DeleteResult" } } } }
+        "409": { $ref: "#/components/responses/Error" }
+        "428": { $ref: "#/components/responses/Error" }
+  /api/debt/accounts/{id}/statement/pdf:
+    get:
+      tags: [debt]
+      summary: Statement PDF (Arabic or English)
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+        - { in: query, name: lang, schema: { type: string, enum: [ar, en] } }
+      responses:
+        "200": { description: PDF }
+  /api/debt/accounts/{id}/statement/xlsx:
+    get:
+      tags: [debt]
+      summary: Statement Excel (RTL)
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      responses:
+        "200": { description: XLSX }
+  /api/debt/items:
+    get:
+      tags: [debt]
+      summary: List due lines (البيان) filtered by account and period
+      parameters:
+        - { in: query, name: account_id, schema: { type: integer } }
+        - { in: query, name: from, schema: { type: string, format: date } }
+        - { in: query, name: to, schema: { type: string, format: date } }
+      responses:
+        "200": { description: Due lines }
+    post:
+      tags: [debt]
+      summary: Add a due line — quantity × unit rate, or an explicit amount
+      description: Requires `debt.create`. Posts Dr expense (default 5100) / Cr trade payables (2110).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DebtItemInput" }
+      responses:
+        "200": { description: Created }
+        "422": { $ref: "#/components/responses/Error" }
+  /api/debt/items/{id}:
+    patch:
+      tags: [debt]
+      summary: Edit a due line (a posted line is unposted and re-posted in one transaction)
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      responses:
+        "200": { description: Updated }
+    delete:
+      tags: [debt]
+      summary: Delete a due line together with its journal entry
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ConfirmBody" }
+      responses:
+        "200": { description: Deleted }
+        "428": { $ref: "#/components/responses/Error" }
+  /api/debt/payments:
+    get:
+      tags: [debt]
+      summary: List settlement vouchers (اذن صرف)
+      parameters:
+        - { in: query, name: account_id, schema: { type: integer } }
+      responses:
+        "200": { description: Settlements }
+    post:
+      tags: [debt]
+      summary: Add a settlement — posts Dr trade payables / Cr cash or bank
+      description: Requires `debt.create`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DebtPaymentInput" }
+      responses:
+        "200": { description: Created }
+        "422": { $ref: "#/components/responses/Error" }
+  /api/debt/payments/{id}:
+    patch:
+      tags: [debt]
+      summary: Edit a settlement (re-posts the voucher)
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      responses:
+        "200": { description: Updated }
+    delete:
+      tags: [debt]
+      summary: Delete a settlement together with its journal entry
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ConfirmBody" }
+      responses:
+        "200": { description: Deleted }
+        "428": { $ref: "#/components/responses/Error" }
+  /api/debt/summary:
+    get:
+      tags: [debt]
+      summary: Consolidated حساب المديونية — accounts grouped by type with subtotals
+      parameters:
+        - { in: query, name: from, schema: { type: string, format: date } }
+        - { in: query, name: to, schema: { type: string, format: date } }
+      responses:
+        "200": { description: Summary }
+  /api/debt/summary/pdf:
+    get:
+      tags: [debt]
+      summary: Debt summary PDF
+      responses:
+        "200": { description: PDF }
+  /api/debt/summary/xlsx:
+    get:
+      tags: [debt]
+      summary: Debt summary Excel
+      responses:
+        "200": { description: XLSX }
 
 components:
   schemas:
@@ -684,19 +863,51 @@ components:
         deleted: { type: string, example: sales_invoice }
         id: { type: integer, example: 51 }
         number: { type: string, example: SI-2026-00051 }
-  securitySchemes:
-    bearerAuth: { type: http, scheme: bearer }
-  responses:
-    Error:
-      description: Uniform error envelope
-      content:
-        application/json:
-          schema:
-            type: object
-            properties:
-              error: { type: string, example: "UNBALANCED: القيد غير متوازن / Entry is not balanced" }
-              details: { type: object }
-  schemas:
+    DebtAccountInput:
+      type: object
+      required: [name_ar]
+      properties:
+        code: { type: string, example: DB-0016 }
+        name_ar: { type: string, example: "ح / عمالة منتصر السيد (بالطن)" }
+        name_en: { type: string, example: "Montaser labour (per ton)" }
+        kind: { type: string, enum: [contractor, labor, equipment, transport, fuel, workshop, supplies, other] }
+        billing_unit: { type: string, enum: [ton, trip, container, hour, month, item] }
+        opening_balance: { type: number, example: 0 }
+        expense_account_id: { type: integer, example: 45 }
+        vendor_id: { type: integer, nullable: true }
+        notes: { type: string }
+    DebtItemInput:
+      type: object
+      required: [account_id, description]
+      properties:
+        account_id: { type: integer, example: 8 }
+        doc_date: { type: string, format: date }
+        description: { type: string, example: "تفريغ ذرة" }
+        operation: { type: string, example: "تفريغ" }
+        qty: { type: number, example: 31882.74 }
+        unit: { type: string, enum: [ton, trip, container, hour, month, item] }
+        unit_rate: { type: number, example: 3 }
+        amount: { type: number, description: Optional - computed as qty x unit_rate when omitted }
+        vessel: { type: string, example: "GREEN GENIE" }
+        client_name: { type: string, example: "ميدسوفت" }
+        cargo: { type: string, example: "ذرة" }
+        period_from: { type: string, format: date }
+        period_to: { type: string, format: date }
+        report_no: { type: string, example: "18" }
+        post: { type: boolean, default: true }
+    DebtPaymentInput:
+      type: object
+      required: [account_id, amount]
+      properties:
+        account_id: { type: integer }
+        pay_date: { type: string, format: date }
+        amount: { type: number, example: 50000 }
+        method: { type: string, enum: [cash, bank, cheque, transfer] }
+        gl_account_id: { type: integer }
+        voucher_no: { type: string, example: "4412" }
+        payee: { type: string, example: "أحمد تاج" }
+        notes: { type: string }
+        post: { type: boolean, default: true }
     User:
       type: object
       properties:
@@ -920,3 +1131,16 @@ components:
               method: { type: string }
               reference: { type: string }
               status: { type: string, enum: [draft, posted] }
+
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+  responses:
+    Error:
+      description: Uniform error envelope
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string, example: "UNBALANCED: القيد غير متوازن / Entry is not balanced" }
+              details: { type: object }

@@ -24,6 +24,8 @@ DOC_PREFIX = {
     "payroll": "PAY",
     "transfer": "TRF",
     "asset": "FA",
+    "debt_item": "DEB",
+    "debt_payment": "DPV",
 }
 
 # Amount threshold (in piastres) above which Financial Manager approval is mandatory

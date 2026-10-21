@@ -135,3 +135,22 @@ opens the same panel.
 Manual: the vendor balance renders as a formatted amount inside the edit form
 (not as escaped HTML), the voucher form offers نقدًا/تحويل بنكي/شيك, and every
 payment row in the vendor panel and the payments page carries edit + delete.
+
+### Round j — «فاتورة الشراء تُحفظ» + «المديونية» coverage
+
+| Test | What it proves |
+|---|---|
+| `test_B110_purchase_invoice_saves_with_a_free_text_service_line` | the reported defect: a purchase invoice with a free-text service line (no catalogue item) **saves and posts**, gets a `PI-` number, debits cost of service (5100) — **not** inventory — and credits payables by the same amount |
+| `test_B111_purchase_invoice_accepts_a_service_product_line` | catalogue service items (`is_service=1`) post to 5100 with VAT 14% and require no warehouse |
+| `test_B120_debt_account_creation_and_seeded_chart` | the seeded chart mirrors the paper statement (tonnage contractor `DB-0003`, container office `DB-0006`) and every account starts at zero |
+| `test_B121_debt_item_computes_quantity_by_unit_rate_and_posts` | 31,882.74 ton × 3 = 9,564,822 piastres, `DEB-` numbering, Dr 5100 / Cr 2110 balanced entry |
+| `test_B122_debt_payment_voucher_and_statement_totals` | settlement with اذن صرف posts Dr 2110 / Cr 1111; statement totals = due, paid, net; the consolidated summary’s grand total equals the sum of its accounts |
+| `test_B123_debt_item_edit_reposts_and_keeps_the_ledger_balanced` | editing a posted due line creates a fresh entry, drops the superseded one, and the trial balance stays balanced |
+| `test_B124_debt_deletes_require_confirmation_and_reverse_the_ledger` | `428` without `confirm`, `409 HAS_CHILDREN` while children exist, deleting a payment/due line restores the AP balance exactly, and all six audit actions are written |
+| `test_B125_debt_summary_and_statement_exports` | summary XLSX is a real `PK…` package and the statement PDF starts with `%PDF` |
+| `test_B126_debt_permissions_are_enforced_server_side` | sales role → 403; auditor may read but not post |
+
+Manual / headless checks: the debt page renders 7 type groups with edit + delete
+side by side on every row; the statement page shows the invoice-style table
+(`البيان | الوحدة | الكمية | فئة الوحدة | الإجمالي المستحق`), the payments table
+with اذن صرف, and the three totals (المستحق / المدفوع / الصافي).

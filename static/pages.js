@@ -853,9 +853,29 @@
     async newInvoice() {
       const [vend, prods, meta] = await Promise.all([api("/api/vendors"), api("/api/products"), api("/api/meta")]);
       const vendors = vend.vendors.filter(v => v.is_active);
-      const products = prods.products.filter(p => p.is_active && !p.is_service);
+      // every active item (goods *and* services) plus a free-text line, because a
+      // shipping company buys services — نولون، تفريغ، صيانة، إيجار لودر — that are
+      // not in the item master at all. Previously only stocked goods were offered,
+      // so with a service-only catalogue the form had no selectable line.
+      const products = prods.products.filter(p => p.is_active);
+      if (!vendors.length) {
+        openModal({
+          title: t("purchases.new"), narrow: true,
+          body: `<p class="muted small" style="margin:0">${ESC(L(
+            "لا يوجد موردون مسجّلون بعد. أضف موردًا أولًا من شاشة الموردين ثم أعد المحاولة.",
+            "No vendors exist yet. Add a vendor from the vendors screen first."))}</p>`,
+          footer: `<button class="btn" data-close>${ESC(t("common.cancel"))}</button>
+                   <a class="btn btn-primary" href="#/vendors">${ESC(L("شاشة الموردين", "Vendors"))}</a>`,
+        });
+        return;
+      }
+      const FREE = "__free__";   // pseudo-product: free-text service line
+      const optionsHtml = products.map(p =>
+        `<option value="${p.id}" data-price="${p.purchase_price_cents}" data-tax="${p.tax_rate_bp}">${ESC(p.sku)} — ${ESC(p.name_ar)}</option>`).join("")
+        + `<option value="${FREE}" data-price="0" data-tax="0">${ESC(L("＋ بند حر (خدمة / لا يوجد صنف)", "＋ Free line (service / no item)"))}</option>`;
       const rowHtml = () => `<tr>
-          <td><select class="input li-prod">${products.map(p => `<option value="${p.id}" data-price="${p.purchase_price_cents}" data-tax="${p.tax_rate_bp}">${ESC(p.sku)} — ${ESC(p.name_ar)}</option>`).join("")}</select></td>
+          <td><select class="input li-prod">${optionsHtml}</select>
+              <input class="input li-desc hidden" placeholder="${ESC(L("وصف البند", "Line description"))}" style="margin-top:6px"/></td>
           <td><input class="input li-qty" type="number" step="0.001" min="0" value="1"/></td>
           <td><input class="input li-price" type="number" step="0.01" min="0"/></td>
           <td><input class="input li-tax" type="number" step="0.01" min="0" value="14"/></td>
@@ -868,8 +888,9 @@
             <div class="field"><span>${ESC(t("common.vendor"))} *</span>
               <select id="pi-vend">${vendors.map(v => `<option value="${v.id}">${ESC(v.code)} — ${ESC(APP.lang === "ar" ? v.name_ar : v.name_en)}</option>`).join("")}</select></div>
             <div class="field"><span>${ESC(t("purchases.supplierRef"))}</span><input id="pi-ref" placeholder="INV-…"/></div>
-            <div class="field"><span>${ESC(t("common.warehouse"))}</span>
-              <select id="pi-wh">${meta.warehouses.map(w => `<option value="${w.id}">${ESC(w.name_ar)}</option>`).join("")}</select></div>
+            <div class="field" id="pi-wh-field"><span>${ESC(t("common.warehouse"))}</span>
+              <select id="pi-wh"><option value="">${ESC(L("بدون مخزن (خدمات)", "No warehouse (services)"))}</option>
+                ${meta.warehouses.map(w => `<option value="${w.id}">${ESC(w.name_ar)}</option>`).join("")}</select></div>
             <div class="field"><span>${ESC(t("sales.invoiceDate"))}</span><input type="date" id="pi-date" value="${today()}"/></div>
             <div class="field"><span>${ESC(t("common.dueDate"))}</span><input type="date" id="pi-due" value="${today()}"/></div>
             <div class="field"><span>${ESC(t("purchases.po"))}</span><input id="pi-po"/></div>
@@ -877,12 +898,12 @@
           </div>
           <div class="table-wrap" style="border:1px solid var(--border);border-radius:12px">
             <table class="data compact" id="pi-lines">
-              <thead><tr><th>${ESC(L("الصنف", "Product"))}</th><th>${ESC(t("common.qty"))}</th><th>${ESC(t("common.price"))}</th>
+              <thead><tr><th>${ESC(L("الصنف / البند", "Item / line"))}</th><th>${ESC(t("common.qty"))}</th><th>${ESC(t("common.price"))}</th>
                 <th>${ESC(t("common.tax"))} %</th><th class="num">${ESC(t("common.total"))}</th><th></th></tr></thead>
               <tbody>${rowHtml()}</tbody></table>
           </div>
           <div style="display:flex;gap:18px;align-items:center;margin-top:12px;flex-wrap:wrap">
-            <button class="btn btn-sm" id="pi-add">${icon("plus")} ${ESC(t("common.add"))}</button>
+            <button class="btn btn-sm" id="pi-add">${icon("plus")} ${ESC(L("إضافة بند حر", "Add a line"))}</button>
             <span class="muted small">${ESC(t("common.total"))}: <strong id="pi-total">0.00</strong></span>
             <div style="flex:1"></div>
             <label class="checkbox"><input type="checkbox" id="pi-post" checked/> ${ESC(L("ترحيل الفاتورة فورًا", "Post invoice immediately"))}</label>
@@ -902,27 +923,71 @@
             });
             $("#pi-total", root).textContent = total.toFixed(2);
           };
-          const wire = () => {
-            $$(".li-prod", root).forEach(sel => sel.onchange = () => {
-              const tr = sel.closest("tr");
+          const syncRow = (sel) => {
+            const tr = sel.closest("tr");
+            const free = sel.value === FREE;
+            const desc = $(".li-desc", tr);
+            desc.classList.toggle("hidden", !free);
+            if (!free) {
               $(".li-price", tr).value = (Number(sel.selectedOptions[0].dataset.price) / 100).toFixed(2);
               $(".li-tax", tr).value = (Number(sel.selectedOptions[0].dataset.tax) / 100).toFixed(2);
-              recalc();
-            });
+            }
+            recalc();
+          };
+          const wire = () => {
+            $$(".li-prod", root).forEach(sel => { sel.onchange = () => syncRow(sel); });
             $$("input", root).forEach(i => i.oninput = recalc);
-            $$(".rm", root).forEach(b => b.onclick = () => { if ($$("#pi-lines tbody tr", root).length > 1) { b.closest("tr").remove(); recalc(); } });
-            $$(".li-prod", root).forEach(s => s.dispatchEvent(new Event("change")));
+            $$(".rm", root).forEach(b => b.onclick = () => {
+              if ($$("#pi-lines tbody tr", root).length > 1) { b.closest("tr").remove(); recalc(); }
+            });
+            $$(".li-prod", root).forEach(sel => {
+              const free = sel.value === FREE;
+              $(".li-desc", sel.closest("tr")).classList.toggle("hidden", !free);
+            });
           };
           wire();
-          $("#pi-add", root).onclick = () => { $("#pi-lines tbody", root).insertAdjacentHTML("beforeend", rowHtml()); wire(); };
+          $("#pi-add", root).onclick = () => {
+            $("#pi-lines tbody", root).insertAdjacentHTML("beforeend", rowHtml());
+            wire();
+            const rows = $$("#pi-lines tbody tr", root);
+            const last = rows[rows.length - 1];
+            const sel = $(".li-prod", last);
+            sel.value = FREE;                    // new lines start as a free service line
+            syncRow(sel);
+            $(".li-desc", last).focus();
+          };
           $("#pi-save", root).onclick = async () => {
             try {
-              const lines = $$("#pi-lines tbody tr", root).map(tr => ({
-                product_id: Number($(".li-prod", tr).value),
-                qty: Number($(".li-qty", tr).value || 0),
-                unit_price: Number($(".li-price", tr).value || 0),
-                tax_rate_bp: Math.round(Number($(".li-tax", tr).value || 0) * 100),
-              }));
+              const rows = $$("#pi-lines tbody tr", root);
+              const lines = [];
+              let needsWarehouse = false;
+              for (const tr of rows) {
+                const sel = $(".li-prod", tr);
+                const free = sel.value === FREE;
+                const qty = Number($(".li-qty", tr).value || 0);
+                const price = Number($(".li-price", tr).value || 0);
+                const desc = ($(".li-desc", tr).value || "").trim();
+                if (!qty && !price && !desc) continue;           // untouched row
+                if (free) {
+                  if (!desc) { showErr(root, L("اكتب وصف البند الحر", "Describe the free line")); return; }
+                  if (!price) { showErr(root, L("أدخل مبلغ البند الحر", "Enter the free line amount")); return; }
+                } else {
+                  const prod = products.find(p => String(p.id) === String(sel.value));
+                  if (prod && !prod.is_service) needsWarehouse = true;
+                }
+                lines.push({
+                  product_id: free ? null : Number(sel.value),
+                  description: free ? desc : ($(".li-desc", tr).value || "").trim() || undefined,
+                  qty, unit_price: price,
+                  tax_rate_bp: Math.round(Number($(".li-tax", tr).value || 0) * 100),
+                });
+              }
+              if (!lines.length) { showErr(root, L("أضف بندًا واحدًا على الأقل", "Add at least one line")); return; }
+              const warehouseId = Number($("#pi-wh", root).value || 0);
+              if (needsWarehouse && !warehouseId) {
+                showErr(root, L("اختر المخزن للبنود المخزنية", "Choose a warehouse for stocked items"));
+                return;
+              }
               const res = await api("/api/purchase-invoices", {
                 method: "POST", body: {
                   vendor_id: Number($("#pi-vend", root).value),
@@ -931,7 +996,7 @@
                   due_date: $("#pi-due", root).value,
                   po_number: $("#pi-po", root).value,
                   grn_number: $("#pi-grn", root).value,
-                  warehouse_id: Number($("#pi-wh", root).value),
+                  warehouse_id: warehouseId || null,
                   lines, post: $("#pi-post", root).checked,
                 }
               });
@@ -1197,6 +1262,393 @@
   /* ==================================================================
      VENDOR PAYABLES
      ================================================================== */
+  /* ==================================================================
+     DEBT / مديونية — contractor & supplier statements
+     Mirrors the paper debt statement: per-account dues billed by
+     quantity (طن / نقلة / حاوية / ساعة / إيجار شهري) minus settlement
+     vouchers (اذن صرف), plus the consolidated «حساب المديونية» page.
+     ================================================================== */
+  const DEBT_UNIT_LABEL = (code) => {
+    const ar = { ton: "طن", trip: "نقلة", container: "حاوية", hour: "ساعة", month: "شهر", item: "بند" };
+    const en = { ton: "Ton", trip: "Trip", container: "Container", hour: "Hour", month: "Month", item: "Item" };
+    return APP.lang === "ar" ? (ar[code] || code) : (en[code] || code);
+  };
+  // Latin digits everywhere, like every other number in the app
+  const qtyText = (milli) => (milli ? (milli / 1000).toLocaleString("en-US",
+    { maximumFractionDigits: 3 }) : "—");
+
+  async function debtMeta() {
+    if (!window.__debtMeta) window.__debtMeta = await api("/api/debt/meta");
+    return window.__debtMeta;
+  }
+
+  PAGES.debt = {
+    perm: "debt.view",
+    async render(view, params) {
+      if (params && params[0]) return debtStatementPage(view, params[0]);
+      setTitle("nav.debt");
+      const [meta, data] = await Promise.all([debtMeta(), api("/api/debt/summary")]);
+      const T = data.totals;
+      const ar = APP.lang === "ar";
+      const groupHtml = data.groups.map(g => `
+        <div class="section-title"><span>${ESC(ar ? g.label_ar : g.label_en)}</span><span class="line"></span>
+          <span class="muted small">${ESC(ar ? "مستحق" : "Due")}: ${fmtMoney(g.due_cents)} ·
+            ${ESC(ar ? "مدفوع" : "Paid")}: ${fmtMoney(g.paid_cents)} ·
+            <strong>${ESC(ar ? "الصافي" : "Net")}: ${fmtMoney(g.net_cents)}</strong></span></div>
+        ${card("", renderTable([
+          { key: "code", label: t("common.code"), render: r => `<span class="mono">${ESC(r.code)}</span>` },
+          { key: "name_ar", label: t("debt.account"), cls: "wrap",
+            render: r => `<a href="#/debt/${r.id}"><strong>${ESC(ar ? r.name_ar : (r.name_en || r.name_ar))}</strong></a>` },
+          { key: "billing_unit", label: t("debt.unit"), render: r => `<span class="badge gray">${ESC(DEBT_UNIT_LABEL(r.billing_unit))}</span>` },
+          { key: "items_count", label: t("debt.items"), cls: "num", render: r => `${r.items_count || 0}` },
+          { key: "due_cents", label: t("debt.due"), cls: "num", render: r => fmtMoney(r.due_cents) },
+          { key: "paid_cents", label: t("debt.paid"), cls: "num", render: r => fmtMoney(r.paid_cents) },
+          { key: "net_cents", label: t("debt.net"), cls: "num",
+            render: r => `<strong class="${r.net_cents < 0 ? "neg" : ""}">${fmtMoney(r.net_cents)}</strong>` },
+          { key: "act", cls: "act", label: t("common.actions"), render: r => `
+              ${can("debt.edit") ? debtAccountEditBtn(r, meta) : ""}
+              ${can("debt.delete") ? deleteButton(`/api/debt/accounts/${r.id}`,
+                `حساب المديونية ${r.name_ar}`, `debt account ${(r.name_en || r.name_ar)}`) : ""}` },
+        ], g.accounts, { compact: true, footer: `<tr class="foot-total">
+            <td colspan="4">${ESC((ar ? "إجمالي " : "Total ") + (ar ? g.label_ar : g.label_en))}</td>
+            <td class="num">${fmtMoney(g.due_cents)}</td><td class="num">${fmtMoney(g.paid_cents)}</td>
+            <td class="num">${fmtMoney(g.net_cents)}</td><td></td></tr>` }))}
+      `).join("");
+
+      view.innerHTML = `${pageHead("debt.title", "debt.subtitle",
+        `<div class="doc-toolbar">
+           ${can("debt.create") ? `<button class="btn btn-primary btn-sm" id="debt-new">${icon("plus")} ${ESC(t("debt.newAccount"))}</button>` : ""}
+           <button class="btn btn-sm" data-export="/api/debt/summary/xlsx" data-name="debt-summary.xlsx">${icon("chart")} Excel</button>
+           <button class="btn btn-sm" data-preview="/api/debt/summary/pdf?lang=${APP.lang}">${icon("printer")} PDF</button>
+         </div>`)}
+        <div class="grid cols-4">
+          ${kpi({ label: t("debt.accountsCount"), value: T.accounts, icon: icon("accounts"), raw: true })}
+          ${kpi({ label: t("debt.due"), value: T.due_cents, icon: icon("payables"), tone: "warn" })}
+          ${kpi({ label: t("debt.paid"), value: T.paid_cents, icon: icon("check"), tone: "ok" })}
+          ${kpi({ label: t("debt.net"), value: T.net_cents, icon: icon("reports"), tone: T.net_cents > 0 ? "danger" : "" })}
+        </div>
+        ${data.groups.length ? groupHtml : `<div class="card"><div class="empty"><span class="big">${icon("debt", "ico-lg")}</span>
+            ${ESC(t("common.empty"))}</div></div>`}
+        ${card(t("debt.grandTotal"), `
+          <div class="stat-line"><span>${ESC(t("debt.due"))}</span><strong>${fmtMoney(T.due_cents)}</strong></div>
+          <div class="stat-line"><span>${ESC(t("debt.paid"))}</span><strong>${fmtMoney(T.paid_cents)}</strong></div>
+          <div class="stat-line"><span>${ESC(t("debt.net"))}</span><strong>${fmtMoney(T.net_cents)}</strong></div>
+          <p class="field-hint" style="margin-top:8px">${ESC(L(
+            "كل سطر مستحق يُرحَّل تلقائيًا: مدين تكلفة الخدمة / دائن الموردون. وكل سداد: مدين الموردون / دائن الصندوق أو البنك.",
+            "Every due line posts automatically: Dr cost of service / Cr trade payables. Every settlement: Dr payables / Cr cash or bank."))}</p>`)}
+      `;
+      if (can("debt.create")) $("#debt-new").onclick = () => debtAccountForm(null, meta);
+    },
+  };
+
+  function debtAccountEditBtn(r, meta) {
+    return editButton(`/api/debt/accounts/${r.id}`, `حساب المديونية ${r.name_ar}`,
+      `debt account ${r.name_en || r.name_ar}`, [
+        { name: "name_ar", label: L("الاسم بالعربية", "Arabic name"), value: r.name_ar, required: true },
+        { name: "name_en", label: L("الاسم بالإنجليزية", "English name"), value: r.name_en || "" },
+        { name: "kind", label: t("debt.kind"), type: "select", value: r.kind,
+          options: meta.kinds.map(k => ({ value: k.code, label: APP.lang === "ar" ? k.label_ar : k.label_en })) },
+        { name: "billing_unit", label: t("debt.unit"), type: "select", value: r.billing_unit,
+          options: meta.units.map(u => ({ value: u.code, label: APP.lang === "ar" ? `${u.label_ar}` : u.label_en })) },
+        { name: "opening_balance", label: t("debt.opening"), type: "number", step: "0.01",
+          value: (r.opening_balance_cents / 100).toFixed(2), hint: t("debt.openingHint") },
+        { name: "expense_account_id", label: L("حساب المصروف", "Expense account"), type: "select",
+          value: r.expense_account_id || "",
+          options: meta.expense_accounts.map(a => ({ value: a.id, label: `${a.code} — ${APP.lang === "ar" ? a.name_ar : a.name_en}` })) },
+        { name: "notes", label: L("ملاحظات", "Notes"), value: r.notes || "" },
+      ]);
+  }
+
+  function debtAccountEditForm(a, meta) {
+    openForm({
+      title: `${L("تعديل", "Edit")} — ${a.name_ar}`,
+      wide: true,
+      fields: [
+        { name: "name_ar", label: L("الاسم بالعربية", "Arabic name"), value: a.name_ar, required: true },
+        { name: "name_en", label: L("الاسم بالإنجليزية", "English name"), value: a.name_en || "" },
+        { name: "kind", label: t("debt.kind"), type: "select", value: a.kind,
+          options: meta.kinds.map(k => ({ value: k.code, label: APP.lang === "ar" ? k.label_ar : k.label_en })) },
+        { name: "billing_unit", label: t("debt.unit"), type: "select", value: a.billing_unit,
+          options: meta.units.map(u => ({ value: u.code, label: APP.lang === "ar" ? u.label_ar : u.label_en })) },
+        { name: "opening_balance", label: t("debt.opening"), type: "number", step: "0.01",
+          value: (a.opening_balance_cents / 100).toFixed(2), hint: t("debt.openingHint") },
+        { name: "expense_account_id", label: L("حساب المصروف", "Expense account"), type: "select",
+          value: a.expense_account_id || "",
+          options: meta.expense_accounts.map(x => ({ value: x.id, label: `${x.code} — ${APP.lang === "ar" ? x.name_ar : x.name_en}` })) },
+        { name: "is_active", label: L("الحساب نشط", "Account active"), type: "checkbox", value: !!a.is_active },
+        { name: "notes", label: L("ملاحظات", "Notes"), value: a.notes || "", span: 2 },
+      ],
+      onSubmit: async (data) => {
+        const ok = await confirmAsync(
+          L(`هل أنت متأكد من تعديل حساب المديونية ${a.name_ar}؟`, `Update the debt account “${a.name_ar}”?`),
+          { danger: false, title: L("تأكيد التعديل", "Confirm") });
+        if (!ok) throw new Error(L("تم الإلغاء", "Cancelled"));
+        data.opening_balance = Number(data.opening_balance || 0);
+        data.expense_account_id = data.expense_account_id ? Number(data.expense_account_id) : null;
+        data.is_active = data.is_active ? 1 : 0;
+        await api(`/api/debt/accounts/${a.id}`, { method: "PATCH", body: data });
+        window.__debtMeta = null;
+        toast(t("common.saved"));
+        setTimeout(() => render(), 30);
+      },
+    });
+  }
+
+  function debtAccountForm(account, meta) {
+    openForm({
+      title: account ? L("تعديل حساب المديونية", "Edit debt account") : t("debt.newAccount"),
+      wide: true,
+      fields: [
+        { name: "code", label: t("common.code"), value: account ? account.code : "",
+          hint: L("اتركه فارغًا للتوليد التلقائي", "Leave empty to auto-number") },
+        { name: "name_ar", label: L("الاسم بالعربية", "Arabic name"), required: true, value: account ? account.name_ar : "" },
+        { name: "name_en", label: L("الاسم بالإنجليزية", "English name"), value: account ? (account.name_en || "") : "" },
+        { name: "kind", label: t("debt.kind"), type: "select", value: account ? account.kind : "contractor",
+          options: meta.kinds.map(k => ({ value: k.code, label: APP.lang === "ar" ? k.label_ar : k.label_en })) },
+        { name: "billing_unit", label: t("debt.unit"), type: "select", value: account ? account.billing_unit : "item",
+          options: meta.units.map(u => ({ value: u.code, label: APP.lang === "ar" ? u.label_ar : u.label_en })) },
+        { name: "opening_balance", label: t("debt.opening"), type: "number", step: "0.01", value: "0.00",
+          hint: t("debt.openingHint") },
+        { name: "expense_account_id", label: L("حساب المصروف", "Expense account"), type: "select",
+          value: meta.expense_accounts.find(a => a.code === "5100")?.id ?? "",
+          options: meta.expense_accounts.map(a => ({ value: a.id, label: `${a.code} — ${APP.lang === "ar" ? a.name_ar : a.name_en}` })) },
+        { name: "vendor_id", label: L("ربط بمورد (اختياري)", "Link a vendor (optional)"), type: "select", value: "",
+          options: [{ value: "", label: L("بدون ربط", "Not linked") }, ...meta.vendors.map(v => ({ value: v.id, label: `${v.code} — ${v.name_ar}` }))],
+          hint: L("الربط يجعل الرصيد يظهر في حساب المورد أيضًا", "Linking also shows this balance on the vendor account") },
+        { name: "notes", label: L("ملاحظات", "Notes"), value: "" },
+      ],
+      onSubmit: async (data) => {
+        const ok = await confirmAsync(L(`هل أنت متأكد من إضافة حساب المديونية ${data.name_ar}؟`,
+          `Add the debt account "${data.name_ar}"?`), { danger: false, title: L("تأكيد الإضافة", "Confirm") });
+        if (!ok) throw new Error(L("تم الإلغاء", "Cancelled"));
+        data.opening_balance = Number(data.opening_balance || 0);
+        data.vendor_id = data.vendor_id ? Number(data.vendor_id) : null;
+        data.expense_account_id = data.expense_account_id ? Number(data.expense_account_id) : null;
+        const res = await api("/api/debt/accounts", { method: "POST", body: data });
+        window.__debtMeta = null;
+        toast(t("common.saved"));
+        location.hash = `#/debt/${res.id}`;
+      },
+    });
+  }
+
+  async function debtStatementPage(view, accountId) {
+    const ar = APP.lang === "ar";
+    const [meta, st] = await Promise.all([debtMeta(), api(`/api/debt/accounts/${accountId}`)]);
+    const a = st.account, T = st.totals;
+    setTitle("debt.title", [a.name_ar]);
+    const methodLabel = (m) => (meta.methods.find(x => x.code === m) || {}).label_ar || m;
+    const statusChip = (s) => s === "posted"
+      ? `<span class="badge green">${ESC(t("debt.posted"))}</span>`
+      : `<span class="badge gray">${ESC(t("debt.draft"))}</span>`;
+
+    const itemsTable = renderTable([
+      { key: "doc_date", label: t("common.date"), render: r => `<span class="mono">${fmtDate(r.doc_date)}</span>` },
+      { key: "description", label: t("debt.description"), cls: "wrap", render: r => `
+          <strong>${ESC(r.description)}</strong>
+          <div class="small muted">${[r.operation, r.vessel, r.client_name, r.cargo,
+            (r.period_from ? `${ar ? "من" : "from"} ${fmtDate(r.period_from)} ${ar ? "إلى" : "to"} ${fmtDate(r.period_to || r.period_from)}` : ""),
+            (r.report_no ? `${ar ? "بيان تشغيل" : "report"} ${r.report_no}` : "")].filter(Boolean).map(ESC).join(" · ")}</div>` },
+      { key: "qty_milli", label: t("debt.qty"), cls: "num",
+        render: r => r.qty_milli ? `${qtyText(r.qty_milli)} <small class="muted">${ESC(DEBT_UNIT_LABEL(r.unit))}</small>` : "—" },
+      { key: "unit_rate_cents", label: t("debt.rate"), cls: "num", render: r => r.unit_rate_cents ? fmtMoney(r.unit_rate_cents) : "—" },
+      { key: "amount_cents", label: t("debt.due"), cls: "num", render: r => `<strong>${fmtMoney(r.amount_cents)}</strong>` },
+      { key: "status", label: t("common.status"), render: r => statusChip(r.status) },
+      { key: "act", cls: "act", label: t("common.actions"), render: r => `
+          ${can("debt.edit") ? debtItemEditBtn(r, meta) : ""}
+          ${can("debt.delete") ? deleteButton(`/api/debt/items/${r.id}`,
+            `المستحق ${r.description} بمبلغ ${fmtMoney(r.amount_cents)}`,
+            `due line ${r.description}`) : ""}` },
+    ], st.items, { footer: `<tr class="foot-total"><td colspan="4">${ESC(t("debt.due"))}</td>
+        <td class="num">${fmtMoney(T.due_cents)}</td><td></td><td></td></tr>`,
+      empty: t("debt.noItems") });
+
+    const paysTable = renderTable([
+      { key: "voucher_no", label: t("debt.voucher"), render: r => `<span class="mono">${ESC(r.voucher_no || r.payment_no)}</span>` },
+      { key: "pay_date", label: t("common.date"), render: r => `<span class="mono">${fmtDate(r.pay_date)}</span>` },
+      { key: "amount_cents", label: t("debt.amount"), cls: "num", render: r => `<strong>${fmtMoney(r.amount_cents)}</strong>` },
+      { key: "method", label: L("طريقة السداد", "Method"), render: r => ESC(methodLabel(r.method)) },
+      { key: "payee", label: t("debt.payee"), render: r => ESC(r.payee || "—") },
+      { key: "status", label: t("common.status"), render: r => statusChip(r.status) },
+      { key: "act", cls: "act", label: t("common.actions"), render: r => `
+          ${can("debt.edit") ? debtPaymentEditBtn(r, meta) : ""}
+          ${can("debt.delete") ? deleteButton(`/api/debt/payments/${r.id}`,
+            `سداد ${fmtMoney(r.amount_cents)} ${r.voucher_no ? `باذن صرف ${r.voucher_no}` : ""}`,
+            `settlement ${fmtMoney(r.amount_cents)}`) : ""}` },
+    ], st.payments, { footer: `<tr class="foot-total"><td colspan="2">${ESC(t("debt.paid"))}</td>
+        <td class="num">${fmtMoney(T.paid_cents)}</td><td colspan="4"></td></tr>`,
+      empty: t("debt.noPayments") });
+
+    view.innerHTML = `${pageHead("debt.statement", "debt.subtitle", `
+        <div class="doc-toolbar">
+          <a class="btn btn-sm" href="#/debt">${icon("chevron")} ${ESC(t("debt.summary"))}</a>
+          ${can("debt.edit") ? `<button class="btn btn-sm" id="debt-edit-acc">${icon("edit")} ${ESC(L("تعديل الحساب", "Edit account"))}</button>` : ""}
+          <button class="btn btn-sm" data-export="/api/debt/accounts/${a.id}/statement/xlsx" data-name="statement.xlsx">${icon("chart")} Excel</button>
+          <button class="btn btn-sm" data-preview="/api/debt/accounts/${a.id}/statement/pdf?lang=${APP.lang}">${icon("printer")} PDF</button>
+          ${can("debt.delete") ? deleteButton(`/api/debt/accounts/${a.id}`, `حساب المديونية ${a.name_ar}`,
+            `debt account ${a.name_en || a.name_ar}`, { delBack: "#/debt" }) : ""}
+        </div>`)}
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-body" style="display:flex;flex-wrap:wrap;gap:22px;align-items:center;justify-content:space-between">
+          <div>
+            <div class="small muted">${ESC(t("debt.account"))}</div>
+            <h2 style="margin:2px 0 4px">${ESC(ar ? a.name_ar : (a.name_en || a.name_ar))}</h2>
+            <div class="small muted"><span class="mono">${ESC(a.code)}</span> ·
+              ${ESC(ar ? a.kind_label_ar : a.kind_label_en)} · ${ESC(t("debt.unit"))}: ${ESC(DEBT_UNIT_LABEL(a.billing_unit))}</div>
+          </div>
+          <div style="display:flex;gap:26px;flex-wrap:wrap">
+            <div><div class="small muted">${ESC(t("debt.due"))}</div><strong style="font-size:18px">${fmtMoney(T.due_cents)}</strong></div>
+            <div><div class="small muted">${ESC(t("debt.paid"))}</div><strong style="font-size:18px">${fmtMoney(T.paid_cents)}</strong></div>
+            <div><div class="small muted">${ESC(t("debt.net"))}</div>
+              <strong style="font-size:18px;color:${T.net_cents > 0 ? "var(--danger)" : "var(--ok)"}">${fmtMoney(T.net_cents)}</strong></div>
+          </div>
+        </div>
+      </div>
+      <div class="section-title"><span>${ESC(t("debt.items"))}</span><span class="line"></span>
+        ${can("debt.create") ? `<button class="btn btn-primary btn-sm" id="debt-new-item">${icon("plus")} ${ESC(t("debt.newItem"))}</button>` : ""}</div>
+      ${card("", itemsTable)}
+      <div class="section-title"><span>${ESC(t("debt.payments"))}</span><span class="line"></span>
+        ${can("debt.create") ? `<button class="btn btn-primary btn-sm" id="debt-new-pay">${icon("plus")} ${ESC(t("debt.newPayment"))}</button>` : ""}</div>
+      ${card("", paysTable)}
+    `;
+    if (can("debt.create")) {
+      $("#debt-new-item").onclick = () => debtItemForm(a, meta);
+      $("#debt-new-pay").onclick = () => debtPaymentForm(a, meta);
+    }
+    if (can("debt.edit")) $("#debt-edit-acc")?.addEventListener("click", () => debtAccountEditForm(a, meta));
+  }
+
+  function debtItemForm(a, meta, item) {
+    const ar = APP.lang === "ar";
+    openForm({
+      title: item ? L("تعديل المستحق", "Edit due line") : `${t("debt.newItem")} — ${a.name_ar}`,
+      wide: true,
+      fields: [
+        { name: "doc_date", label: t("common.date"), type: "date", required: true,
+          value: item ? item.doc_date : today() },
+        { name: "description", label: t("debt.description"), required: true,
+          value: item ? item.description : "", span: 2 },
+        { name: "operation", label: t("debt.operation"), type: "select", value: item ? (item.operation || "") : "",
+          options: [{ value: "", label: L("—", "—") },
+                    { value: "شحن", label: L("شحن", "Loading") },
+                    { value: "تفريغ", label: L("تفريغ", "Discharge") },
+                    { value: "نقل", label: L("نقل", "Transport") },
+                    { value: "إيجار", label: L("إيجار", "Hire") },
+                    { value: "مشتريات", label: L("مشتريات", "Purchases") }] },
+        { name: "unit", label: t("debt.unit"), type: "select", value: item ? item.unit : a.billing_unit,
+          options: meta.units.map(u => ({ value: u.code, label: ar ? u.label_ar : u.label_en })) },
+        { name: "qty", label: t("debt.qty"), type: "number", step: "0.001",
+          value: item && item.qty_milli ? (item.qty_milli / 1000) : "" },
+        { name: "unit_rate", label: t("debt.rate"), type: "number", step: "0.01",
+          value: item && item.unit_rate_cents ? (item.unit_rate_cents / 100) : "",
+          hint: L("الإجمالي = الكمية × الفئة", "Total = quantity × rate") },
+        { name: "amount", label: `${t("debt.amount")} ${L("(اختياري)", "(optional)")}`, type: "number", step: "0.01",
+          value: item ? "" : "", hint: t("debt.amountHint") },
+        { name: "vessel", label: t("debt.vessel"), value: item ? (item.vessel || "") : "" },
+        { name: "client_name", label: t("debt.client"), value: item ? (item.client_name || "") : "" },
+        { name: "cargo", label: t("debt.cargo"), value: item ? (item.cargo || "") : "" },
+        { name: "report_no", label: t("debt.reportNo"), value: item ? (item.report_no || "") : "" },
+        { name: "period_from", label: `${t("debt.period")} — ${t("debt.from")}`, type: "date",
+          value: item ? (item.period_from || "") : "" },
+        { name: "period_to", label: `${t("debt.period")} — ${t("debt.to")}`, type: "date",
+          value: item ? (item.period_to || "") : "" },
+        { name: "notes", label: L("ملاحظات", "Notes"), value: item ? (item.notes || "") : "", span: 2 },
+      ],
+      onSubmit: async (data) => {
+        const ok = await confirmAsync(
+          L(`هل أنت متأكد من ${item ? "تعديل" : "إضافة"} المستحق «${data.description}»؟`,
+            `${item ? "Update" : "Add"} the due line “${data.description}”?`),
+          { danger: false, title: L("تأكيد", "Confirm") });
+        if (!ok) throw new Error(L("تم الإلغاء", "Cancelled"));
+        const body = {
+          account_id: a.id, doc_date: data.doc_date, description: data.description,
+          operation: data.operation || null, unit: data.unit,
+          qty: data.qty === "" ? null : Number(data.qty),
+          unit_rate: data.unit_rate === "" ? null : Number(data.unit_rate),
+          amount: data.amount === "" ? null : Number(data.amount),
+          vessel: data.vessel || null, client_name: data.client_name || null, cargo: data.cargo || null,
+          report_no: data.report_no || null, period_from: data.period_from || null,
+          period_to: data.period_to || null, notes: data.notes || null,
+        };
+        if (item) await api(`/api/debt/items/${item.id}`, { method: "PATCH", body });
+        else await api("/api/debt/items", { method: "POST", body });
+        toast(t("common.saved"));
+        setTimeout(() => render(), 30);   // stay on the statement, refresh numbers
+      },
+    });
+  }
+
+  function debtItemEditBtn(r, meta) {
+    const a = { id: r.account_id, name_ar: r.account_name_ar, billing_unit: r.unit };
+    return `<button class="icon-btn edit" data-debt-edit-item="${r.id}" title="${ESC(L("تعديل", "Edit"))}"
+        aria-label="${ESC(L("تعديل", "Edit"))}">${icon("edit")}</button>`;
+  }
+
+  function debtPaymentForm(a, meta, pay) {
+    const ar = APP.lang === "ar";
+    openForm({
+      title: pay ? L("تعديل السداد", "Edit settlement") : `${t("debt.newPayment")} — ${a.name_ar}`,
+      wide: true,
+      fields: [
+        { name: "pay_date", label: t("common.date"), type: "date", required: true, value: pay ? pay.pay_date : today() },
+        { name: "amount", label: t("debt.amount"), type: "number", step: "0.01", required: true,
+          value: pay ? (pay.amount_cents / 100).toFixed(2) : "" },
+        { name: "voucher_no", label: t("debt.voucher"), value: pay ? (pay.voucher_no || "") : "",
+          hint: L("رقم اذن الصرف الورقي", "The paper voucher number") },
+        { name: "method", label: L("طريقة السداد", "Method"), type: "select", value: pay ? pay.method : "cash",
+          options: meta.methods.map(m => ({ value: m.code, label: m.label_ar })) },
+        { name: "gl_account_id", label: L("الصندوق / البنك", "Cash / bank"), type: "select",
+          value: pay ? (pay.gl_account_id || "") : (meta.cash_accounts.find(c => c.code === "1111")?.id ?? ""),
+          options: meta.cash_accounts.map(c => ({ value: c.id, label: `${c.code} — ${ar ? c.name_ar : c.name_en}` })) },
+        { name: "payee", label: t("debt.payee"), value: pay ? (pay.payee || "") : "" },
+        { name: "notes", label: L("ملاحظات", "Notes"), value: pay ? (pay.notes || "") : "", span: 2 },
+      ],
+      onSubmit: async (data) => {
+        const ok = await confirmAsync(
+          L(`هل أنت متأكد من ${pay ? "تعديل" : "إضافة"} سداد بمبلغ ${data.amount}؟`,
+            `${pay ? "Update" : "Add"} a settlement of ${data.amount}?`),
+          { danger: false, title: L("تأكيد", "Confirm") });
+        if (!ok) throw new Error(L("تم إلغاء", "Cancelled"));
+        const body = {
+          account_id: a.id, pay_date: data.pay_date, amount: Number(data.amount),
+          voucher_no: data.voucher_no || null, method: data.method,
+          gl_account_id: data.gl_account_id ? Number(data.gl_account_id) : null,
+          payee: data.payee || null, notes: data.notes || null,
+        };
+        if (pay) await api(`/api/debt/payments/${pay.id}`, { method: "PATCH", body });
+        else await api("/api/debt/payments", { method: "POST", body });
+        toast(t("common.saved"));
+        setTimeout(() => render(), 30);
+      },
+    });
+  }
+
+  function debtPaymentEditBtn(r, meta) {
+    return `<button class="icon-btn edit" data-debt-edit-pay="${r.id}" title="${ESC(L("تعديل", "Edit"))}"
+        aria-label="${ESC(L("تعديل", "Edit"))}">${icon("edit")}</button>`;
+  }
+
+  // the statement page holds the whole record, so the edit modals are opened
+  // from the same data the table was rendered from — no second round trip
+  document.addEventListener("click", async (ev) => {
+    const payBtn = ev.target.closest("[data-debt-edit-pay]");
+    const itemBtn = ev.target.closest("[data-debt-edit-item]");
+    if (!payBtn && !itemBtn) return;
+    ev.preventDefault();
+    const route = (location.hash || "").replace(/^#\/?/, "").split("/");
+    if (route[0] !== "debt" || !route[1]) return;
+    try {
+      const [meta, st] = await Promise.all([debtMeta(), api(`/api/debt/accounts/${route[1]}`)]);
+      if (itemBtn) {
+        const row = st.items.find(x => String(x.id) === itemBtn.dataset.debtEditItem);
+        if (row) debtItemForm(st.account, meta, row);
+      } else {
+        const row = st.payments.find(x => String(x.id) === payBtn.dataset.debtEditPay);
+        if (row) debtPaymentForm(st.account, meta, row);
+      }
+    } catch (e) { toast(e.message, "err"); }
+  });
+
   PAGES.payables = {
     perm: "payables.view",
     async render(view) {
