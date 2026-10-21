@@ -6,7 +6,7 @@ const APP = {
   user: null,
   meta: null,
   lang: localStorage.getItem("erp_lang") || "ar",
-  theme: localStorage.getItem("erp_theme") || "light",
+  theme: localStorage.getItem("erp_theme_choice") || "dark",   // dark is the product default
   route: null,
   cache: {},
 };
@@ -606,7 +606,10 @@ function applyTheme() {
     ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
     : APP.theme;
   document.documentElement.dataset.theme = theme;
-  localStorage.setItem("erp_theme", APP.theme);
+  // NOTE: no implicit persistence here — the stored value must mean
+  // "the user picked this", otherwise the default could never change again.
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", theme === "dark" ? "#0b1020" : "#0b2f6b");
   const btn = $("#theme-btn");
   if (btn) btn.innerHTML = icon(theme === "dark" ? "sun" : "moon");
   const lbtn = $("#login-theme");
@@ -631,6 +634,7 @@ async function setLang(lang) {
 }
 async function setTheme(theme) {
   APP.theme = theme;
+  localStorage.setItem("erp_theme_choice", theme);   // explicit choice: remember it
   applyTheme();
   if (APP.user) {
     try { await api("/api/auth/preferences", { method: "PATCH", body: { theme } }); } catch (e) { /* offline-safe */ }
@@ -1099,7 +1103,11 @@ async function bootApp() {
 function setupGlobalHandlers() {
   $("#theme-btn").onclick = () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
   $("#lang-btn").onclick = () => setLang(APP.lang === "ar" ? "en" : "ar");
-  $("#login-theme").onclick = () => { APP.theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark"; applyTheme(); };
+  $("#login-theme").onclick = () => {
+    APP.theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+    localStorage.setItem("erp_theme_choice", APP.theme);
+    applyTheme();
+  };
   $("#login-lang").onclick = () => { APP.lang = APP.lang === "ar" ? "en" : "ar"; applyLang(); };
   $("#logout-btn").onclick = logout;
   $("#menu-logout").onclick = logout;

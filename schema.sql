@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash   TEXT NOT NULL,
     role_code       TEXT NOT NULL REFERENCES roles(code),
     language        TEXT NOT NULL DEFAULT 'ar',
-    theme           TEXT NOT NULL DEFAULT 'light',
+    theme           TEXT NOT NULL DEFAULT 'dark',   -- dark is the default appearance
     is_active       INTEGER NOT NULL DEFAULT 1,
     failed_attempts INTEGER NOT NULL DEFAULT 0,
     locked_until    TEXT,

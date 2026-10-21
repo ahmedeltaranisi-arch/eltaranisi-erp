@@ -252,7 +252,7 @@ def seed():
             cur = conn.execute(
                 """INSERT INTO users (company_id, branch_id, username, full_name_ar, full_name_en, email,
                        password_hash, role_code, language, theme, password_must_change)
-                   VALUES (?,?,?,?,?,?,?,?,'ar','light',0)""",
+                   VALUES (?,?,?,?,?,?,?,?,'ar','dark',0)""",
                 (company_id, br_main, username, name_ar, name_en, email, hash_password(pwd), role))
             users[username] = cur.lastrowid
             conn.execute("INSERT INTO user_company_access (user_id, company_id) VALUES (?,?)",

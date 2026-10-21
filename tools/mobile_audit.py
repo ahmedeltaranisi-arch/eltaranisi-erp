@@ -79,11 +79,16 @@ async def audit(widths, langs, themes, shots, user, password):
                     page = await ctx.new_page()
                     errors = []
                     page.on("pageerror", lambda e: errors.append(str(e)))
+                    # Pin the appearance explicitly: the product default is dark, so
+                    # a plain visit would already be dark (the toggle only flips it).
+                    await page.add_init_script(
+                        "try { localStorage.setItem('erp_theme_choice', '%s');"
+                        " localStorage.setItem('erp_lang', '%s'); } catch (e) {}"
+                        % (theme, lang))
                     await page.goto(base, wait_until="networkidle")
-                    if lang == "en":
-                        await page.click("#login-lang")
-                    if theme == "dark":
-                        await page.click("#login-theme")
+                    got_theme = await page.evaluate("()=>document.documentElement.dataset.theme")
+                    if got_theme != theme:
+                        print(f"! theme mismatch: wanted {theme}, got {got_theme}")
                     await page.fill("#login-username", user)
                     await page.fill("#login-password", password)
                     await page.click("#login-form button[type=submit]")

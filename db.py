@@ -239,6 +239,34 @@ def _ensure_columns(conn) -> None:
             pass
 
 
+def _apply_dark_theme_default(conn) -> None:
+    """Dark mode became the product default: move untouched accounts over once.
+
+    The switch runs a single time per company (guarded by a settings row), so a
+    user who later chooses the light theme keeps it across restarts and redeploys.
+    """
+    try:
+        companies = conn.execute("SELECT id FROM companies").fetchall()
+    except Exception:
+        return
+    for row in companies:
+        cid = row["id"]
+        try:
+            done = conn.execute(
+                "SELECT value FROM settings WHERE company_id=? AND key='theme.dark_default'",
+                (cid,)).fetchone()
+            if done:
+                continue
+            conn.execute(
+                "UPDATE users SET theme='dark' WHERE company_id=? AND (theme IS NULL OR theme='light')",
+                (cid,))
+            conn.execute(
+                "INSERT OR REPLACE INTO settings (company_id, key, value) VALUES (?,?,?)",
+                (cid, "theme.dark_default", "1"))
+        except Exception:
+            continue
+
+
 def migrate() -> None:
     """Apply additive, idempotent schema changes to an existing database.
 
@@ -264,6 +292,7 @@ def migrate() -> None:
                     pass
         _ensure_columns(conn)
         _sync_system_roles(conn)
+        _apply_dark_theme_default(conn)
     finally:
         conn.close()
 

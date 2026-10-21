@@ -1810,7 +1810,7 @@ def users_create(ctx):
         raise ApiError("WEAK_PASSWORD: كلمة المرور يجب ألا تقل عن 10 أحرف / Password must be at least 10 characters")
     cur = ctx.conn.execute("""INSERT INTO users (company_id, branch_id, username, full_name_ar, full_name_en, email,
         password_hash, role_code, language, theme, password_must_change)
-        VALUES (?,?,?,?,?,?,?,?,'ar','light',1)""",
+        VALUES (?,?,?,?,?,?,?,?,'ar','dark',1)""",
         (cid, ctx.user["branch_id"], b["username"], b["full_name_ar"], b["full_name_en"], b.get("email"),
          hash_password(pwd), role["code"]))
     ctx.conn.execute("INSERT INTO user_company_access (user_id, company_id) VALUES (?,?)", (cur.lastrowid, cid))
