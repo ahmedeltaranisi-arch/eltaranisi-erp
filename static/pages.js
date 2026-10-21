@@ -109,7 +109,7 @@
     async render(view) {
       setTitle("nav.settings");
       const d = await api("/api/company");
-      const co = d.company, st = d.settings || {};
+      const co = d.company || {}, st = d.settings || {};   // never let a bad payload blank the page
       const ro = d.can_edit ? "" : "disabled";
       const field = (id, label, value, type = "text") =>
         `<div class="field"><span>${ESC(label)}</span>
@@ -394,9 +394,15 @@
           { key: "total_debit_cents", label: t("common.debit"), cls: "num", render: r => fmtMoney(r.total_debit_cents) },
           { key: "status", label: t("common.status"), render: r => statusBadge(r.status) },
           { key: "created_by_name", label: t("journal.createdBy"), render: r => ESC(r.created_by_name || "—") },
-          { key: "act", label: t("common.actions"), render: r => (can("journal.delete") && !r.source_type)
-              ? deleteButton(`/api/journal-entries/${r.id}`, `القيد ${r.entry_no}`, `entry ${r.entry_no}`)
-              : "" },
+          { key: "act", label: t("common.actions"), render: r => `
+              ${!r.source_type && r.status === "draft" && can("journal.edit") ? editButton(`/api/journal-entries/${r.id}`,
+                  `القيد ${r.entry_no}`, `entry ${r.entry_no}`, [
+                    { name: "entry_date", label: t("common.date"), type: "date", value: r.entry_date },
+                    { name: "memo", label: t("common.description"), required: true, value: r.memo },
+                  ]) : ""}
+              ${(can("journal.delete") && !r.source_type)
+                ? deleteButton(`/api/journal-entries/${r.id}`, `القيد ${r.entry_no}`, `entry ${r.entry_no}`)
+                : "" }` },
         ], data.entries, {
           onRowClick: null,
           empty: t("common.empty")
@@ -434,6 +440,12 @@
       }
       if (e.status === "approved" && can("journal.post")) actions.push(`<button class="btn btn-primary btn-sm" id="act-post">${icon("download")} ${ESC(t("common.post"))}</button>`);
       if (e.status === "posted" && can("journal.reverse")) actions.push(`<button class="btn btn-danger btn-sm" id="act-reverse">${icon("undo")} ${ESC(t("common.reverse"))}</button>`);
+      if (e.status === "draft" && can("journal.create") && !e.source_type) {
+        actions.push(editButton(`/api/journal-entries/${id}`, `القيد ${e.entry_no}`, `entry ${e.entry_no}`, [
+          { name: "entry_date", label: t("common.date"), type: "date", value: e.entry_date },
+          { name: "memo", label: t("common.description"), required: true, value: e.memo },
+        ]));
+      }
       if (can("journal.delete") && !e.source_type) actions.push(deleteButton(`/api/journal-entries/${id}`, `القيد ${e.entry_no}`, `entry ${e.entry_no}`, { delBack: "#/journal" }));
       actions.push(printBtn());
 
@@ -617,9 +629,18 @@
           { key: "paid_cents", label: t("common.paid"), cls: "num", render: r => fmtMoney(r.paid_cents) },
           { key: "remaining", label: t("common.remaining"), cls: "num", render: r => fmtMoney(r.total_cents - r.paid_cents) },
           { key: "status", label: t("common.status"), render: r => statusBadge(r.status) },
-          { key: "act", label: t("common.actions"), render: r => can("sales.delete")
-              ? deleteButton(`/api/sales-invoices/${r.id}`, `فاتورة المبيعات ${r.invoice_no}`, `sales invoice ${r.invoice_no}`)
-              : "" },
+          { key: "act", label: t("common.actions"), render: r => `
+              ${r.status === "draft" && can("sales.edit") ? editButton(`/api/sales-invoices/${r.id}`,
+                  `فاتورة المبيعات ${r.invoice_no}`, `sales invoice ${r.invoice_no}`, [
+                    { name: "customer_id", label: t("nav.customers"), type: "select", value: r.customer_id,
+                      options: [{ value: r.customer_id, label: `${r.customer_ar} (${r.customer_code})` }] },
+                    { name: "invoice_date", label: t("common.date"), type: "date", value: r.invoice_date },
+                    { name: "due_date", label: t("common.dueDate"), type: "date", value: r.due_date || "" },
+                    { name: "notes", label: t("common.description"), value: r.notes || "" },
+                  ]) : ""}
+              ${can("sales.delete")
+                ? deleteButton(`/api/sales-invoices/${r.id}`, `فاتورة المبيعات ${r.invoice_no}`, `sales invoice ${r.invoice_no}`)
+                : "" }` },
         ], data.invoices, {
           footer: `<tr><td colspan="4">${ESC(t("common.total"))}</td>
             <td class="num">${fmtMoney(data.invoices.reduce((s, r) => s + r.total_cents, 0))}</td>
@@ -735,6 +756,13 @@
     const actions = [];
     if (inv.status === "draft" && can("sales.post")) actions.push(`<button class="btn btn-primary btn-sm" id="si-post-now">${icon("download")} ${ESC(t("common.post"))}</button>`);
     if (["posted", "partially_paid"].includes(inv.status) && can("payments.create")) actions.push(`<button class="btn btn-ok btn-sm" id="si-receipt">${icon("coins")} ${ESC(t("payments.receipt"))}</button>`);
+    if (inv.status === "draft" && can("sales.edit")) actions.push(editButton(`/api/sales-invoices/${id}`,
+      `فاتورة المبيعات ${inv.invoice_no}`, `sales invoice ${inv.invoice_no}`, [
+        { name: "invoice_date", label: t("common.date"), type: "date", value: inv.invoice_date },
+        { name: "due_date", label: t("common.dueDate"), type: "date", value: inv.due_date || "" },
+        { name: "warehouse_id", label: t("common.warehouse"), type: "number", value: inv.warehouse_id || "" },
+        { name: "notes", label: t("common.description"), value: inv.notes || "" },
+      ]));
     if (can("sales.delete")) actions.push(deleteButton(`/api/sales-invoices/${id}`, `فاتورة المبيعات ${inv.invoice_no}`, `sales invoice ${inv.invoice_no}`, { delBack: "#/sales" }));
     actions.push(docToolbar("sales", id));
     view.innerHTML = `${pageHead(inv.invoice_no, "sales.subtitle", actions.join(""))}
@@ -801,9 +829,19 @@
           { key: "paid_cents", label: t("common.paid"), cls: "num", render: r => fmtMoney(r.paid_cents) },
           { key: "status", label: t("common.status"), render: r => statusBadge(r.status) },
           { key: "three_way_match", label: t("purchases.threeWay"), render: r => r.three_way_match ? `<span class="badge green">${icon("check", "ico-sm")}</span>` : `<span class="badge gray">—</span>` },
-          { key: "act", label: t("common.actions"), render: r => can("purchases.delete")
-              ? deleteButton(`/api/purchase-invoices/${r.id}`, `فاتورة المشتريات ${r.invoice_no}`, `purchase invoice ${r.invoice_no}`)
-              : "" },
+          { key: "act", label: t("common.actions"), render: r => `
+              ${r.status === "draft" && can("purchases.edit") ? editButton(`/api/purchase-invoices/${r.id}`,
+                  `فاتورة المشتريات ${r.invoice_no}`, `purchase invoice ${r.invoice_no}`, [
+                    { name: "invoice_date", label: t("common.date"), type: "date", value: r.invoice_date },
+                    { name: "due_date", label: t("common.dueDate"), type: "date", value: r.due_date || "" },
+                    { name: "supplier_ref", label: L("مرجع المورد", "Supplier ref"), value: r.supplier_ref || "" },
+                    { name: "po_number", label: t("purchases.po"), value: r.po_number || "" },
+                    { name: "grn_number", label: t("purchases.grn"), value: r.grn_number || "" },
+                    { name: "notes", label: t("common.description"), value: r.notes || "" },
+                  ]) : ""}
+              ${can("purchases.delete")
+                ? deleteButton(`/api/purchase-invoices/${r.id}`, `فاتورة المشتريات ${r.invoice_no}`, `purchase invoice ${r.invoice_no}`)
+                : "" }` },
         ], data.invoices, {
           footer: `<tr><td colspan="5">${ESC(t("common.total"))}</td>
             <td class="num">${fmtMoney(data.invoices.reduce((s, r) => s + r.total_cents, 0))}</td>
@@ -911,6 +949,15 @@
     setTitle("purchases.title", [inv.invoice_no]);
     const actions = [];
     if (inv.status === "draft" && can("purchases.post")) actions.push(`<button class="btn btn-primary btn-sm" id="pi-post-now">${icon("download")} ${ESC(t("common.post"))}</button>`);
+    if (inv.status === "draft" && can("purchases.edit")) actions.push(editButton(`/api/purchase-invoices/${id}`,
+      `فاتورة المشتريات ${inv.invoice_no}`, `purchase invoice ${inv.invoice_no}`, [
+        { name: "invoice_date", label: t("common.date"), type: "date", value: inv.invoice_date },
+        { name: "due_date", label: t("common.dueDate"), type: "date", value: inv.due_date || "" },
+        { name: "supplier_ref", label: L("مرجع المورد", "Supplier ref"), value: inv.supplier_ref || "" },
+        { name: "po_number", label: t("purchases.po"), value: inv.po_number || "" },
+        { name: "grn_number", label: t("purchases.grn"), value: inv.grn_number || "" },
+        { name: "notes", label: t("common.description"), value: inv.notes || "" },
+      ]));
     if (can("purchases.delete")) actions.push(deleteButton(`/api/purchase-invoices/${id}`, `فاتورة المشتريات ${inv.invoice_no}`, `purchase invoice ${inv.invoice_no}`, { delBack: "#/purchases" }));
     actions.push(docToolbar("purchase", id));
     view.innerHTML = `${pageHead(inv.invoice_no, "purchases.subtitle", actions.join(""))}
@@ -971,11 +1018,19 @@
           { key: "amount_cents", label: t("common.amount"), cls: "num", render: r => fmtMoney(r.amount_cents) },
           { key: "unallocated", label: t("payments.unallocated"), cls: "num", render: r => r.amount_cents - r.allocated_cents ? `<span class="neg">${fmtMoney(r.amount_cents - r.allocated_cents)}</span>` : "—" },
           { key: "status", label: t("common.status"), render: r => statusBadge(r.status) },
-          { key: "act", label: t("common.actions"), render: r => can("payments.delete")
-              ? deleteButton(`/api/payments/${r.id}`,
+          { key: "act", label: t("common.actions"), render: r => `
+              ${editButton(`/api/payments/${r.id}`,
                   `${r.payment_type === "receipt" ? "سند التحصيل" : "سند الدفع"} ${r.payment_no}`,
-                  `${r.payment_type === "receipt" ? "receipt" : "payment"} ${r.payment_no}`)
-              : "" },
+                  `${r.payment_type === "receipt" ? "receipt" : "payment"} ${r.payment_no}`, [
+                    { name: "payment_date", label: t("common.date"), type: "date", value: r.payment_date },
+                    { name: "reference", label: L("المرجع", "Reference"), value: r.reference || "" },
+                    { name: "notes", label: t("common.description"), value: r.notes || "" },
+                  ])}
+              ${can("payments.delete")
+                ? deleteButton(`/api/payments/${r.id}`,
+                    `${r.payment_type === "receipt" ? "سند التحصيل" : "سند الدفع"} ${r.payment_no}`,
+                    `${r.payment_type === "receipt" ? "receipt" : "payment"} ${r.payment_no}`)
+                : "" }` },
         ], data.payments))}`;
       if (can("payments.create")) $("#new-pay").onclick = () => PAGES.payments.newVoucher("receipt");
     },
@@ -1115,6 +1170,18 @@
           { key: "next_due_date", label: t("payables.nextDue"), render: r => r.next_due_date ? fmtDate(r.next_due_date) : "—" },
           { key: "terms", label: t("customers.terms"), render: r => r.payment_terms_days },
           { key: "act", label: t("common.actions"), render: r => `<button class="btn btn-sm btn-ghost" data-stmt="${r.id}">${ESC(t("payables.statement"))}</button>
+              ${can("vendors.edit") ? editButton(`/api/vendors/${r.id}`,
+                  `المورد «${r.name_ar}» (${r.code})`, `vendor “${r.name_en}” (${r.code})`, [
+                    { name: "code", label: t("common.code"), required: true, value: r.code },
+                    { name: "name_ar", label: "الاسم بالعربية", required: true, value: r.name_ar },
+                    { name: "name_en", label: "Name (English)", required: true, value: r.name_en },
+                    { name: "phone", label: t("customers.phone"), value: r.phone || "" },
+                    { name: "email", label: L("البريد الإلكتروني", "Email"), value: r.email || "" },
+                    { name: "tax_number", label: L("الرقم الضريبي", "Tax number"), value: r.tax_number || "" },
+                    { name: "payment_terms_days", label: t("customers.terms"), type: "number", value: r.payment_terms_days ?? 30 },
+                    { name: "is_active", label: t("common.status"), type: "select", value: r.is_active ? "1" : "0",
+                      options: [{ value: "1", label: L("نشط", "Active") }, { value: "0", label: L("موقوف", "Inactive") }] },
+                  ]) : ""}
               ${can("vendors.delete") ? deleteButton(`/api/vendors/${r.id}`, `المورد «${r.name_ar}» (${r.code})`, `vendor “${r.name_en}” (${r.code})`) : ""}` },
         ], data.vendors, {
           footer: `<tr><td colspan="2">${ESC(t("common.total"))}</td>
@@ -1221,9 +1288,23 @@
           { key: "credit_limit_cents", label: t("sales.creditLimit"), cls: "num", render: r => fmtMoney(r.credit_limit_cents) },
           { key: "outstanding_cents", label: t("payables.outstanding"), cls: "num", render: r => fmtMoney(r.outstanding_cents) },
           { key: "is_active", label: t("common.status"), render: r => statusBadge(r.is_active ? "active" : "inactive") },
-          { key: "act", label: t("common.actions"), render: r => can("customers.delete")
-              ? deleteButton(`/api/customers/${r.id}`, `العميل «${r.name_ar}» (${r.code})`, `customer “${r.name_en}” (${r.code})`)
-              : "" },
+          { key: "act", label: t("common.actions"), render: r => `
+              ${can("customers.edit") ? editButton(`/api/customers/${r.id}`,
+                  `العميل «${r.name_ar}» (${r.code})`, `customer “${r.name_en}” (${r.code})`, [
+                    { name: "code", label: t("common.code"), required: true, value: r.code },
+                    { name: "name_ar", label: "الاسم بالعربية", required: true, value: r.name_ar },
+                    { name: "name_en", label: "Name (English)", required: true, value: r.name_en },
+                    { name: "phone", label: t("customers.phone"), value: r.phone || "" },
+                    { name: "email", label: L("البريد الإلكتروني", "Email"), value: r.email || "" },
+                    { name: "tax_number", label: L("الرقم الضريبي", "Tax number"), value: r.tax_number || "" },
+                    { name: "credit_limit", label: t("sales.creditLimit"), type: "number", step: "0.01", value: (r.credit_limit_cents || 0) / 100 },
+                    { name: "payment_terms_days", label: t("customers.terms"), type: "number", value: r.payment_terms_days ?? 30 },
+                    { name: "is_active", label: t("common.status"), type: "select", value: r.is_active ? "1" : "0",
+                      options: [{ value: "1", label: L("نشط", "Active") }, { value: "0", label: L("موقوف", "Inactive") }] },
+                  ]) : ""}
+              ${can("customers.delete")
+                ? deleteButton(`/api/customers/${r.id}`, `العميل «${r.name_ar}» (${r.code})`, `customer “${r.name_en}” (${r.code})`)
+                : "" }` },
         ], data.customers))}`;
       if (can("customers.create")) $("#new-cust").onclick = () => openForm({
         title: t("customers.new"),
@@ -1254,7 +1335,20 @@
           { key: "payment_terms_days", label: t("customers.terms") },
           { key: "outstanding_cents", label: t("payables.outstanding"), cls: "num", render: r => fmtMoney(r.outstanding_cents) },
           { key: "is_active", label: t("common.status"), render: r => statusBadge(r.is_active ? "active" : "inactive") },
-          { key: "act", label: t("common.actions"), render: r => `<button class="btn btn-sm btn-ghost" data-stmt="${r.id}">${ESC(t("payables.statement"))}</button>` },
+          { key: "act", label: t("common.actions"), render: r => `<button class="btn btn-sm btn-ghost" data-stmt="${r.id}">${ESC(t("payables.statement"))}</button>
+              ${can("vendors.edit") ? editButton(`/api/vendors/${r.id}`,
+                  `المورد «${r.name_ar}» (${r.code})`, `vendor “${r.name_en || r.name_ar}” (${r.code})`, [
+                    { name: "code", label: t("common.code"), required: true, value: r.code },
+                    { name: "name_ar", label: "الاسم بالعربية", required: true, value: r.name_ar },
+                    { name: "name_en", label: "Name (English)", required: true, value: r.name_en || r.name_ar },
+                    { name: "phone", label: t("customers.phone"), value: r.phone || "" },
+                    { name: "email", label: L("البريد الإلكتروني", "Email"), value: r.email || "" },
+                    { name: "tax_number", label: L("الرقم الضريبي", "Tax number"), value: r.tax_number || "" },
+                    { name: "payment_terms_days", label: t("customers.terms"), type: "number", value: r.payment_terms_days ?? 30 },
+                    { name: "is_active", label: t("common.status"), type: "select", value: r.is_active ? "1" : "0",
+                      options: [{ value: "1", label: L("نشط", "Active") }, { value: "0", label: L("موقوف", "Inactive") }] },
+                  ]) : ""}
+              ${can("vendors.delete") ? deleteButton(`/api/vendors/${r.id}`, `المورد «${r.name_ar}» (${r.code})`, `vendor “${r.name_en || r.name_ar}” (${r.code})`) : ""}` },
         ], data.vendors))}`;
       $$("[data-stmt]", view).forEach(b => b.onclick = () => vendorStatement(Number(b.dataset.stmt)));
       if (can("vendors.create")) $("#new-vend").onclick = () => openForm({
@@ -1299,6 +1393,15 @@
           { key: "reorder_level_milli", label: t("inventory.reorder"), cls: "num", render: r => fmtNum(r.reorder_level_milli / 1000, 0) },
           { key: "value_cents", label: t("inventory.value"), cls: "num", render: r => fmtMoney(r.value_cents) },
           { key: "avg", label: t("inventory.unitCost"), cls: "num", render: r => r.qty_milli ? fmtMoney(Math.round(r.value_cents * 1000 / r.qty_milli)) : "—" },
+          { key: "act", label: t("common.actions"), render: r => can("inventory.manage")
+              ? editButton(`/api/products/${r.product_id}`, `الصنف «${r.name_ar}» (${r.sku})`, `product “${r.name_en || r.name_ar}” (${r.sku})`, [
+                  { name: "sku", label: t("common.code"), required: true, value: r.sku },
+                  { name: "name_ar", label: "الاسم بالعربية", required: true, value: r.name_ar },
+                  { name: "name_en", label: "Name (English)", required: true, value: r.name_en || r.name_ar },
+                  { name: "unit", label: L("الوحدة", "Unit"), value: r.unit || "" },
+                  { name: "reorder_level", label: t("inventory.reorder"), type: "number", value: (r.reorder_level_milli || 0) / 1000 },
+                ])
+              : "—" },
         ], stock))}
         <div class="section-title"><span>${ESC(t("inventory.movements"))}</span><span class="line"></span></div>
         ${card("", renderTable([
@@ -1348,11 +1451,37 @@
       const [banks, txns] = await Promise.all([api("/api/banks"), api("/api/bank-transactions")]);
       const unreconciled = txns.transactions.filter(t => !t.is_reconciled);
       view.innerHTML = `${pageHead("banks.title", "banks.subtitle",
-        can("banks.manage") ? `<button class="btn btn-primary btn-sm" id="new-txn">${icon("plus")} ${ESC(t("banks.newTransaction"))}</button>` : "")}
+        can("banks.manage") ? `<button class="btn btn-primary btn-sm" id="new-txn">${icon("plus")} ${ESC(t("banks.newTransaction"))}</button>
+          <button class="btn btn-sm" id="new-bank">${icon("plus")} ${ESC(L("حساب بنكي / صندوق", "Bank / cash account"))}</button>` : "")}
         <div class="grid cols-3">
           ${banks.position.accounts.map(a => kpi({ label: APP.lang === "ar" ? a.name_ar : (a.name_en || a.name_ar), value: a.balance_cents, icon: a.account_type === "cash" ? icon("coins") : icon("banks"),
             sub: `${a.account_type === "cash" ? t("payments.cash") : t("payments.bank")} · ${a.gl_code}` })).join("")}
         </div>
+        <div class="section-title"><span>${ESC(L("البنوك والصناديق", "Banks & cash boxes"))}</span><span class="line"></span></div>
+        ${card("", renderTable([
+          { key: "code", label: t("common.code") },
+          { key: "name", label: t("common.name"), render: r => `<strong>${ESC(APP.lang === "ar" ? r.name_ar : (r.name_en || r.name_ar))}</strong>` },
+          { key: "kind", label: L("النوع", "Type"), render: r => `<span class="badge ${r.account_type === "cash" ? "amber" : "blue"}">${ESC(r.account_type === "cash" ? t("payments.cash") : t("payments.bank"))}</span>` },
+          { key: "gl_code", label: t("common.account"), render: r => `<span class="mono">${ESC(r.gl_code)}</span>` },
+          { key: "currency", label: L("العملة", "Currency") },
+          { key: "balance_cents", label: t("common.balance"), cls: "num", render: r => fmtMoney(r.balance_cents) },
+          { key: "act", label: t("common.actions"), render: r => can("banks.manage") ? `
+              ${editButton(`/api/bank-accounts/${r.id}`,
+                  `${r.account_type === "cash" ? "الصندوق" : "الحساب البنكي"} «${r.name_ar}»`,
+                  `${r.account_type === "cash" ? "cash box" : "bank account"} “${r.name_en || r.name_ar}”`, [
+                    { name: "code", label: t("common.code"), required: true, value: r.code },
+                    { name: "name_ar", label: "الاسم بالعربية", required: true, value: r.name_ar },
+                    { name: "name_en", label: "Name (English)", required: true, value: r.name_en || r.name_ar },
+                    { name: "account_type", label: L("النوع", "Type"), type: "select", value: r.account_type,
+                      options: [{ value: "bank", label: t("payments.bank") }, { value: "cash", label: t("payments.cash") }] },
+                    { name: "iban", label: "IBAN", value: r.iban || "" },
+                    { name: "currency", label: L("العملة", "Currency"), value: r.currency || "EGP" },
+                    { name: "is_active", label: t("common.status"), type: "select", value: (r.is_active === 0 ? "0" : "1"),
+                      options: [{ value: "1", label: L("نشط", "Active") }, { value: "0", label: L("موقوف", "Inactive") }] },
+                  ])}
+              ${deleteButton(`/api/bank-accounts/${r.id}`, `${r.account_type === "cash" ? "الصندوق" : "الحساب البنكي"} «${r.name_ar}»`, `${r.account_type === "cash" ? "cash box" : "bank account"} “${r.name_en || r.name_ar}”`)}`
+              : "" },
+        ], banks.position.accounts))}
         <div class="section-title"><span>${ESC(t("banks.transactions"))}</span><span class="line"></span>
           <span class="small muted">${unreconciled.length} ${ESC(t("banks.unreconciled"))}</span></div>
         ${card("", renderTable([
@@ -1364,13 +1493,40 @@
           { key: "credit_cents", label: t("common.credit"), cls: "num", render: r => r.credit_cents ? fmtMoney(r.credit_cents) : "" },
           { key: "matched_payment_no", label: t("payments.receipt"), render: r => ESC(r.matched_payment_no || "—") },
           { key: "is_reconciled", label: t("common.status"), render: r => r.is_reconciled ? `<span class="badge green">${ESC(t("banks.reconciled"))}</span>` : `<span class="badge amber">${ESC(t("banks.unreconciled"))}</span>` },
-          { key: "act", label: "", render: r => !r.is_reconciled && can("banks.manage")
-              ? `<button class="btn btn-sm btn-ghost" data-rec="${r.id}">${ESC(t("banks.reconcile"))}</button>
-                 ${deleteButton(`/api/bank-transactions/${r.id}`, `الحركة البنكية «${r.description}»`, `bank transaction “${r.description}”`)}`
+          { key: "act", label: t("common.actions"), render: r => can("banks.manage") ? `
+              ${!r.is_reconciled ? `<button class="btn btn-sm btn-ghost" data-rec="${r.id}">${ESC(t("banks.reconcile"))}</button>` : ""}
+              ${!r.is_reconciled ? editButton(`/api/bank-transactions/${r.id}`,
+                  `الحركة البنكية «${r.description}»`, `bank transaction “${r.description}”`, [
+                    { name: "txn_date", label: t("common.date"), type: "date", value: r.txn_date },
+                    { name: "description", label: t("common.description"), required: true, value: r.description },
+                    { name: "statement_ref", label: L("مرجع كشف الحساب", "Statement ref"), value: r.statement_ref || "" },
+                    { name: "debit", label: L("مدين (إيداع)", "Debit (deposit)"), type: "number", step: "0.01", value: (r.debit_cents || 0) / 100 },
+                    { name: "credit", label: L("دائن (سحب)", "Credit (withdrawal)"), type: "number", step: "0.01", value: (r.credit_cents || 0) / 100 },
+                  ]) : ""}
+              ${!r.is_reconciled ? deleteButton(`/api/bank-transactions/${r.id}`, `الحركة البنكية «${r.description}»`, `bank transaction “${r.description}”`) : ""}`
               : "" },
         ], txns.transactions))}`;
 
       if (can("banks.manage")) {
+        $("#new-bank").onclick = async () => {
+          const acc = await api("/api/accounts");
+          const assets = acc.accounts.filter(a => a.is_postable && a.type === "asset" && a.is_active !== 0);
+          openForm({
+            title: L("حساب بنكي / صندوق جديد", "New bank / cash account"),
+            fields: [
+              { name: "code", label: t("common.code"), required: true, value: "BNK-" + Math.floor(10 + Math.random() * 89) },
+              { name: "name_ar", label: "الاسم بالعربية", required: true },
+              { name: "name_en", label: "Name (English)", required: true },
+              { name: "account_type", label: L("النوع", "Type"), type: "select",
+                options: [{ value: "bank", label: t("payments.bank") }, { value: "cash", label: t("payments.cash") }] },
+              { name: "gl_account_id", label: L("حساب الأستاذ", "GL account"), type: "select", required: true,
+                options: assets.map(a => ({ value: a.id, label: `${a.code} — ${APP.lang === "ar" ? a.name_ar : (a.name_en || a.name_ar)}` })) },
+              { name: "iban", label: "IBAN" },
+              { name: "currency", label: L("العملة", "Currency"), value: "EGP" },
+            ],
+            onSubmit: async (d) => { await api("/api/bank-accounts", { method: "POST", body: d }); toast(t("common.saved")); render(); }
+          });
+        };
         $("#new-txn").onclick = () => openForm({
           title: t("banks.newTransaction"),
           fields: [
@@ -1445,8 +1601,17 @@
           { key: "useful_life_months", label: t("assets.life"), cls: "num" },
           { key: "bv", label: t("assets.bookValue"), cls: "num", render: r => fmtMoney(r.cost_cents - r.accumulated_cents) },
           { key: "status", label: t("common.status"), render: r => statusBadge(r.status === "active" ? "active" : "inactive") },
-          { key: "act", label: t("common.actions"), render: r => can("assets.manage")
-              ? deleteButton(`/api/assets/${r.id}`, `الأصل «${r.name_ar}» (${r.code})`, `asset “${r.name_en}” (${r.code})`)
+          { key: "act", label: t("common.actions"), render: r => can("assets.manage") ? `
+              ${editButton(`/api/assets/${r.id}`, `الأصل «${r.name_ar}» (${r.code})`, `asset “${r.name_en}” (${r.code})`, [
+                { name: "code", label: t("common.code"), required: true, value: r.code },
+                { name: "name_ar", label: "الاسم بالعربية", required: true, value: r.name_ar },
+                { name: "name_en", label: "Name (English)", required: true, value: r.name_en },
+                { name: "category", label: L("التصنيف", "Category"), value: r.category || "" },
+                { name: "start_date", label: L("بدء التشغيل", "In service"), type: "date", value: r.start_date || "" },
+                { name: "cost", label: t("assets.cost"), type: "number", step: "0.01", required: true, value: (r.cost_cents || 0) / 100 },
+                { name: "useful_life_months", label: t("assets.life"), type: "number", required: true, value: r.useful_life_months },
+              ])}
+              ${deleteButton(`/api/assets/${r.id}`, `الأصل «${r.name_ar}» (${r.code})`, `asset “${r.name_en}” (${r.code})`)}`
               : "" },
         ], data.assets))}
         <div class="section-title"><span>${ESC(t("assets.runs"))}</span><span class="line"></span></div>
@@ -1520,8 +1685,21 @@
           { key: "allowances_cents", label: t("payroll.allowances"), cls: "num", render: r => fmtMoney(r.allowances_cents) },
           { key: "ded", label: t("payroll.deductions"), cls: "num", render: r => fmtMoney(r.deductions_cents + r.insurance_cents + r.tax_cents) },
           { key: "net", label: t("payroll.net"), cls: "num", render: r => fmtMoney(r.basic_salary_cents + r.allowances_cents - r.deductions_cents - r.insurance_cents - r.tax_cents) },
-          { key: "act", label: t("common.actions"), render: r => can("payroll.manage")
-              ? deleteButton(`/api/employees/${r.id}`, `الموظف «${r.name_ar}» (${r.code})`, `employee “${r.name_en}” (${r.code})`)
+          { key: "act", label: t("common.actions"), render: r => can("payroll.manage") ? `
+              ${editButton(`/api/employees/${r.id}`, `الموظف «${r.name_ar}» (${r.code})`, `employee “${r.name_en}” (${r.code})`, [
+                { name: "code", label: t("common.code"), required: true, value: r.code },
+                { name: "name_ar", label: "الاسم بالعربية", required: true, value: r.name_ar },
+                { name: "name_en", label: "Name (English)", required: true, value: r.name_en },
+                { name: "department", label: L("الإدارة", "Department"), value: r.department || "" },
+                { name: "job_title", label: L("الوظيفة", "Job title"), value: r.job_title || "" },
+                { name: "hire_date", label: L("تاريخ التعيين", "Hire date"), type: "date", value: r.hire_date || "" },
+                { name: "basic_salary", label: t("payroll.basic"), type: "number", step: "0.01", required: true, value: (r.basic_salary_cents || 0) / 100 },
+                { name: "allowances", label: t("payroll.allowances"), type: "number", step: "0.01", value: (r.allowances_cents || 0) / 100 },
+                { name: "deductions", label: t("payroll.deductions"), type: "number", step: "0.01", value: (r.deductions_cents || 0) / 100 },
+                { name: "is_active", label: t("common.status"), type: "select", value: r.is_active ? "1" : "0",
+                  options: [{ value: "1", label: L("نشط", "Active") }, { value: "0", label: L("موقوف", "Inactive") }] },
+              ])}
+              ${deleteButton(`/api/employees/${r.id}`, `الموظف «${r.name_ar}» (${r.code})`, `employee “${r.name_en}” (${r.code})`)}`
               : "" },
         ], data.employees))}
         <div class="section-title"><span>${ESC(t("payroll.runs"))}</span><span class="line"></span></div>
@@ -1590,11 +1768,22 @@
               return `<div class="progress ${p > 100 ? "danger" : p > 85 ? "warn" : ""}"><span style="width:${Math.min(100, p)}%"></span></div>
                       <small class="muted">${p.toFixed(0)}%</small>`;
             } },
+          { key: "act", label: t("common.actions"), render: r => {
+              const lines = (data.budgets || []).filter(b => b.account_id === r.account_id || b.code === r.code);
+              if (!can("budgets.manage") || !lines.length) return "—";
+              return lines.map(b => `
+                ${editButton(`/api/budgets/${b.id}`, `بند موازنة «${b.name_ar}» — شهر ${b.period_month}`, `budget line “${b.name_en || b.name_ar}” — month ${b.period_month}`, [
+                  { name: "budget", label: t("budgets.budget"), type: "number", step: "0.01", required: true, value: (b.budget_cents || 0) / 100 },
+                  { name: "period_month", label: L("الشهر", "Month"), type: "number", value: b.period_month },
+                  { name: "notes", label: t("common.description"), value: b.notes || "" },
+                ])}
+                ${deleteButton(`/api/budgets/${b.id}`, `بند موازنة «${b.name_ar}» — شهر ${b.period_month}`, `budget line “${b.name_en || b.name_ar}” — month ${b.period_month}`)}`).join("");
+            } },
         ], rows, {
           footer: `<tr><td colspan="2">${ESC(t("common.total"))}</td>
             <td class="num">${fmtMoney(rows.reduce((s, r) => s + r.budget_cents, 0))}</td>
             <td class="num">${fmtMoney(rows.reduce((s, r) => s + r.actual_cents, 0))}</td>
-            <td class="num">${fmtMoney(rows.reduce((s, r) => s + r.variance_cents, 0))}</td><td></td></tr>`
+            <td class="num">${fmtMoney(rows.reduce((s, r) => s + r.variance_cents, 0))}</td><td></td><td></td></tr>`
         }))}`;
       if (can("budgets.manage")) $("#new-budget").onclick = async () => {
         const [accs, meta] = await Promise.all([api("/api/accounts"), api("/api/meta")]);

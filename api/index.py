@@ -47,6 +47,11 @@ if ON_VERCEL:
 # (the seeded users still exist; they just are not listed publicly).
 os.environ.setdefault("ERP_SEED_DEMO_DATA", "false")
 
+# Each serverless instance owns its own /tmp database, so a session row written by
+# one instance does not exist in the next one. Signed bearer tokens are therefore
+# accepted without the row (revocation still applies wherever the row is present).
+os.environ.setdefault("ERP_EPHEMERAL_AUTH", "1")
+
 import db  # noqa: E402  (import after ERP_DB is set)
 
 _SEED_LOCK = threading.Lock()

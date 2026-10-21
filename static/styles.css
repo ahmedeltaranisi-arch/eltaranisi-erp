@@ -943,3 +943,12 @@ td .icon-btn .ico-svg { width: 16px; height: 16px; }
 .modal-foot .btn-danger, .btn-danger { background: var(--danger, #c0392b); border-color: transparent; color: #fff; }
 .btn-danger:hover { filter: brightness(1.06); }
 .export-menu summary .ico-svg, .export-menu [data-export] .ico-svg, .export-menu [data-preview] .ico-svg { width: 15px; height: 15px; }
+
+/* ---- edit affordance (pencil beside the bin) ---- */
+.icon-btn.edit { color: var(--brand, #14498f); }
+.icon-btn.edit:hover {
+  background: color-mix(in srgb, var(--brand, #14498f) 12%, transparent);
+  color: var(--brand-strong, #0b2f6b);
+}
+td .icon-btn.edit + .icon-btn.danger { margin-inline-start: 2px; }
+@media (prefers-reduced-motion: reduce) { .icon-btn:hover { transform: none; } }

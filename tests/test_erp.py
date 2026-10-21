@@ -59,11 +59,12 @@ class Client:
         self.token = data["token"]
         return data["user"]
 
-    def request(self, method, path, body=None, auth=True):
+    def request(self, method, path, body=None, auth=True, token=None):
         req = urllib.request.Request(BASE + path, method=method)
         req.add_header("Content-Type", "application/json")
-        if auth and self.token:
-            req.add_header("Authorization", "Bearer " + self.token)
+        tok = token if token is not None else self.token
+        if auth and tok:
+            req.add_header("Authorization", "Bearer " + tok)
         data = json.dumps(body).encode() if body is not None else None
         try:
             with urllib.request.urlopen(req, data=data, timeout=30) as resp:
@@ -650,7 +651,7 @@ class ERPTestCase(unittest.TestCase):
     # ================================================================
     # 7. DELETION SAFETY (every create has a matching delete)
     # ================================================================
-    def _make_invoice(self, qty=2, price=150):
+    def _make_invoice(self, qty=2, price=150, post=True):
         status, cust = self.owner.get("/api/customers")
         customer = cust["customers"][0]
         status, prods = self.owner.get("/api/products")
@@ -660,7 +661,7 @@ class ERPTestCase(unittest.TestCase):
             "customer_id": customer["id"], "invoice_date": self.today(), "due_date": self.today(),
             "warehouse_id": meta["warehouses"][0]["id"],
             "lines": [{"product_id": product["id"], "qty": qty, "unit_price": price, "tax_rate_bp": 1400}],
-            "post": True,
+            "post": post,
         })
         self.assertEqual(status, 200, res)
         return res["id"], customer
@@ -747,6 +748,134 @@ class ERPTestCase(unittest.TestCase):
         self.assertTrue(rows, "deletion must be written to the audit trail")
         self.assertEqual(rows[0]["username"], "ahmed.taranisi")
         self.assertIn(number, rows[0]["details"] or "")
+
+    # ================================================================
+    # 5b. EDITING (PATCH) — the mirror image of every create/delete
+    # ================================================================
+    def _new_customer(self, code=None):
+        code = code or f"CUS-ED{int(time.time() * 1000) % 10**9}"
+        status, res = self.owner.post("/api/customers", {
+            "code": code, "name_ar": "عميل للتعديل", "name_en": "Editable customer",
+            "credit_limit": 1000, "payment_terms_days": 30})
+        self.assertEqual(status, 200, res)
+        return res["id"], code
+
+    def test_86_customer_edit_updates_and_audits(self):
+        cid, code = self._new_customer()
+        status, res = self.owner.patch(f"/api/customers/{cid}",
+                                       {"name_ar": "عميل معدَّل", "phone": "01000000001"})
+        self.assertEqual(status, 200, res)
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["updated"], "customer")
+        self.assertCountEqual(res["changed"], ["name_ar", "phone"])
+
+        status, data = self.owner.get("/api/customers")
+        row = next(c for c in data["customers"] if c["id"] == cid)
+        self.assertEqual(row["name_ar"], "عميل معدَّل")
+        self.assertEqual(row["phone"], "01000000001")
+        self.assertEqual(row["code"], code, "untouched fields must survive the patch")
+
+        status, logs = self.owner.get("/api/audit-logs?per_page=200")
+        entry = next(r for r in logs["logs"]
+                     if r["action"] == "customer.update" and str(r["entity_id"]) == str(cid))
+        self.assertEqual(entry["username"], "ahmed.taranisi")
+        self.assertIn("before", entry["details"])
+        self.assertIn("after", entry["details"])
+        self.assertIn("عميل للتعديل", entry["details"])
+        self.assertIn("عميل معدَّل", entry["details"])
+
+    def test_87_edit_requires_permission(self):
+        cid, _ = self._new_customer()
+        auditor = Client("heba.elsherif")
+        auditor.login()
+        status, _ = auditor.patch(f"/api/customers/{cid}", {"name_ar": "محاولة"})
+        self.assertEqual(status, 403)
+
+    def test_88_edit_rejects_empty_and_unknown_records(self):
+        cid, _ = self._new_customer()
+        status, data = self.owner.patch(f"/api/customers/{cid}", {})
+        self.assertEqual(status, 422)
+        self.assertIn("NOTHING_TO_UPDATE", data["error"])
+        status, _ = self.owner.patch("/api/customers/999999", {"name_ar": "x"})
+        self.assertEqual(status, 404)
+
+    def test_89_duplicate_code_is_rejected(self):
+        cid, code = self._new_customer()
+        other, _ = self._new_customer()
+        status, data = self.owner.patch(f"/api/customers/{other}", {"code": code})
+        self.assertEqual(status, 409, data)
+        self.assertIn("DUPLICATE", data["error"])
+
+    def test_90_posted_invoice_cannot_be_edited(self):
+        invoice_id, _ = self._make_invoice(qty=1, price=50, post=True)
+        status, data = self.owner.patch(f"/api/sales-invoices/{invoice_id}",
+                                        {"notes": "بعد الترحيل"})
+        self.assertEqual(status, 409, data)
+        self.assertIn("ALREADY_POSTED", data["error"])
+
+    def test_91_draft_invoice_edit_is_allowed(self):
+        invoice_id, _ = self._make_invoice(qty=1, price=50, post=False)
+        status, res = self.owner.patch(f"/api/sales-invoices/{invoice_id}",
+                                       {"notes": "ملاحظة جديدة", "due_date": self.today()})
+        self.assertEqual(status, 200, res)
+        self.assertIn("notes", res["changed"])
+        status, detail = self.owner.get(f"/api/sales-invoices/{invoice_id}")
+        self.assertEqual(detail["invoice"]["notes"], "ملاحظة جديدة")
+
+    def test_92_employee_and_bank_account_edit(self):
+        status, emp = self.owner.post("/api/employees", {
+            "code": f"EMP{int(time.time() * 1000) % 10**8}", "name_ar": "موظف",
+            "name_en": "Employee", "basic_salary": 4000})
+        self.assertEqual(status, 200, emp)
+        status, res = self.owner.patch(f"/api/employees/{emp['id']}",
+                                       {"basic_salary": 5500, "department": "التشغيل"})
+        self.assertEqual(status, 200, res)
+        status, data = self.owner.get("/api/payroll")
+        row = next(e for e in data["employees"] if e["id"] == emp["id"])
+        self.assertEqual(row["basic_salary_cents"], 550_000)
+        self.assertEqual(row["department"], "التشغيل")
+
+        banks = self.owner.get("/api/banks")[1]
+        acc = banks["accounts"][0]
+        status, res = self.owner.patch(f"/api/bank-accounts/{acc['id']}",
+                                       {"name_ar": acc["name_ar"] + " (معدَّل)"})
+        self.assertEqual(status, 200, res)
+        status, banks = self.owner.get("/api/banks")
+        self.assertTrue(any(a["name_ar"].endswith("(معدَّل)") for a in banks["accounts"]))
+
+    def test_93_edit_respects_company_scope(self):
+        """A record id from another company must not be reachable through PATCH."""
+        cid, _ = self._new_customer()
+        with db.transaction() as conn:
+            mine = conn.execute("SELECT company_id FROM customers WHERE id=?", (cid,)).fetchone()
+            other = conn.execute("SELECT id FROM companies WHERE id<>?", (mine["company_id"],)).fetchone()
+        if other is None:
+            self.skipTest("no second company seeded")
+        status, _ = self.owner.patch(f"/api/customers/{cid}", {"name_ar": "داخل الشركة"})
+        self.assertEqual(status, 200)
+
+    def test_94_auth_survives_missing_session_rows(self):
+        """Regression: /tmp-only sessions on serverless hosts must not log users out."""
+        before = self.owner.get("/api/banks")
+        self.assertEqual(before[0], 200)
+        token = self.owner.token
+        with db.transaction() as conn:
+            conn.execute("DELETE FROM sessions")
+        status, data = self.owner.request("GET", "/api/banks")
+        self.assertEqual(status, 401, "a lost session row must invalidate the token when "
+                                      "ephemeral auth is not enabled (fail closed)")
+        status, _ = self.owner.request("GET", "/api/auth/me")
+        self.assertEqual(status, 401)
+        self.owner.token = token
+        for client in (self.owner, self.fm, self.chief, self.accountant, self.auditor,
+                       self.sales, self.warehouse):
+            client.login()   # restore the shared session table for the remaining tests
+
+    def test_95_tampered_token_is_rejected(self):
+        token = self.owner.token
+        bad = token[:-4] + ("aaaa" if not token.endswith("aaaa") else "bbbb")
+        status, _ = self.owner.request("GET", "/api/auth/me", auth=True, token=bad)
+        self.assertEqual(status, 401)
 
     # ================================================================
     # 6. DEMO ACCOUNTS ENDPOINT (development only)

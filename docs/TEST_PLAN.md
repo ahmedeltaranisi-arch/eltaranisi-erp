@@ -88,3 +88,25 @@ ERP_DB=data/erp.db python3 tests/test_erp.py -v   # 34 اختبار تكامل
 3. صفر أخطاء 5xx أثناء جولة المتصفح اليدوية.
 4. لا كلمات مرور أو مفاتيح في المستودع (`git grep -i password` لا يعيد أسرارًا).
 5. كل تقرير في واجهة المستخدم يعرض «من أين جاء الرقم».
+
+### Round «edit everywhere» — automated coverage
+
+| Test | What it proves |
+|---|---|
+| `test_86_customer_edit_updates_and_audits` | PATCH changes only the sent fields, keeps the rest, and writes `{before, after, changed}` to the audit log with the actor |
+| `test_87_edit_requires_permission` | the auditor role gets **403** on `PATCH /api/customers/{id}` |
+| `test_88_edit_rejects_empty_and_unknown_records` | empty body → **422 NOTHING_TO_UPDATE**, unknown id → **404** |
+| `test_89_duplicate_code_is_rejected` | changing a code to one already used → **409 DUPLICATE** |
+| `test_90_posted_invoice_cannot_be_edited` | posted sales invoice → **409 ALREADY_POSTED** (immutability preserved) |
+| `test_91_draft_invoice_edit_is_allowed` | draft invoice header edit → 200 and the new value is persisted |
+| `test_92_employee_and_bank_account_edit` | employee salary/department and bank-account name edits both persist |
+| `test_93_edit_respects_company_scope` | a record id from another company is unreachable (404), same rule as reads |
+| `test_94_auth_survives_missing_session_rows` | with ephemeral auth disabled, a lost session row fails **closed** (401) |
+| `test_95_tampered_token_is_rejected` | a modified bearer token is rejected (HMAC verification) |
+
+Manual checks performed in this round:
+
+* every list page renders with the pencil + bin (`21/21` pages, harness sweep);
+* the confirm modal names the record and cancels cleanly;
+* editing a *posted* invoice from the UI shows the server's Arabic explanation;
+* bank page loads repeatedly with a single token on a stateless server (no logout).

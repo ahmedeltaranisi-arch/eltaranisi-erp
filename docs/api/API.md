@@ -277,3 +277,59 @@ curl -s "localhost:8000/api/sales-invoices/54/pdf?lang=ar" \
 
 مخطط OpenAPI 3.1 مختصر في `docs/api/openapi.yaml` (يغطي المسارات الأساسية والصلاحيات) — قابل للاستيراد
 في Postman/Swagger UI.
+
+---
+
+## 6. Editing records (PATCH)
+
+Every record that can be created can also be corrected — while it is still a
+draft, inside an open fiscal period, and by someone who holds the matching
+`*.edit` permission. Editing is **not** posting: it never creates a journal
+entry, and it never touches a document that already hit the ledger. To change a
+posted document, reverse it and re-issue it.
+
+| Endpoint | Permission | Notes |
+|---|---|---|
+| `PATCH /api/customers/{id}` | `customers.edit` | code must stay unique |
+| `PATCH /api/vendors/{id}` | `vendors.edit` | |
+| `PATCH /api/products/{id}` | `inventory.edit` | |
+| `PATCH /api/employees/{id}` | `payroll.edit` | salary structure editable until a payroll run uses it |
+| `PATCH /api/bank-accounts/{id}` | `banks.edit` | new: `POST /api/bank-accounts` creates a bank / cash box |
+| `PATCH /api/bank-transactions/{id}` | `banks.edit` | reconciled lines are frozen (409 `RECONCILED`) |
+| `PATCH /api/assets/{id}` | `assets.edit` | cost & life locked after depreciation (409 `HAS_DEPRECIATION`) |
+| `PATCH /api/budgets/{id}` | `budgets.edit` | |
+| `PATCH /api/journal-entries/{id}` | `journal.edit` | manual drafts only; `lines` replaces the whole entry and must balance |
+| `PATCH /api/sales-invoices/{id}` | `sales.edit` | drafts only |
+| `PATCH /api/purchase-invoices/{id}` | `purchases.edit` | drafts only |
+| `PATCH /api/payments/{id}` | `payments.edit` | drafts only |
+
+### Semantics
+
+* **Partial update** — send only the fields you want to change; everything else is
+  left untouched. An empty body answers **422 `NOTHING_TO_UPDATE`**.
+* **Whitelisted fields** — unknown keys are ignored, never written.
+* **Response** `{"ok": true, "updated": "customer", "id": 12, "changed": ["name_ar","phone"]}`.
+* **Errors** — `403 FORBIDDEN`, `404 NOT_FOUND`, `409 DUPLICATE`,
+  `409 ALREADY_POSTED`, `409 SYSTEM_ENTRY`, `409 RECONCILED`,
+  `409 HAS_DEPRECIATION`, `422 PERIOD_CLOSED`, `422 NOTHING_TO_UPDATE`.
+* **Company isolation** — the row is looked up with `company_id` in the `WHERE`
+  clause, so an id from another company is simply "not found".
+* **Audit** — one row per edit: `{before, after, changed}` plus actor, IP and
+  timestamp, visible in سجل التدقيق / Audit log.
+
+### Permission model
+
+`*.edit` is a first-class permission in the catalogue, and it is granted
+automatically to every role that already holds the matching create/manage right
+(`customers.create` → `customers.edit`, `banks.manage` → `banks.edit`, …). It can
+also be granted on its own from the roles screen — useful for a data-entry clerk
+who may correct typos but not create new records. System roles are re-synced from
+code on every server start, so a deployment can add permissions without a reseed.
+
+### UI behaviour
+
+Each list row and each detail page shows a pencil next to the bin. The pencil
+opens the same validated form used for creation, pre-filled with the current
+values; saving asks **«هل أنت متأكد من تعديل …؟»** naming the record. Nothing is
+sent until the user confirms, and if the server rejects the change the form is
+restored with the typed values so no input is lost.

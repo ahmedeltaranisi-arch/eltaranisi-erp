@@ -1,14 +1,18 @@
 """Authentication, RBAC and audit helpers for ELTARANISI ERP."""
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import json
+import os
 import secrets
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 PBKDF2_ITERATIONS = 240_000
 SESSION_HOURS = 12
+_SECRET_CACHE: bytes | None = None
 
 
 # --------------------------------------------------------------------------
@@ -31,10 +35,80 @@ def verify_password(password: str, stored: str) -> bool:
         return False
 
 
+def _signing_key() -> bytes:
+    """Shared HMAC key for self-contained session tokens.
+
+    Priority:
+      1. ``ERP_SECRET_KEY`` (required on any multi-instance / serverless deploy —
+         every instance must share it, otherwise tokens minted by one instance are
+         rejected by the next one).
+      2. ``data/.token-secret`` created once on first run (single-machine dev).
+    """
+    global _SECRET_CACHE
+    if _SECRET_CACHE:
+        return _SECRET_CACHE
+    env = os.environ.get("ERP_SECRET_KEY")
+    if env:
+        _SECRET_CACHE = env.encode()
+        return _SECRET_CACHE
+    path = Path(os.environ.get("ERP_SECRET_FILE", "data/.token-secret"))
+    try:
+        if path.exists():
+            _SECRET_CACHE = path.read_bytes().strip()
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            key = secrets.token_hex(32).encode()
+            path.write_bytes(key)
+            try:
+                path.chmod(0o600)
+            except OSError:
+                pass
+            _SECRET_CACHE = key
+    except OSError:
+        _SECRET_CACHE = b"eltaranisi-dev-only-key"
+    return _SECRET_CACHE
+
+
+def _mac(payload: str) -> str:
+    return hmac.new(_signing_key(), payload.encode(), hashlib.sha256).hexdigest()[:43]
+
+
 def new_session_token() -> tuple[str, str]:
-    """Return (raw_token, token_hash). Only the hash is persisted."""
-    raw = secrets.token_urlsafe(32)
+    """Return (raw_token, token_hash).
+
+    The raw token is **self-contained and signed** (``<payload>.<hmac>``) so any
+    application instance can validate it without sharing a session table — which
+    is what makes the serverless deployment (ephemeral /tmp database) usable.
+    The hash is still persisted in ``sessions`` for revocation on durable
+    deployments.
+    """
+    raw = secrets.token_urlsafe(24)
     return raw, hashlib.sha256(raw.encode()).hexdigest()
+
+
+def issue_token(user_id: int) -> tuple[str, str]:
+    """Signed bearer token: base64(payload).hmac — verifiable without the DB."""
+    exp = int((datetime.now(timezone.utc) + timedelta(hours=SESSION_HOURS)).timestamp())
+    payload = f"u{user_id}.{exp}.{secrets.token_hex(6)}"
+    encoded = base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
+    token = f"{encoded}.{_mac(payload)}"
+    return token, hashlib.sha256(token.encode()).hexdigest()
+
+
+def verify_token(raw: str) -> dict | None:
+    """Validate the signature and expiry of a token; return its claims or None."""
+    try:
+        encoded, sig = raw.rsplit(".", 1)
+        padding = "=" * (-len(encoded) % 4)
+        payload = base64.urlsafe_b64decode(encoded + padding).decode()
+        if not hmac.compare_digest(sig, _mac(payload)):
+            return None
+        uid, exp, _nonce = payload.split(".")
+        if int(exp) < int(datetime.now(timezone.utc).timestamp()):
+            return None
+        return {"user_id": int(uid.lstrip("u")), "exp": int(exp)}
+    except Exception:
+        return None
 
 
 def token_hash(raw: str) -> str:
@@ -100,6 +174,36 @@ PERMISSIONS = {
     "payments.delete": "حذف سندات التحصيل والدفع / Delete receipts & payments",
     "customers.delete": "حذف العملاء / Delete customers",
     "vendors.delete": "حذف الموردين / Delete vendors",
+    "customers.edit": "تعديل بيانات العملاء / Edit customers",
+    "vendors.edit": "تعديل بيانات الموردين / Edit vendors",
+    "inventory.edit": "تعديل الأصناف / Edit products",
+    "assets.edit": "تعديل الأصول / Edit fixed assets",
+    "payroll.edit": "تعديل الموظفين / Edit employees",
+    "banks.edit": "تعديل البنوك والصناديق / Edit banks & cash boxes",
+    "journal.edit": "تعديل القيود اليدوية / Edit manual journal entries",
+    "sales.edit": "تعديل فواتير البيع / Edit sales invoices",
+    "purchases.edit": "تعديل فواتير الشراء / Edit purchase invoices",
+    "payments.edit": "تعديل سندات التحصيل والدفع / Edit receipts & payments",
+    "budgets.edit": "تعديل بنود الموازنة / Edit budget lines",
+}
+
+# Editing is a strictly narrower right than creating/managing the same module:
+# whoever may create a record may correct it while it is still a draft, and the
+# dedicated ``*.edit`` permissions below are granted automatically to the roles
+# that hold the corresponding create/manage permission (they can also be granted
+# on their own from the roles screen without granting creation).
+EDIT_IMPLIED_BY = {
+    "customers.edit": "customers.create",
+    "vendors.edit": "vendors.create",
+    "inventory.edit": "inventory.manage",
+    "assets.edit": "assets.manage",
+    "payroll.edit": "payroll.manage",
+    "banks.edit": "banks.manage",
+    "journal.edit": "journal.create",
+    "sales.edit": "sales.create",
+    "purchases.edit": "purchases.create",
+    "payments.edit": "payments.create",
+    "budgets.edit": "budgets.manage",
 }
 
 FINANCIAL_READ = [
@@ -190,13 +294,46 @@ ROLE_DEFINITIONS = [
 ]
 
 
+def sync_system_roles(conn) -> int:
+    """Refresh the permission set of every built-in role from this module.
+
+    Roles are code, not data: a deployment that adds a permission (for example
+    the ``*.edit`` family) must reach databases that were seeded before it, and
+    an administrator cannot accidentally strip rights from a system role in a
+    way the code does not expect. Custom roles are never touched.
+    """
+    updated = 0
+    for role in ROLE_DEFINITIONS:
+        row = conn.execute("SELECT permissions, is_system FROM roles WHERE code=?",
+                           (role["code"],)).fetchone()
+        if row is None:
+            conn.execute(
+                """INSERT INTO roles (code, name_ar, name_en, permissions, data_scope, is_system)
+                   VALUES (?,?,?,?,?,1)""",
+                (role["code"], role["name_ar"], role["name_en"],
+                 json.dumps(role["permissions"]), role["data_scope"]))
+            updated += 1
+            continue
+        if row["is_system"] and row["permissions"] != json.dumps(role["permissions"]):
+            conn.execute("UPDATE roles SET permissions=?, name_ar=?, name_en=?, data_scope=? WHERE code=?",
+                         (json.dumps(role["permissions"]), role["name_ar"], role["name_en"],
+                          role["data_scope"], role["code"]))
+            updated += 1
+    return updated
+
+
 def role_can(role_permissions, permission: str) -> bool:
     if "*" in role_permissions:
         return True
     if permission in role_permissions:
         return True
     module = permission.split(".")[0]
-    return f"{module}.*" in role_permissions
+    if f"{module}.*" in role_permissions:
+        return True
+    parent = EDIT_IMPLIED_BY.get(permission)
+    if parent and parent in role_permissions:
+        return True
+    return False
 
 
 class AuthError(Exception):

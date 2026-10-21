@@ -74,6 +74,7 @@ VERCEL_TOKEN=... ./scripts/deploy-vercel.sh --preview  # رابط معاينة
 | `ERP_CREDENTIALS_FILE` | `/tmp/eltaranisi-erp/dev-credentials.txt` | ملف بيانات الدخول التجريبية |
 | `ERP_SEED_DEMO_DATA` | **`false`** (مغلق) | `true` يفتح لوحة الحسابات التجريبية ويُفعّل `GET /api/dev/accounts` — للعرض فقط |
 | `ERP_SESSION_HOURS` | `12` | صلاحية الجلسة |
+| **`ERP_SECRET_KEY`** | — | **مهم:** مفتاح ثابت لتوقيع الـtoken. على Vercel لا توجد قاعدة مشتركة بين النسخ (`/tmp` مؤقت)، فالتوكن موقّع ذاتيًا بهذا المفتاح. بدون ضبطه تصنع كل نسخة مفتاحًا خاصًا وتظهر أخطاء 401 / تسجيل خروج عشوائي (خاصة في صفحات البنوك) |
 | `ERP_DEV_FIXED_PASSWORDS` | `true` | `false` يولّد كلمات مرور عشوائية وقت التهيئة |
 
 ---
@@ -106,6 +107,7 @@ VERCEL_TOKEN=... ./scripts/deploy-vercel.sh --preview  # رابط معاينة
 لتحويل الرابط إلى عرض حيّ يعرض الحسابات بنقرة واحدة (مناسب للبورتفوليو):
 ```bash
 vercel env add ERP_SEED_DEMO_DATA production   # القيمة: true
+vercel env add ERP_SECRET_KEY production       # القيمة: python3 -c "import secrets;print(secrets.token_urlsafe(48))"
 vercel --prod
 ```
 

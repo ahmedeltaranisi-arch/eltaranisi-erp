@@ -363,6 +363,286 @@ paths:
     post:
       summary: Scoped financial assistant (read-only, permission-bound, no posting)
       responses: { "200": { description: OK }, "403": { $ref: "#/components/responses/Error" } }
+  # --------------------------------------------------------------- editing
+  /api/customers/{id}:
+    patch:
+      tags: [editing]
+      summary: Edit a customer (409 DUPLICATE on a clashing code)
+      description: >
+        Partial update. Only the fields present in the body change. Requires the
+        `customers.edit` permission (implied by the matching create/manage permission).
+        The before/after snapshot is written to the audit trail with the actor and
+        timestamp; documents can only be edited while they are still drafts.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CustomerInput" }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/EditResult" } } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        409: { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /api/vendors/{id}:
+    patch:
+      tags: [editing]
+      summary: Edit a vendor (409 DUPLICATE on a clashing code)
+      description: >
+        Partial update. Only the fields present in the body change. Requires the
+        `vendors.edit` permission (implied by the matching create/manage permission).
+        The before/after snapshot is written to the audit trail with the actor and
+        timestamp; documents can only be edited while they are still drafts.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/VendorInput" }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/EditResult" } } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        409: { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /api/products/{id}:
+    patch:
+      tags: [editing]
+      summary: Edit a product / service
+      description: >
+        Partial update. Only the fields present in the body change. Requires the
+        `inventory.edit` permission (implied by the matching create/manage permission).
+        The before/after snapshot is written to the audit trail with the actor and
+        timestamp; documents can only be edited while they are still drafts.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProductInput" }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/EditResult" } } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        409: { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /api/employees/{id}:
+    patch:
+      tags: [editing]
+      summary: Edit an employee and their salary structure
+      description: >
+        Partial update. Only the fields present in the body change. Requires the
+        `payroll.edit` permission (implied by the matching create/manage permission).
+        The before/after snapshot is written to the audit trail with the actor and
+        timestamp; documents can only be edited while they are still drafts.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EmployeeInput" }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/EditResult" } } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        409: { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /api/bank-accounts/{id}:
+    patch:
+      tags: [editing]
+      summary: Edit a bank or cash box
+      description: >
+        Partial update. Only the fields present in the body change. Requires the
+        `banks.edit` permission (implied by the matching create/manage permission).
+        The before/after snapshot is written to the audit trail with the actor and
+        timestamp; documents can only be edited while they are still drafts.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BankAccountInput" }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/EditResult" } } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        409: { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /api/bank-transactions/{id}:
+    patch:
+      tags: [editing]
+      summary: Edit an unreconciled bank statement line
+      description: >
+        Partial update. Only the fields present in the body change. Requires the
+        `banks.edit` permission (implied by the matching create/manage permission).
+        The before/after snapshot is written to the audit trail with the actor and
+        timestamp; documents can only be edited while they are still drafts.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BankTransactionInput" }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/EditResult" } } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        409: { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /api/assets/{id}:
+    patch:
+      tags: [editing]
+      summary: Edit a fixed asset (cost/life locked once depreciation started — 409 HAS_DEPRECIATION)
+      description: >
+        Partial update. Only the fields present in the body change. Requires the
+        `assets.edit` permission (implied by the matching create/manage permission).
+        The before/after snapshot is written to the audit trail with the actor and
+        timestamp; documents can only be edited while they are still drafts.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AssetInput" }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/EditResult" } } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        409: { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /api/budgets/{id}:
+    patch:
+      tags: [editing]
+      summary: Edit a budget line
+      description: >
+        Partial update. Only the fields present in the body change. Requires the
+        `budgets.edit` permission (implied by the matching create/manage permission).
+        The before/after snapshot is written to the audit trail with the actor and
+        timestamp; documents can only be edited while they are still drafts.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BudgetInput" }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/EditResult" } } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        409: { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /api/journal-entries/{id}:
+    patch:
+      tags: [editing]
+      summary: Edit a manual draft journal entry (409 ALREADY_POSTED / SYSTEM_ENTRY)
+      description: >
+        Partial update. Only the fields present in the body change. Requires the
+        `journal.edit` permission (implied by the matching create/manage permission).
+        The before/after snapshot is written to the audit trail with the actor and
+        timestamp; documents can only be edited while they are still drafts.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/JournalPatchInput" }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/EditResult" } } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        409: { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /api/sales-invoices/{id}:
+    patch:
+      tags: [editing]
+      summary: Edit a draft sales invoice header (409 ALREADY_POSTED, 422 PERIOD_CLOSED)
+      description: >
+        Partial update. Only the fields present in the body change. Requires the
+        `sales.edit` permission (implied by the matching create/manage permission).
+        The before/after snapshot is written to the audit trail with the actor and
+        timestamp; documents can only be edited while they are still drafts.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SalesInvoicePatchInput" }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/EditResult" } } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        409: { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /api/purchase-invoices/{id}:
+    patch:
+      tags: [editing]
+      summary: Edit a draft purchase invoice header (409 ALREADY_POSTED)
+      description: >
+        Partial update. Only the fields present in the body change. Requires the
+        `purchases.edit` permission (implied by the matching create/manage permission).
+        The before/after snapshot is written to the audit trail with the actor and
+        timestamp; documents can only be edited while they are still drafts.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PurchaseInvoicePatchInput" }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/EditResult" } } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        409: { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /api/payments/{id}:
+    patch:
+      tags: [editing]
+      summary: Edit a draft receipt/payment
+      description: >
+        Partial update. Only the fields present in the body change. Requires the
+        `payments.edit` permission (implied by the matching create/manage permission).
+        The before/after snapshot is written to the audit trail with the actor and
+        timestamp; documents can only be edited while they are still drafts.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PaymentPatchInput" }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/EditResult" } } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        409: { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /api/bank-accounts:
+    post:
+      tags: [editing]
+      summary: Create a bank or cash account
+      description: Requires `banks.manage`. The GL account must be a postable asset account of the same company.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BankAccountInput" }
+      responses:
+        "200": { description: Created, content: { application/json: { schema: { type: object, properties: { id: { type: integer } } } } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+
 components:
   schemas:
     ConfirmBody:
@@ -438,3 +718,133 @@ components:
               unit_price: { type: number }
               discount: { type: number }
               tax_rate_bp: { type: integer, description: Basis points, 1400 = 14% }
+
+    EditResult:
+      type: object
+      properties:
+        ok: { type: boolean }
+        updated: { type: string, example: customer }
+        id: { type: integer }
+        changed:
+          type: array
+          items: { type: string }
+          example: [name_ar, phone]
+    CustomerInput:
+      type: object
+      properties:
+        code: { type: string }
+        name_ar: { type: string }
+        name_en: { type: string }
+        phone: { type: string }
+        email: { type: string }
+        tax_number: { type: string }
+        credit_limit: { type: number }
+        payment_terms_days: { type: integer }
+        is_active: { type: integer, enum: [0, 1] }
+        address: { type: string }
+    VendorInput:
+      type: object
+      properties:
+        code: { type: string }
+        name_ar: { type: string }
+        name_en: { type: string }
+        phone: { type: string }
+        email: { type: string }
+        tax_number: { type: string }
+        payment_terms_days: { type: integer }
+        is_active: { type: integer, enum: [0, 1] }
+    ProductInput:
+      type: object
+      properties:
+        sku: { type: string }
+        name_ar: { type: string }
+        name_en: { type: string }
+        unit: { type: string }
+        sale_price: { type: number }
+        purchase_price: { type: number }
+        reorder_level: { type: number }
+        is_active: { type: integer, enum: [0, 1] }
+    EmployeeInput:
+      type: object
+      properties:
+        code: { type: string }
+        name_ar: { type: string }
+        name_en: { type: string }
+        department: { type: string }
+        job_title: { type: string }
+        hire_date: { type: string, format: date }
+        basic_salary: { type: number }
+        allowances: { type: number }
+        deductions: { type: number }
+        is_active: { type: integer, enum: [0, 1] }
+    BankAccountInput:
+      type: object
+      required: [code, name_ar, name_en, account_type, gl_account_id]
+      properties:
+        code: { type: string, example: BNK-03 }
+        name_ar: { type: string }
+        name_en: { type: string }
+        account_type: { type: string, enum: [bank, cash] }
+        gl_account_id: { type: integer }
+        iban: { type: string }
+        currency: { type: string, default: EGP }
+    BankTransactionInput:
+      type: object
+      properties:
+        txn_date: { type: string, format: date }
+        description: { type: string }
+        statement_ref: { type: string }
+        debit: { type: number }
+        credit: { type: number }
+    AssetInput:
+      type: object
+      properties:
+        code: { type: string }
+        name_ar: { type: string }
+        name_en: { type: string }
+        category: { type: string }
+        start_date: { type: string, format: date }
+        cost: { type: number }
+        useful_life_months: { type: integer }
+    BudgetInput:
+      type: object
+      properties:
+        budget: { type: number }
+        period_month: { type: integer, minimum: 1, maximum: 12 }
+        notes: { type: string }
+    JournalPatchInput:
+      type: object
+      properties:
+        entry_date: { type: string, format: date }
+        memo: { type: string }
+        cost_center_id: { type: integer, nullable: true }
+        project_id: { type: integer, nullable: true }
+        lines:
+          type: array
+          description: Full replacement of the entry lines; must balance.
+          items: { $ref: "#/components/schemas/JournalLineInput" }
+    SalesInvoicePatchInput:
+      type: object
+      properties:
+        customer_id: { type: integer }
+        invoice_date: { type: string, format: date }
+        due_date: { type: string, format: date }
+        warehouse_id: { type: integer }
+        notes: { type: string }
+    PurchaseInvoicePatchInput:
+      type: object
+      properties:
+        vendor_id: { type: integer }
+        invoice_date: { type: string, format: date }
+        due_date: { type: string, format: date }
+        warehouse_id: { type: integer }
+        supplier_ref: { type: string }
+        po_number: { type: string }
+        grn_number: { type: string }
+        notes: { type: string }
+    PaymentPatchInput:
+      type: object
+      properties:
+        payment_date: { type: string, format: date }
+        reference: { type: string }
+        notes: { type: string }

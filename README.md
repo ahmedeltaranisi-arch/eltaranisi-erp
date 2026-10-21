@@ -185,6 +185,7 @@ npm i -g vercel && vercel --prod
 | ماذا | كيف |
 |---|---|
 | **الرابط الحالي** | **https://eltaranisi-erp.vercel.app** (مشروع Vercel باسم `eltaranisi-erp`) |
+| **متغير مطلوب** | `ERP_SECRET_KEY` — مفتاح ثابت لتوقيع الجلسات. بدونه كل نسخة Serverless تصنع مفتاحًا مختلفًا وتنتهي الجلسات بـ 401 بعد كل Cold start |
 | **النشر التلقائي** | مربوط بمستودع GitHub: أي `git push` على `main` → نشر إنتاجي تلقائي (تم التحقق) |
 | ملف الضبط | `vercel.json` (output `static` + rewrite لـ `/api/*`) |
 | نقطة الدخول | `api/index.py` — WSGI bridge، يهيّئ قاعدة SQLite في `/tmp` ويبذرها عند أول طلب (~0.5 ثانية) |

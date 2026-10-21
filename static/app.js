@@ -130,6 +130,96 @@ function confirmDialog(message, onConfirm, { danger = false, title = "تأكيد
   });
 }
 
+/* --------------------------------- editing --------------------------------
+ * `editButton()` renders a pencil that opens the same validated form used for
+ * creation, pre-filled with the current row. Submitting asks for confirmation
+ * ("هل أنت متأكد من تعديل …؟") and then PATCHes the record; the server keeps its
+ * own rules (drafts only, closed periods, unique codes) and audits both sides.
+ * ------------------------------------------------------------------------ */
+function editButton(path, subjectAr, subjectEn, fields) {
+  const label = APP.lang === "ar" ? "تعديل" : "Edit";
+  const payload = encodeURIComponent(JSON.stringify(fields || []));
+  return `<button class="icon-btn edit" data-ed-path="${ESC(path)}"
+      data-ed-ar="${ESC(subjectAr)}" data-ed-en="${ESC(subjectEn)}"
+      data-ed-fields="${payload}" title="${ESC(label)}" aria-label="${ESC(label)}">${icon("edit")}</button>`;
+}
+
+/** Promise-based confirmation modal — resolves true only on an explicit "yes". */
+function confirmAsync(message, { danger = true, title } = {}) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (v) => { if (!settled) { settled = true; resolve(v); } };
+    const ar = APP.lang === "ar";
+    const { close } = openModal({
+      title: title || (ar ? "تأكيد" : "Confirm"),
+      narrow: true,
+      body: `<p style="margin:0;font-size:14px;white-space:pre-line;line-height:1.7">${ESC(message)}</p>`,
+      footer: `<button class="btn" data-cf-no>${ESC(t("common.cancel"))}</button>
+               <button class="btn ${danger ? "btn-danger" : "btn-primary"}" data-cf-yes>
+                 ${ESC(ar ? "تأكيد" : "Confirm")}</button>`,
+      onMount: (root) => {
+        root.querySelector("[data-cf-yes]").onclick = () => { finish(true); close(); };
+        root.querySelector("[data-cf-no]").onclick = () => { finish(false); close(); };
+      },
+      onClose: () => finish(false),
+    });
+  });
+}
+
+document.addEventListener("click", (ev) => {
+  const btn = ev.target.closest("[data-ed-path]");
+  if (!btn) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  const ar = APP.lang === "ar";
+  const subject = ar ? btn.dataset.edAr : btn.dataset.edEn;
+  let fields = [];
+  try { fields = JSON.parse(decodeURIComponent(btn.dataset.edFields || "%5B%5D")); } catch (e) { fields = []; }
+  const baseFields = fields.map((f) => ({ ...f }));
+  openEditForm(subject, fields);
+
+  function openEditForm(subjectLabel, formFields) {
+    openForm({
+      title: (ar ? "تعديل " : "Edit ") + subjectLabel,
+      fields: formFields,
+      submitLabel: ar ? "حفظ التعديل" : "Save changes",
+      wide: formFields.length > 6,
+      onSubmit: async (data) => {
+        const changed = Object.keys(data).some((k) => {
+          const orig = baseFields.find((f) => f.name === k) || {};
+          return String(data[k] ?? "") !== String(orig.value ?? "");
+        });
+        if (!changed) {
+          toast(ar ? "لا يوجد تغيير لحفظه" : "Nothing changed", "err");
+          return;
+        }
+        // the form modal closes right after this returns, so the confirmation
+        // runs on the next tick and can restore the typed values if cancelled
+        setTimeout(async () => {
+          const ok = await confirmAsync(
+            ar ? `هل أنت متأكد من تعديل ${subjectLabel}؟\nسيُسجَّل التعديل في سجل التدقيق باسمك ووقته.`
+               : `Are you sure you want to edit ${subjectLabel}?\nThe change is recorded in the audit trail.`,
+            { title: ar ? "تأكيد التعديل" : "Confirm edit" });
+          if (!ok) {
+            openEditForm(subjectLabel, baseFields.map((f) => ({ ...f, value: data[f.name] ?? f.value })));
+            return;
+          }
+          btn.disabled = true;
+          try {
+            await api(btn.dataset.edPath, { method: "PATCH", body: data });
+            toast(ar ? "تم حفظ التعديل" : "Changes saved");
+            await render();
+          } catch (err) {
+            toast(err.message, "err");
+            btn.disabled = false;
+            openEditForm(subjectLabel, baseFields.map((f) => ({ ...f, value: data[f.name] ?? f.value })));
+          }
+        }, 40);
+      },
+    });
+  }
+});
+
 /* ------------------------------- deletions --------------------------------
  * One button factory + one delegated handler for every "delete" action in the
  * app. The API additionally requires {"confirm": true} and re-checks
@@ -481,6 +571,7 @@ const ICONS = {
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/>',
   close: '<path d="M6 6l12 12M18 6L6 18"/>',
   trash: '<path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/><path d="M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13"/><path d="M10 11v6M14 11v6"/>',
+  edit: '<path d="M4 20h4.5L20 8.5a2.5 2.5 0 0 0-3.5-3.5L5 16.5z"/><path d="M14.5 6.5 18 10"/>',
   chevron: '<path d="M6 9l6 6 6-6"/>',
   check: '<path d="M20 6L9 17l-5-5"/>',
   alert: '<path d="M12 3l9 16H3z"/><path d="M12 9v4M12 17h.01"/>',

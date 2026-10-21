@@ -19,10 +19,18 @@ from pathlib import Path
 import accounting
 import deletion
 import documents
+import editing
 import reports
 from db import BASE_DIR, connect, from_cents, money_str, read, to_cents, to_milli, transaction
-from security import (AuthError, PermissionError_, audit, has, load_user, new_session_token,
-                      public_user, require, role_can, token_hash, utcnow, verify_password, notify)
+from security import (AuthError, PermissionError_, audit, has, issue_token, load_user, sync_system_roles,
+                      new_session_token, public_user, require, role_can, token_hash, utcnow,
+                      verify_password, verify_token, notify)
+
+# Serverless deployments keep the SQLite file in /tmp: each instance has its own
+# copy, so a session row created by one instance is invisible to the next. When
+# this flag is on, a correctly signed bearer token is accepted even if the row is
+# missing (logout/revocation still wins wherever the row exists).
+EPHEMERAL_AUTH = os.environ.get("ERP_EPHEMERAL_AUTH", "").strip().lower() in ("1", "true", "yes", "on")
 
 STATIC_DIR = BASE_DIR / "static"
 PORT = int(os.environ.get("PORT", "8000"))
@@ -103,7 +111,7 @@ def login(ctx):
         raise ApiError("LOCKED: الحساب مقفل مؤقتًا بسبب محاولات دخول متكررة / Account temporarily locked", 423)
     conn.execute("UPDATE users SET failed_attempts=0, locked_until=NULL, last_login_at=? WHERE id=?",
                  (utcnow(), row["id"]))
-    raw, hashed = new_session_token()
+    raw, hashed = issue_token(row["id"])
     from security import session_expiry
     conn.execute("INSERT INTO sessions (token, user_id, expires_at, ip, user_agent) VALUES (?,?,?,?,?)",
                  (hashed, row["id"], session_expiry(), ctx.ip, ctx.headers.get("User-Agent", "")[:200]))
@@ -155,6 +163,102 @@ def change_password(ctx):
 
 
 # ------------------------------ meta --------------------------------------
+# ---------------------------- editing (PATCH) -----------------------------
+def _patch(ctx, fn, record_id, **kwargs):
+    cid = ensure_company(ctx.user)
+    return fn(ctx.conn, ctx.user, cid, int(record_id), ctx.body, ip=ctx.ip, **kwargs)
+
+
+@route("PATCH", r"/api/customers/(\d+)", "customers.edit")
+def customers_update(ctx, customer_id):
+    return _patch(ctx, lambda c, u, cid, rid, body, ip=None: editing.update_master(
+        c, u, cid, "customers", rid, body, ip=ip), customer_id)
+
+
+@route("PATCH", r"/api/vendors/(\d+)", "vendors.edit")
+def vendors_update(ctx, vendor_id):
+    return _patch(ctx, lambda c, u, cid, rid, body, ip=None: editing.update_master(
+        c, u, cid, "vendors", rid, body, ip=ip), vendor_id)
+
+
+@route("PATCH", r"/api/products/(\d+)", "inventory.edit")
+def products_update(ctx, product_id):
+    return _patch(ctx, lambda c, u, cid, rid, body, ip=None: editing.update_master(
+        c, u, cid, "products", rid, body, ip=ip), product_id)
+
+
+@route("PATCH", r"/api/employees/(\d+)", "payroll.edit")
+def employees_update(ctx, employee_id):
+    return _patch(ctx, lambda c, u, cid, rid, body, ip=None: editing.update_master(
+        c, u, cid, "employees", rid, body, ip=ip), employee_id)
+
+
+@route("PATCH", r"/api/assets/(\d+)", "assets.edit")
+def assets_update(ctx, asset_id):
+    return _patch(ctx, lambda c, u, cid, rid, body, ip=None: editing.update_master(
+        c, u, cid, "fixed-assets", rid, body, ip=ip), asset_id)
+
+
+@route("PATCH", r"/api/bank-accounts/(\d+)", "banks.edit")
+def bank_accounts_update(ctx, account_id):
+    return _patch(ctx, lambda c, u, cid, rid, body, ip=None: editing.update_master(
+        c, u, cid, "bank-accounts", rid, body, ip=ip), account_id)
+
+
+@route("PATCH", r"/api/bank-transactions/(\d+)", "banks.edit")
+def bank_transactions_update(ctx, txn_id):
+    return _patch(ctx, editing.update_bank_transaction, txn_id)
+
+
+@route("PATCH", r"/api/budgets/(\d+)", "budgets.edit")
+def budgets_update(ctx, budget_id):
+    return _patch(ctx, editing.update_budget, budget_id)
+
+
+@route("PATCH", r"/api/sales-invoices/(\d+)", "sales.edit")
+def sales_invoice_update(ctx, invoice_id):
+    return _patch(ctx, editing.update_sales_invoice, invoice_id)
+
+
+@route("PATCH", r"/api/purchase-invoices/(\d+)", "purchases.edit")
+def purchase_invoice_update(ctx, invoice_id):
+    return _patch(ctx, editing.update_purchase_invoice, invoice_id)
+
+
+@route("PATCH", r"/api/journal-entries/(\d+)", "journal.edit")
+def journal_entry_update(ctx, entry_id):
+    return _patch(ctx, editing.update_journal_entry, entry_id)
+
+
+@route("PATCH", r"/api/payments/(\d+)", "payments.edit")
+def payment_update(ctx, payment_id):
+    return _patch(ctx, editing.update_payment, payment_id)
+
+
+# create a bank / cash box (the Banks page used to be read-only for accounts)
+@route("POST", r"/api/bank-accounts", "banks.manage")
+def bank_accounts_create(ctx):
+    cid = ensure_company(ctx.user)
+    b = ctx.body
+    for f in ("code", "name_ar", "name_en", "account_type", "gl_account_id"):
+        if not b.get(f):
+            raise ApiError(f"MISSING_FIELD: {f} مطلوب / required")
+    if b["account_type"] not in ("bank", "cash"):
+        raise ApiError("INVALID_VALUE: نوع الحساب يجب أن يكون bank أو cash / invalid account_type")
+    if q1(ctx.conn, "SELECT 1 FROM bank_accounts WHERE company_id=? AND code=?", (cid, b["code"])):
+        raise ApiError("DUPLICATE: كود الحساب مستخدم / Account code already exists")
+    gl = q1(ctx.conn, "SELECT id FROM accounts WHERE id=? AND company_id=?",
+            (int(b["gl_account_id"]), cid))
+    if gl is None:
+        raise ApiError("NOT_FOUND: حساب الأستاذ غير موجود / GL account not found", 404)
+    cur = ctx.conn.execute("""INSERT INTO bank_accounts (company_id, code, name_ar, name_en, account_type,
+        gl_account_id, iban, currency) VALUES (?,?,?,?,?,?,?,?)""",
+        (cid, b["code"], b["name_ar"], b["name_en"], b["account_type"], int(b["gl_account_id"]),
+         b.get("iban"), b.get("currency") or "EGP"))
+    audit(ctx.conn, ctx.user, "bank_account.create", "bank_account", cur.lastrowid, b, company_id=cid)
+    return {"id": cur.lastrowid}
+
+
 # ---------------------------- deletions -----------------------------------
 @route("DELETE", r"/api/sales-invoices/(\d+)", "sales.delete")
 def sales_invoice_delete(ctx, invoice_id):
@@ -199,11 +303,6 @@ def asset_delete(ctx, asset_id):
 @route("DELETE", r"/api/employees/(\d+)", "payroll.manage")
 def employee_delete(ctx, employee_id):
     return _delete_document(ctx, deletion.delete_employee, int(employee_id))
-
-
-@route("DELETE", r"/api/budgets/(\d+)", "budgets.manage")
-def budget_delete(ctx, budget_id):
-    return _delete_document(ctx, deletion.delete_budget, int(budget_id))
 
 
 @route("DELETE", r"/api/customers/(\d+)", "customers.delete")
@@ -1486,12 +1585,21 @@ class Handler(BaseHTTPRequestHandler):
             return None, None
         raw = header[7:].strip()
         hashed = token_hash(raw)
-        row = conn.execute("SELECT * FROM sessions WHERE token=? AND revoked=0", (hashed,)).fetchone()
-        if row is None:
-            return None, hashed
-        if row["expires_at"] < utcnow():
-            return None, hashed
-        return load_user(conn, row["user_id"]), hashed
+        row = conn.execute("SELECT * FROM sessions WHERE token=?", (hashed,)).fetchone()
+        if row is not None:
+            if row["revoked"] or row["expires_at"] < utcnow():
+                return None, hashed          # explicit logout / expiry wins
+            return load_user(conn, row["user_id"]), hashed
+        # Unknown session row. On an ephemeral (serverless) deployment the row may
+        # simply live in another instance's database, so a valid signed token is
+        # accepted; on a durable deployment an unknown token stays rejected.
+        if EPHEMERAL_AUTH:
+            claims = verify_token(raw)
+            if claims:
+                user = load_user(conn, claims["user_id"])
+                if user and user["is_active"]:
+                    return user, hashed
+        return None, hashed
 
     # ---------------- verbs ----------------
     def do_GET(self):
@@ -1589,8 +1697,12 @@ def main():
     if not (BASE_DIR / "data" / "erp.db").exists():
         print("Database not found — run: python3 seed.py")
     try:
-        from db import migrate
+        from db import migrate, transaction
         migrate()
+        with transaction() as conn:
+            changed = sync_system_roles(conn)     # roles are code-defined, DB-refreshed
+        if changed:
+            print(f"roles synced: {changed}")
     except Exception as exc:      # never block startup on an additive migration
         print("migration warning:", exc)
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)

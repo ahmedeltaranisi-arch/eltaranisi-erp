@@ -349,3 +349,27 @@ def delete_budget(conn, user, company_id: int, budget_id: int, ip=None) -> dict:
     audit(conn, user, "budget.delete", "budget", budget_id, _snapshot(row), company_id=company_id, ip=ip)
     conn.execute("DELETE FROM budgets WHERE id=?", (budget_id,))
     return {"ok": True, "deleted": "budget", "id": budget_id, "number": f"BUD-{budget_id}"}
+
+
+# --------------------------------------------------------------------------
+# bank / cash accounts
+# --------------------------------------------------------------------------
+def delete_bank_account(conn, user, company_id: int, account_id: int, ip=None) -> dict:
+    acc = _row(conn, "SELECT * FROM bank_accounts WHERE id=? AND company_id=?", (account_id, company_id))
+    if acc is None:
+        raise ValidationError("NOT_FOUND: الحساب غير موجود / Account not found", status=404)
+
+    txns = conn.execute("SELECT COUNT(*) AS n FROM bank_transactions WHERE company_id=? AND bank_account_id=?",
+                        (company_id, account_id)).fetchone()["n"]
+    pays = conn.execute("SELECT COUNT(*) AS n FROM payments WHERE company_id=? AND gl_account_id=?",
+                        (company_id, acc["gl_account_id"])).fetchone()["n"]
+    if txns or pays:
+        raise ValidationError(
+            "IN_USE: لا يمكن حذف حساب عليه حركات أو سندات — أوقفه بدلًا من حذفه "
+            f"/ Account has {txns} transaction(s) and {pays} voucher(s); deactivate it instead",
+            details={"transactions": txns, "payments": pays}, status=409)
+
+    audit(conn, user, "bank_account.delete", "bank_account", account_id, _snapshot(acc),
+          company_id=company_id, ip=ip)
+    conn.execute("DELETE FROM bank_accounts WHERE id=?", (account_id,))
+    return {"ok": True, "deleted": "bank_account", "id": account_id, "code": acc["code"]}

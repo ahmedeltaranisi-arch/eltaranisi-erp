@@ -289,3 +289,72 @@ python3 tests/test_wsgi_bridge.py  →  20 passed, 0 failed
 
 كلمات المرور الثابتة والقائمة العامة للحسابات التجريبية ما زالت **مقصودة للتطوير** (طلب المالك)،
 والنسخة المنشورة تعمل بـ`ERP_SEED_DEMO_DATA=false` فلا تُعرض الحسابات ولا يُتاح `/api/dev/accounts`.
+
+---
+
+## Round «التعديل والحذف لكل سجل» — Edit & delete coverage (2026-10-21)
+
+### 1. What changed
+
+| Area | Before | Now |
+|---|---|---|
+| Editing | only creation and deletion existed | **12 edit endpoints** (`PATCH`) for customers, vendors, products, employees, bank accounts, bank transactions, fixed assets, budget lines, journal drafts, sales-invoice drafts, purchase-invoice drafts and payment drafts |
+| Permissions | a single `*.create` / `*.delete` per module | a dedicated **`*.edit`** family in the catalogue, implied by the matching create/manage right and independently grantable |
+| Banks page | read-only accounts, and it could log the user out | full **bank/cash account table** with add / edit / delete, plus a hardened auth path that no longer depends on a session row |
+| Icons on row actions | none | pencil (edit) + bin (delete) on every list row and detail page, both SVG |
+| Settings page | could blank out on an unexpected payload | guarded accessors, page renders even if a field is missing |
+
+**Why the banks page logged people out.** On Vercel the SQLite file lives in
+`/tmp`, which is ephemeral and per-instance: a session row written by instance A
+does not exist on instance B, so the next request answered **401** and the global
+401 handler sent the user back to the login screen. It was reproducible locally by
+deleting the `sessions` rows between two requests with the same token. The fix is
+a self-contained token: `base64url(u{uid}.{exp}.{nonce})` plus an HMAC-SHA256
+signature, signed with `ERP_SECRET_KEY` (falling back to `data/.token-secret`,
+mode 600). `_auth()` still checks the session table first — so revocation keeps
+working — and only when `ERP_EPHEMERAL_AUTH=1` (set by `api/index.py`) does a
+valid signature with a missing row stay authenticated.
+
+### 2. Decisions
+
+1. **Edit is not posting.** Edits never write to the ledger. Posted documents and
+   closed periods stay immutable; the API explains exactly why it refused
+   (`ALREADY_POSTED`, `PERIOD_CLOSED`, `RECONCILED`, `HAS_DEPRECIATION`,
+   `SYSTEM_ENTRY`).
+2. **`*.edit` is implied by create/manage.** Whoever may create a record may fix
+   it while it is a draft; a permission can still be granted on its own for a
+   clerk who only corrects typos. System roles are re-synced from code at every
+   boot, so no reseed is needed when a permission is added.
+3. **Partial updates with server-side ownership.** Only whitelisted fields are
+   written, everything is scoped by `company_id`, and every edit stores a
+   before/after snapshot in `audit_logs`.
+4. **Confirmation before saving.** «هل أنت متأكد من تعديل كذا؟» names the record;
+   cancelling restores the typed values instead of discarding them.
+5. **Bank accounts are documents too.** They got the same treatment as the other
+   masters: create, edit, delete — with a hard stop when transactions or vouchers
+   already reference the account (deactivate instead of delete).
+
+### 3. Files touched
+
+`security.py` (token signing, `*.edit` permissions, `sync_system_roles`),
+`server.py` (12 `PATCH` routes, `POST /api/bank-accounts`, startup role sync),
+`editing.py` (new edit service), `deletion.py` (bank-account guard),
+`static/app.js` (edit button, confirm modal, delegated handler, edit icon),
+`static/pages.js` (edit buttons on 11 pages, banks table, settings guard),
+`static/styles.css` (icon system polish), `tests/test_erp.py` (+10 tests),
+`docs/` (API, OpenAPI, user guide, test plan).
+
+### 4. Tests
+
+`44 passed` (was 34). New coverage: field whitelisting, audit before/after,
+permission enforcement, empty body, unknown id, duplicate code, posted-document
+immutability, draft edit, employee + bank-account edit, company scoping, token
+tampering, and session-row loss failing closed. A headless sweep renders all 21
+pages with the new action buttons (`edit=`/`delete=` counts verified per page).
+
+### 5. Deployment note
+
+The new token scheme needs a stable secret across instances. **Set
+`ERP_SECRET_KEY`** in the Vercel project environment (any long random string);
+without it each instance mints its own `data/.token-secret` and sessions break
+again. `EPHEMERAL_AUTH` is enabled automatically by the serverless entry point.
