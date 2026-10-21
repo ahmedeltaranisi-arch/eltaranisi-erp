@@ -1,0 +1,15 @@
+# runtime data & secrets
+.env
+data/erp.db
+data/erp.db-*
+data/uploads/
+data/dev-credentials.txt
+backups/
+*.log
+
+# python
+__pycache__/
+*.pyc
+
+# os
+.DS_Store

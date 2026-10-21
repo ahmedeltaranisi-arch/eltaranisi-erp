@@ -1,0 +1,29 @@
+# Development / single-node deployment stack.
+#   docker compose -f infra/docker-compose.yml up --build
+services:
+  erp:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      PORT: "8000"
+      ERP_DB: /app/data/erp.db
+    volumes:
+      - erp-data:/app/data
+    restart: unless-stopped
+    # TLS / rate limiting belong in front of the app (nginx, cloud LB, Cloudflare).
+
+  # Optional reverse proxy with TLS termination.
+  proxy:
+    image: nginx:alpine
+    depends_on: [erp]
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    profiles: ["with-proxy"]
+
+volumes:
+  erp-data:

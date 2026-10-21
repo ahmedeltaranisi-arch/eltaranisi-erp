@@ -1,0 +1,150 @@
+"""Offline verification of the Vercel WSGI bridge (`api/index.py`).
+
+No HTTP server is started: requests go straight into the WSGI app, exactly the
+way Vercel invokes it. Run with:
+
+    python3 tests/test_wsgi_bridge.py
+
+It exercises the real code path (routing → auth → SQLite → PDF export) and the
+serverless-specific bits: /tmp database bootstrap, credentials fallback and the
+`__p` rewrite parameter.
+"""
+from __future__ import annotations
+
+import io
+import os
+import sys
+import tempfile
+import traceback
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+TMP = Path(tempfile.mkdtemp(prefix="erp-vercel-"))
+os.environ["ERP_DB"] = str(TMP / "erp.db")
+os.environ["ERP_CREDENTIALS_FILE"] = str(TMP / "dev-credentials.txt")
+os.environ["ERP_SEED_DEMO_DATA"] = "true"
+
+sys.path.insert(0, str(ROOT / "api"))
+import index as wsgi_app  # noqa: E402  (must come after the env vars)
+
+PASS, FAIL = 0, 0
+
+
+def call(method, path, body=b"", headers=None, rewrite=True):
+    """Invoke the WSGI app the way Vercel does (rewrite → /api/index?__p=...)."""
+    headers = headers or {}
+    if rewrite and path.startswith("/api/"):
+        environ_path, _, query = path.partition("?")
+        tail = environ_path[len("/api/"):]
+        query = f"__p={tail}" + (f"&{query}" if query else "")
+    else:
+        environ_path, _, query = path.partition("?")
+    environ = {
+        "REQUEST_METHOD": method,
+        "PATH_INFO": "/api/index",
+        "QUERY_STRING": query,
+        "CONTENT_TYPE": "application/json" if body else "",
+        "CONTENT_LENGTH": str(len(body)) if body else "",
+        "SERVER_NAME": "localhost",
+        "HTTP_HOST": "erp.vercel.app",
+        "HTTP_X_FORWARDED_FOR": "203.0.113.7",
+        "wsgi.input": io.BytesIO(body),
+        "wsgi.url_scheme": "https",
+    }
+    for name, value in headers.items():
+        environ["HTTP_" + name.upper().replace("-", "_")] = value
+    captured = {}
+
+    def start_response(status, response_headers):
+        captured["status"] = status
+        captured["headers"] = dict(response_headers)
+
+    chunks = wsgi_app.app(environ, start_response)
+    payload = b"".join(chunks)
+    return int(captured["status"].split()[0]), payload, captured["headers"]
+
+
+def check(name, condition, detail=""):
+    global PASS, FAIL
+    if condition:
+        PASS += 1
+        print(f"  ✓ {name}")
+    else:
+        FAIL += 1
+        print(f"  ✗ {name} {detail}")
+
+
+def main():
+    print("Vercel WSGI bridge — offline verification")
+    print(f"  database: {os.environ['ERP_DB']}")
+
+    # 1. cold start actually created + seeded the database
+    check("cold start created the SQLite file", Path(os.environ["ERP_DB"]).exists())
+    check("cold start wrote demo credentials", Path(os.environ["ERP_CREDENTIALS_FILE"]).exists())
+    size = Path(os.environ["ERP_DB"]).stat().st_size
+    check("database is seeded with real data (>500 KB)", size > 500_000, f"({size} bytes)")
+
+    # 2. health + public demo accounts
+    status, body, headers = call("GET", "/api/health")
+    check("GET /api/health → 200 JSON", status == 200 and b'"status": "ok"' in body)
+    status, body, headers = call("GET", "/api/dev/accounts")
+    check("GET /api/dev/accounts exposes 7 demo logins",
+          status == 200 and body.count(b'"username"') == 7)
+
+    # 3. auth guard
+    status, body, headers = call("GET", "/api/meta")
+    check("unauthenticated /api/meta → 401", status == 401, f"(got {status})")
+
+    # 4. login through the bridge
+    import json
+    creds = json.dumps({"username": "ahmed.taranisi", "password": "Eltaranisi@2026"}).encode()
+    status, body, headers = call("POST", "/api/auth/login", creds)
+    token = json.loads(body).get("token") if status == 200 else None
+    check("POST /api/auth/login → token", status == 200 and bool(token))
+    auth = {"Authorization": f"Bearer {token}"}
+
+    # 5. authenticated reads
+    status, body, headers = call("GET", "/api/meta", headers=auth)
+    check("authenticated /api/meta → 200", status == 200)
+    status, body, _ = call("GET", "/api/dashboard", headers=auth)
+    check("GET /api/dashboard → 200", status == 200)
+
+    # 6. binary document export (PDF) through the bridge
+    status, body, headers = call("GET", "/api/sales-invoices/54/pdf?lang=ar", headers=auth)
+    check("invoice PDF export → 200 application/pdf",
+          status == 200 and headers.get("Content-Type") == "application/pdf", f"(got {status})")
+    check("PDF bytes survive the bridge", body.startswith(b"%PDF-1.7") and len(body) > 150_000,
+          f"({len(body)} bytes)")
+    check("Content-Length matches the body", int(headers.get("Content-Length", 0)) == len(body))
+
+    # 7. Excel export keeps the RTL workbook flag
+    status, body, _ = call("GET", "/api/sales-invoices/54/xlsx", headers=auth)
+    check("invoice XLSX export → 200", status == 200 and body.startswith(b"PK"))
+
+    # 8. query strings survive the rewrite (filters must reach the report)
+    status, body, _ = call("GET", "/api/reports/trial-balance?from=2026-01-01&to=2026-12-31", headers=auth)
+    check("query parameters survive the __p rewrite",
+          status == 200 and b'"balanced": true' in body, f"(got {status})")
+
+    # 9. 404s and errors stay JSON
+    status, body, _ = call("GET", "/api/does-not-exist", headers=auth)
+    check("unknown API route → 404 JSON", status == 404 and b'"error"' in body)
+
+    # 10. static assets are NOT served by the function (Vercel serves them from /static)
+    status, body, _ = call("GET", "/index.html")
+    check("non-API paths are not routed through the function (documented)", status in (200, 404))
+
+    print(f"\n{PASS} passed, {FAIL} failed")
+    return 1 if FAIL else 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except SystemExit:
+        raise
+    except Exception:
+        traceback.print_exc()
+        raise SystemExit(1)

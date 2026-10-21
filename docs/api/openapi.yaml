@@ -1,0 +1,329 @@
+openapi: 3.1.0
+info:
+  title: Eltaranisi ERP API
+  version: 1.0.0
+  description: >
+    REST API for Eltaranisi ERP (Arabic-first, multi-company double-entry accounting).
+    All monetary values are integer piastres (`*_cents`); quantities are `*_milli`.
+servers:
+  - url: http://localhost:8000
+security:
+  - bearerAuth: []
+tags:
+  - name: auth
+  - name: journal
+  - name: sales
+  - name: purchases
+  - name: payables
+  - name: reports
+  - name: system
+paths:
+  /api/health:
+    get:
+      security: []
+      summary: Liveness probe
+      responses: { "200": { description: OK } }
+  /api/auth/login:
+    post:
+      security: []
+      summary: Exchange credentials for a bearer token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string, format: password }
+      responses:
+        "200":
+          description: Session created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string }
+                  user: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Error" }
+  /api/auth/me:
+    get:
+      summary: Current user, role and permissions
+      responses: { "200": { description: OK } }
+  /api/meta:
+    get:
+      summary: Companies, branches, cost centers, warehouses, fiscal years, roles
+      responses: { "200": { description: OK } }
+  /api/journal-entries:
+    get:
+      summary: Paginated journal entries
+      parameters:
+        - { in: query, name: status, schema: { type: string, enum: [draft, review, approved, posted, reversed] } }
+        - { in: query, name: page, schema: { type: integer, minimum: 1 } }
+        - { in: query, name: per_page, schema: { type: integer, minimum: 1, maximum: 200 } }
+      responses: { "200": { description: OK } }
+    post:
+      summary: Create a draft journal entry
+      description: Requires `journal.create`. Rejected when debits != credits (`UNBALANCED`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/JournalEntryInput" }
+      responses:
+        "201": { description: Created }
+        "422": { $ref: "#/components/responses/Error" }
+  /api/journal-entries/{id}/submit:
+    post:
+      summary: Submit for review (creator cannot submit own entry)
+      parameters: [{ in: path, name: id, required: true, schema: { type: integer } }]
+      responses: { "200": { description: OK }, "422": { $ref: "#/components/responses/Error" } }
+  /api/journal-entries/{id}/review:
+    post:
+      summary: Approve or reject a submitted entry
+      parameters: [{ in: path, name: id, required: true, schema: { type: integer } }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                decision: { type: string, enum: [approve, reject] }
+                comment: { type: string }
+      responses: { "200": { description: OK }, "422": { $ref: "#/components/responses/Error" } }
+  /api/journal-entries/{id}/post:
+    post:
+      summary: Post an approved entry to the GL
+      description: Requires an open fiscal period; posts exactly once.
+      parameters: [{ in: path, name: id, required: true, schema: { type: integer } }]
+      responses: { "200": { description: OK }, "422": { $ref: "#/components/responses/Error" } }
+  /api/journal-entries/{id}/reverse:
+    post:
+      summary: Create a posted mirror entry and freeze the original
+      parameters: [{ in: path, name: id, required: true, schema: { type: integer } }]
+      responses: { "200": { description: OK }, "422": { $ref: "#/components/responses/Error" } }
+  /api/sales-invoices:
+    get: { summary: List sales invoices, responses: { "200": { description: OK } } }
+    post:
+      summary: Create (and optionally post) a sales invoice
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SalesInvoiceInput" }
+      responses: { "201": { description: Created }, "422": { $ref: "#/components/responses/Error" } }
+  /api/purchase-invoices:
+    get: { summary: List purchase invoices, responses: { "200": { description: OK } } }
+    post:
+      summary: Create (and optionally post) a purchase invoice
+      responses: { "201": { description: Created }, "422": { $ref: "#/components/responses/Error" } }
+  /api/payments:
+    get: { summary: List receipts and payments, responses: { "200": { description: OK } } }
+    post:
+      summary: Create a receipt/payment with invoice allocations
+      responses: { "201": { description: Created }, "422": { $ref: "#/components/responses/Error" } }
+  /api/payables:
+    get:
+      summary: Vendor payables with aging, due schedule and GL reconciliation
+      parameters:
+        - { in: query, name: as_of, schema: { type: string, format: date } }
+      responses: { "200": { description: OK } }
+  /api/reports/trial-balance:
+    get:
+      parameters:
+        - { in: query, name: from, schema: { type: string, format: date } }
+        - { in: query, name: to, schema: { type: string, format: date } }
+      responses: { "200": { description: OK } }
+  /api/reports/income-statement:
+    get: { summary: Profit and loss for a period, responses: { "200": { description: OK } } }
+  /api/reports/balance-sheet:
+    get: { summary: Statement of financial position, responses: { "200": { description: OK } } }
+  /api/reports/export:
+    get:
+      summary: CSV export (UTF-8 BOM) — requires `reports.export`
+      parameters:
+        - { in: query, name: kind, schema: { type: string, enum: [trial-balance, income-statement, vendor-payables, aging, journal] } }
+      responses:
+        "200":
+          description: CSV file
+          content: { text/csv: { schema: { type: string } } }
+  /api/reports/pdf:
+    get:
+      summary: Financial statement as PDF (Arabic or English) — requires `reports.view`
+      parameters:
+        - { in: query, name: kind, schema: { type: string, enum: [trial-balance, income-statement, balance-sheet, cash-flow, aging, vendor-payables] } }
+        - { in: query, name: lang, schema: { type: string, enum: [ar, en], default: ar } }
+        - { in: query, name: from, schema: { type: string, format: date } }
+        - { in: query, name: to, schema: { type: string, format: date } }
+      responses:
+        "200": { description: PDF (Arabic font embedded) , content: { application/pdf: { schema: { type: string, format: binary } } } }
+        "403": { $ref: "#/components/responses/Error" }
+  /api/reports/xlsx:
+    get:
+      summary: Financial statement as RTL Excel workbook — requires `reports.export`
+      parameters:
+        - { in: query, name: kind, schema: { type: string, enum: [trial-balance, income-statement, balance-sheet, vendor-payables] } }
+      responses:
+        "200": { description: XLSX (rightToLeft="1"), content: { application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: { schema: { type: string, format: binary } } } }
+  /api/sales-invoices/{id}/pdf:
+    get:
+      summary: Tax invoice PDF — requires `sales.view`
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+        - { in: query, name: lang, schema: { type: string, enum: [ar, en], default: ar } }
+      responses:
+        "200": { description: PDF, content: { application/pdf: { schema: { type: string, format: binary } } } }
+        "403": { $ref: "#/components/responses/Error" }
+  /api/sales-invoices/{id}/xlsx:
+    get:
+      summary: Tax invoice Excel workbook — requires `sales.view`
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      responses: { "200": { description: XLSX } }
+  /api/sales-invoices/{id}/einvoice:
+    get:
+      summary: E-invoice readiness document (stable UUID + SHA-256 digest, unsigned) — requires `sales.view`
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: Signed readiness payload (persisted in `einvoice_documents`)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  documentUuid: { type: string, example: "87d21250ec43826632a2aee7..." }
+                  digest: { type: string, example: "sha256:87d21250..." }
+                  readiness: { type: object, properties: { signed: { type: boolean, example: false } } }
+  /api/purchase-invoices/{id}/pdf:
+    get:
+      summary: Purchase invoice PDF — requires `purchases.view`
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+        - { in: query, name: lang, schema: { type: string, enum: [ar, en] } }
+      responses: { "200": { description: PDF } }
+  /api/purchase-invoices/{id}/xlsx:
+    get:
+      summary: Purchase invoice Excel workbook — requires `purchases.view`
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      responses: { "200": { description: XLSX } }
+  /api/company:
+    get:
+      summary: Company profile + invoice defaults (used by PDF/Excel headers)
+      responses: { "200": { description: OK } }
+    patch:
+      summary: Partial update of company identity / invoice defaults — requires `settings.manage`
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name_ar: { type: string }
+                name_en: { type: string }
+                tax_number: { type: string }
+                phone: { type: string }
+                address: { type: string }
+                company_email: { type: string }
+                company_website: { type: string }
+                bank_details: { type: string }
+                invoice_terms: { type: string }
+                invoice_footer: { type: string }
+      responses:
+        "200": { description: "Returns { ok, changed[] }" }
+        "403": { $ref: "#/components/responses/Error" }
+  /api/dev/accounts:
+    get:
+      security: []
+      summary: DEMO ONLY — seeded development logins for one-click sign-in (404 when ERP_SEED_DEMO_DATA=false)
+      responses:
+        "200":
+          description: Demo accounts + warning
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accounts:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        username: { type: string }
+                        password: { type: string }
+                        role: { type: string }
+                        role_name_ar: { type: string }
+                        role_name_en: { type: string }
+                  demo: { type: boolean }
+                  warning: { type: string }
+        "404": { description: Demo mode disabled }
+  /api/assistant/ask:
+    post:
+      summary: Scoped financial assistant (read-only, permission-bound, no posting)
+      responses: { "200": { description: OK }, "403": { $ref: "#/components/responses/Error" } }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+  responses:
+    Error:
+      description: Uniform error envelope
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string, example: "UNBALANCED: القيد غير متوازن / Entry is not balanced" }
+              details: { type: object }
+  schemas:
+    User:
+      type: object
+      properties:
+        id: { type: integer }
+        username: { type: string }
+        full_name_ar: { type: string }
+        full_name_en: { type: string }
+        role: { type: string }
+        permissions: { type: array, items: { type: string } }
+    JournalLineInput:
+      type: object
+      required: [account_id]
+      properties:
+        account_id: { type: integer }
+        debit: { type: number, description: Amount in currency units; stored as cents }
+        credit: { type: number }
+        description: { type: string }
+        cost_center_id: { type: integer }
+    JournalEntryInput:
+      type: object
+      required: [entry_date, lines]
+      properties:
+        entry_date: { type: string, format: date }
+        entry_type: { type: string, enum: [manual, opening, adjusting, accrual, depreciation, recurring, fx] }
+        memo: { type: string }
+        idempotency_key: { type: string }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/JournalLineInput" }
+    SalesInvoiceInput:
+      type: object
+      required: [customer_id, invoice_date, lines]
+      properties:
+        customer_id: { type: integer }
+        invoice_date: { type: string, format: date }
+        due_date: { type: string, format: date }
+        warehouse_id: { type: integer, description: Required when any line uses a stocked product }
+        post: { type: boolean, default: false }
+        lines:
+          type: array
+          items:
+            type: object
+            properties:
+              product_id: { type: integer }
+              qty: { type: number }
+              unit_price: { type: number }
+              discount: { type: number }
+              tax_rate_bp: { type: integer, description: Basis points, 1400 = 14% }

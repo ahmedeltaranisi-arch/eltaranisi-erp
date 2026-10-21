@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl" data-theme="light">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
+  <meta name="theme-color" content="#4f46e5" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="description" content="الطرانيسي ERP — نظام محاسبي وإداري متكامل: محاسبة مزدوجة القيد، مديونية موردين، تقارير، فواتير ضريبية PDF/Excel." />
+  <title>الطرانيسي ERP — نظام محاسبي وإداري متكامل</title>
+  <link rel="icon" href="/logo.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="/logo.svg" />
+  <link rel="preload" href="/fonts/cairo-400.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="/fonts/cairo-700.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <a class="skip-link" href="#view" data-i18n="a11y.skip">تخطَّ إلى المحتوى</a>
+
+  <!-- ===================== Login ===================== -->
+  <div id="login-screen" class="login-screen hidden">
+    <div class="login-visual">
+      <div class="login-brand">
+        <div class="brand-mark">ط</div>
+        <div>
+          <h1 data-i18n="app.name">الطرانيسي ERP</h1>
+          <p data-i18n="app.tagline">منصة محاسبية وإدارية متكاملة</p>
+        </div>
+      </div>
+      <ul class="login-features">
+        <li><span>✓</span><div><strong data-i18n="login.f1">محاسبة عامة مزدوجة القيد</strong><small data-i18n="login.f1d">قيود متوازنة، ترحيل ذري، وعكس آمن</small></div></li>
+        <li><span>✓</span><div><strong data-i18n="login.f2">مديونية الموردين وأعمار الديون</strong><small data-i18n="login.f2d">أرصدة مستحقة واستحقاقات قادمة لكل مورد</small></div></li>
+        <li><span>✓</span><div><strong data-i18n="login.f3">صلاحيات دقيقة على الخادم</strong><small data-i18n="login.f3d">فصل مهام، سجل تدقيق، ومستويات اعتماد</small></div></li>
+        <li><span>✓</span><div><strong data-i18n="login.f4">عربي/إنجليزي ووضع ليلي</strong><small data-i18n="login.f4d">RTL وLTR كامل مع تفضيلات محفوظة</small></div></li>
+      </ul>
+      <div class="login-foot" data-i18n="login.foot">بيئة تطوير — البيانات تجريبية وليست بيانات إنتاج.</div>
+    </div>
+    <div class="login-panel">
+      <form id="login-form" class="login-card" autocomplete="off">
+        <div class="login-tools">
+          <button type="button" class="icon-btn" id="login-theme" title="Theme">🌙</button>
+          <button type="button" class="icon-btn" id="login-lang" title="Language">EN</button>
+        </div>
+        <h2 data-i18n="login.title">تسجيل الدخول</h2>
+        <p class="muted" data-i18n="login.subtitle">استخدم بيانات حسابك المؤسسي. كل إجراء يُسجَّل في سجل التدقيق.</p>
+        <label class="field">
+          <span data-i18n="login.username">اسم المستخدم</span>
+          <input name="username" id="login-username" required autocomplete="username" placeholder="ahmed.taranisi" />
+        </label>
+        <label class="field">
+          <span data-i18n="login.password">كلمة المرور</span>
+          <div class="pw-wrap">
+            <input name="password" id="login-password" type="password" required autocomplete="current-password" placeholder="••••••••" />
+            <button type="button" class="pw-toggle" id="pw-toggle" aria-label="show password" data-i18n-title="login.showPw" title="إظهار كلمة المرور">👁</button>
+          </div>
+        </label>
+        <div id="login-error" class="form-error hidden"></div>
+        <button class="btn btn-primary btn-block" type="submit" data-i18n="login.submit">دخول آمن</button>
+        <details class="demo-box hidden" id="demo-box">
+          <summary data-i18n="login.demo">حسابات تجريبية جاهزة (بيئة تطوير) — اضغط للتعبئة</summary>
+          <div class="demo-grid" id="demo-grid"></div>
+        </details>
+        <div class="login-hint">
+          <span data-i18n="login.hint">كل إجراء يُسجَّل في سجل التدقيق — هذه بيئة تطوير.</span>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ===================== App ===================== -->
+  <div id="app" class="app hidden">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-head">
+        <div class="brand-mark small">ط</div>
+        <div class="brand-text">
+          <strong data-i18n="app.name">الطرانيسي ERP</strong>
+          <small id="company-name">—</small>
+        </div>
+        <button class="icon-btn sidebar-toggle" id="sidebar-toggle" title="طي القائمة">«</button>
+      </div>
+      <nav class="nav" id="nav"></nav>
+      <div class="sidebar-foot">
+        <div class="userchip" id="userchip"></div>
+        <button class="btn btn-ghost btn-sm" id="logout-btn" data-i18n="nav.logout">تسجيل الخروج</button>
+      </div>
+    </aside>
+
+    <div class="main">
+      <header class="topbar">
+        <button class="icon-btn mobile-only" id="menu-btn">☰</button>
+        <div class="page-title">
+          <h2 id="page-title">لوحة التحكم</h2>
+          <div id="breadcrumbs" class="breadcrumbs"></div>
+        </div>
+        <div class="topbar-actions">
+          <div class="dropdown">
+            <button class="company-switch" id="company-btn" title="الشركة / الفرع">
+              <span class="dot" id="company-initial">ط</span>
+              <span class="txt"><strong id="company-label">—</strong><small id="branch-label">—</small></span>
+              <span class="caret">▾</span>
+            </button>
+            <div class="dropdown-panel hidden" id="company-panel" style="min-width:270px"></div>
+          </div>
+          <div class="global-search">
+            <input id="global-search" placeholder="بحث شامل…" data-i18n-ph="search.placeholder" />
+            <div id="search-results" class="search-results hidden"></div>
+          </div>
+          <button class="icon-btn mobile-only" id="mobile-search" title="بحث" aria-label="search">🔍</button>
+          <button class="icon-btn" id="quick-create" title="إجراء سريع" aria-label="quick create">＋</button>
+          <div class="dropdown">
+            <button class="icon-btn" id="notif-btn" title="الإشعارات">🔔<span class="badge-dot hidden" id="notif-count"></span></button>
+            <div class="dropdown-panel notif-panel hidden" id="notif-panel"></div>
+          </div>
+          <button class="icon-btn" id="theme-btn" title="الوضع الليلي">🌙</button>
+          <button class="icon-btn" id="lang-btn" title="English">EN</button>
+          <div class="dropdown">
+            <button class="avatar" id="avatar-btn">؟</button>
+            <div class="dropdown-panel user-panel hidden" id="user-panel">
+              <div class="user-panel-head" id="user-panel-head"></div>
+              <button class="menu-item" id="menu-password" data-i18n="nav.changePassword">تغيير كلمة المرور</button>
+              <button class="menu-item" id="menu-logout" data-i18n="nav.logout">تسجيل الخروج</button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main class="content" id="view">
+        <div class="skeleton-wrap" id="boot"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>
+      </main>
+    </div>
+    <div class="scrim hidden" id="scrim"></div>
+  </div>
+
+  <nav class="bottom-nav" id="bottom-nav" aria-label="mobile navigation"></nav>
+
+  <div id="modal-root" class="modal-root hidden"></div>
+  <div id="toast-root" class="toast-root"></div>
+  <div id="loading-bar" class="loading-bar hidden"></div>
+
+  <script src="/i18n.js"></script>
+  <script src="/app.js"></script>
+  <script src="/pages.js"></script>
+</body>
+</html>

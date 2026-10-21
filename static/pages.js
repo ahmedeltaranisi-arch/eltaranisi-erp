@@ -1,0 +1,1896 @@
+/* ============================================================
+   Eltaranisi ERP — pages
+   ============================================================ */
+(function () {
+  const today = () => (APP.meta && APP.meta.today) || new Date().toISOString().slice(0, 10);
+  const yearStart = () => today().slice(0, 4) + "-01-01";
+  const L = (ar, en) => (APP.lang === "ar" ? ar : en);
+
+  function pageHead(titleKey, subKey, actions = "") {
+    return `<div class="page-head">
+      <div><h1>${ESC(t(titleKey))}</h1><p>${ESC(t(subKey))}</p></div>
+      <div class="actions">${actions}</div></div>`;
+  }
+  function setTitle(titleKey, crumbs = []) { setPageTitle(t(titleKey), crumbs); }
+
+  function optionsFrom(rows, valueKey, labelKey = null) {
+    return rows.map(r => ({ value: r[valueKey], label: labelKey ? r[labelKey] : (APP.lang === "ar" ? r.name_ar : r.name_en) }));
+  }
+  function exportBtn(kind, params = {}) {
+    const q = new URLSearchParams({ kind, ...params }).toString();
+    return `<button class="btn btn-sm" data-export="/api/reports/export?${q}" data-name="${kind}.csv">⬇ ${ESC(t("common.export"))}</button>`;
+  }
+
+  /** Export menu for a report: CSV / Excel / PDF (AR & EN) — all via authenticated fetch. */
+  function reportExports(kind, params = {}) {
+    const q = (extra) => new URLSearchParams({ kind, ...params, ...extra }).toString();
+    const pairs = [
+      ["pdf", "ar", L("عربي", "Arabic"), "📄", "PDF · A4"],
+      ["pdf", "en", L("إنجليزي", "English"), "📄", "PDF · A4"],
+      ["xlsx", "ar", L("Excel", "Excel"), "📊", "XLSX · RTL"],
+      ["csv", "ar", L("CSV", "CSV"), "🧾", "CSV · UTF-8"],
+    ];
+    return `<details class="export-menu"><summary>⬇ ${ESC(L("تصدير", "Export"))} <span class="caret">▾</span></summary>
+      <div class="menu">
+        ${pairs.map(([fmt, lang, label, icon, hint]) => {
+          const url = fmt === "csv" ? `/api/reports/export?${q({})}` : `/api/reports/${fmt}?${q({ lang })}`;
+          return `<button data-export="${url}" data-name="${kind}.${fmt}"><span class="mi">${icon}</span>
+            <span class="ml">${ESC(label)}</span><span class="hint">${hint}</span></button>`;
+        }).join("")}
+      </div></details>`;
+  }
+
+  /** Document toolbar for an invoice: print, PDF (AR/EN), Excel, e-invoice JSON. */
+  function docToolbar(kind, id) {
+    const base = kind === "sales" ? "sales-invoices" : "purchase-invoices";
+    return `<div class="doc-toolbar">
+      <details class="export-menu"><summary>📄 ${ESC(L("PDF / طباعة", "PDF / print"))} <span class="caret">▾</span></summary>
+        <div class="menu">
+          <button data-preview="/api/${base}/${id}/pdf?lang=${APP.lang}">👁 ${ESC(L("معاينة وطباعة", "Preview & print"))}</button>
+          <button data-export="/api/${base}/${id}/pdf?lang=ar" data-name="invoice-ar.pdf">📄 ${ESC(L("تنزيل PDF عربي", "Arabic PDF"))}</button>
+          <button data-export="/api/${base}/${id}/pdf?lang=en" data-name="invoice-en.pdf">📄 ${ESC(L("تنزيل PDF إنجليزي", "English PDF"))}</button>
+        </div></details>
+      <button class="btn btn-sm" data-export="/api/${base}/${id}/xlsx?lang=${APP.lang}" data-name="invoice.xlsx">📊 Excel</button>
+      <button class="btn btn-sm" data-einv="/api/${base}/${id}/einvoice">🏛 ${ESC(L("فاتورة إلكترونية", "E-invoice"))}</button>
+    </div>`;
+  }
+
+  /** Wire every [data-export] / [data-preview] / [data-einv] inside a container. */
+  function wireExports(root) {
+    $$("[data-export]", root).forEach(b => b.onclick = (e) => {
+      e.preventDefault();
+      const det = b.closest("details");
+      if (det) det.open = false;
+      downloadApi(b.dataset.export, b.dataset.name || "export");
+    });
+    $$("[data-preview]", root).forEach(b => b.onclick = (e) => {
+      e.preventDefault();
+      const det = b.closest("details");
+      if (det) det.open = false;
+      previewDoc(b.dataset.preview, L("معاينة المستند", "Document preview"));
+    });
+    $$("[data-einv]", root).forEach(b => b.onclick = async () => {
+      try {
+        const d = await api(b.dataset.einv);
+        openModal({
+          title: L("جاهزية الفاتورة الإلكترونية", "E-invoicing readiness"),
+          wide: true,
+          body: `<div class="form-error" style="background:color-mix(in srgb,var(--warn) 12%,transparent);color:var(--warn);border-color:color-mix(in srgb,var(--warn) 30%,transparent)">
+              ${ESC(L(I18N_EINV_NOTE_AR, I18N_EINV_NOTE_EN))}</div>
+            <div class="stat-line"><span>UUID</span><strong class="mono" style="direction:ltr">${ESC(d.documentUuid)}</strong></div>
+            <div class="stat-line"><span>SHA-256</span><strong class="mono" style="direction:ltr;font-size:11px">${ESC(d.digest.replace("sha256:", ""))}</strong></div>
+            <div class="stat-line"><span>${ESC(t("common.total"))}</span><strong>${fmtMoney(Math.round((d.document.totalAmount || 0) * 100))}</strong></div>
+            <pre dir="ltr" style="max-height:300px;overflow:auto;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:12px;font-size:11.5px">${ESC(JSON.stringify(d, null, 2))}</pre>`,
+          footer: `<button class="btn btn-sm" id="einv-copy">${ESC(L("نسخ JSON", "Copy JSON"))}</button>
+                   <button class="btn btn-sm btn-primary" data-close>${ESC(t("common.close") || "OK")}</button>`,
+          onMount: (r2) => {
+            const cp = $("#einv-copy", r2);
+            if (cp) cp.onclick = () => {
+              navigator.clipboard?.writeText(JSON.stringify(d, null, 2));
+              toast(L("تم النسخ", "Copied"), "ok");
+            };
+          }
+        });
+      } catch (e) { toast(e.message, "err"); }
+    });
+  }
+  window.wireExports = wireExports;   // let the router wire exports on every page
+  const I18N_EINV_NOTE_AR = "مستند جاهزية غير موقّع — الإرسال إلى مصلحة الضرائب يتطلب تكاملًا معتمدًا وشهادة ختم إلكتروني. لم يتم إرسال أي بيانات خارج النظام.";
+  const I18N_EINV_NOTE_EN = "Unsigned readiness document — transmission to the tax authority requires an accredited integration and e-seal certificate. No data has been sent outside the system.";
+  function printBtn() {
+    return `<button class="btn btn-sm" onclick="window.print()">🖨 ${ESC(t("common.print"))}</button>`;
+  }
+
+  /* ==================================================================
+     COMPANY SETTINGS (invoice identity)
+     ================================================================== */
+  PAGES.settings = {
+    perm: "reports.view",
+    async render(view) {
+      setTitle("nav.settings");
+      const d = await api("/api/company");
+      const co = d.company, st = d.settings || {};
+      const ro = d.can_edit ? "" : "disabled";
+      const field = (id, label, value, type = "text") =>
+        `<div class="field"><span>${ESC(label)}</span>
+           <input id="${id}" type="${type}" value="${ESC(value || "")}" ${ro}/></div>`;
+      view.innerHTML = `${pageHead(L("إعدادات الشركة والفواتير", "Company & invoice settings"), "settings.subtitle")}
+        <div class="split">
+          ${card(L("بيانات الشركة", "Company profile"), `
+            ${field("co-name-ar", L("الاسم بالعربية", "Arabic name"), co.name_ar)}
+            ${field("co-name-en", L("الاسم بالإنجليزية", "English name"), co.name_en)}
+            <div class="grid cols-2" style="gap:0 14px">
+              ${field("co-tax", L("الرقم الضريبي", "Tax number"), co.tax_number)}
+              ${field("co-phone", L("الهاتف", "Phone"), co.phone)}
+            </div>
+            ${field("co-address", L("العنوان", "Address"), co.address)}
+            <div class="grid cols-2" style="gap:0 14px">
+              ${field("co-email", L("البريد الإلكتروني", "Email"), st.company_email, "email")}
+              ${field("co-website", L("الموقع", "Website"), st.company_website)}
+            </div>`)}
+          ${card(L("بيانات الفاتورة", "Invoice defaults"), `
+            ${field("co-bank", L("بيانات البنك (تظهر أسفل الفاتورة)", "Bank details (invoice footer)"), st.bank_details)}
+            ${field("co-terms", L("شروط السداد", "Payment terms"), st.invoice_terms)}
+            ${field("co-footer", L("نص تذييل الفاتورة", "Invoice footer text"), st.invoice_footer)}
+            <div class="doc-toolbar" style="margin-top:6px">
+              ${d.can_edit ? `<button class="btn btn-primary" id="co-save">${ESC(t("common.save"))}</button>` : ""}
+              <button class="btn" data-export="/api/reports/pdf?kind=vendor-payables" data-name="sample.pdf">📄 ${ESC(L("معاينة ترويسة التقارير", "Preview report header"))}</button>
+            </div>
+            <p class="field-hint" style="margin-top:10px">${ESC(L(
+              "هذه البيانات تُستخدم في رأس الفاتورة الضريبية وملفات PDF/Excel وفي مستند الجاتوزية.",
+              "These values appear on tax invoices, PDF/Excel exports and the e-invoice document."))}</p>`)}
+        </div>
+        ${card(L("معاينة رأس الفاتورة", "Invoice header preview"), `
+          <div style="border:1px solid var(--border);border-radius:14px;overflow:hidden">
+            <div class="inv-preview-head">
+              <span class="inv-preview-mark">ط</span>
+              <div class="inv-preview-id">
+                <strong id="pv-name">${ESC(co.name_ar)}</strong>
+                <small id="pv-sub">${ESC(co.name_en)}</small>
+              </div>
+              <div class="inv-preview-meta">
+                <div>${ESC(L("الرقم الضريبي", "Tax No."))}: <span id="pv-tax" dir="ltr">${ESC(co.tax_number || "—")}</span></div>
+                <div id="pv-addr">${ESC(co.address || "")}</div>
+              </div>
+            </div>
+            <div style="padding:14px 20px;background:var(--surface-2);font-size:12.5px;color:var(--text-2)">
+              ${ESC(L("فاتورة ضريبية — الترويسة أعلاه تُطبع على كل فاتورة PDF.", "Tax invoice — the header above is printed on every PDF invoice."))}
+            </div>
+          </div>`)}
+      `;
+      wireExports(view);
+      const save = $("#co-save", view);
+      if (save) save.onclick = async () => {
+        try {
+          await api("/api/company", { method: "PATCH", body: {
+            name_ar: $("#co-name-ar").value, name_en: $("#co-name-en").value,
+            tax_number: $("#co-tax").value, phone: $("#co-phone").value,
+            address: $("#co-address").value,
+            company_email: $("#co-email").value, company_website: $("#co-website").value,
+            bank_details: $("#co-bank").value, invoice_terms: $("#co-terms").value,
+            invoice_footer: $("#co-footer").value,
+          }});
+          toast(t("common.saved"), "ok");
+          render();
+        } catch (e) { toast(e.message, "err"); }
+      };
+      // live header preview
+      const bind = (id, target, fallback = "") => {
+        const el = $(id, view);
+        if (el) el.oninput = () => { const t2 = $(target, view); if (t2) t2.textContent = el.value || fallback; };
+      };
+      bind("#co-name-ar", "#pv-name");
+      bind("#co-name-en", "#pv-sub");
+      bind("#co-tax", "#pv-tax", "—");
+      bind("#co-address", "#pv-addr");
+    }
+  };
+
+  /* ==================================================================
+     DASHBOARD
+     ================================================================== */
+  PAGES.dashboard = {
+    perm: "dashboard.view",
+    async render(view) {
+      setTitle("nav.dashboard");
+      view.innerHTML = `<div class="skeleton-wrap"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>`;
+      const d = await api("/api/dashboard");
+      const k = d.kpis;
+      const main = `
+        ${pageHead("dash.title", "dash.subtitle", `
+          <span class="chip">${ESC(t("common.asOf"))}: ${fmtDate(d.as_of)}</span>
+          ${can("assistant") || can("ai.use") ? `<a class="btn btn-sm" href="#/assistant">✦ ${ESC(t("nav.assistant"))}</a>` : ""}
+          <a class="btn btn-sm" href="#/reports">▤ ${ESC(t("nav.reports"))}</a>`)}
+
+        <div class="grid cols-4">
+          ${kpi({ label: t("dash.revenue"), value: k.revenue_cents, icon: "▲", tone: "ok" })}
+          ${kpi({ label: t("dash.expenses"), value: k.expenses_cents, icon: "▼", tone: "danger" })}
+          ${kpi({ label: t("dash.netProfit"), value: k.net_profit_cents, icon: "◈", tone: k.net_profit_cents >= 0 ? "ok" : "danger",
+                  sub: `${ESC(t("common.total"))}: ${pct(k.net_profit_cents, k.revenue_cents || 1)}` })}
+          ${kpi({ label: t("dash.cash"), value: k.cash_cents, icon: "▬" })}
+        </div>
+        <div class="grid cols-4" style="margin-top:16px">
+          ${kpi({ label: t("dash.ap"), value: k.ap_cents, icon: "◫", tone: "warn",
+                  sub: `${ESC(t("payables.overdue"))}: ${fmtMoney(k.vendor_overdue_cents)}` })}
+          ${kpi({ label: t("dash.ar"), value: k.ar_cents, icon: "◨",
+                  sub: `${ESC(t("dash.overdue"))}: ${k.overdue_count}` })}
+          ${kpi({ label: t("dash.inventory"), value: k.inventory_value_cents, icon: "▩" })}
+          ${kpi({ label: t("dash.pending"), value: k.pending_approvals, icon: "◔", raw: true,
+                  sub: `<a href="#/journal?status=review">${ESC(t("common.viewAll"))}</a>` })}
+        </div>
+
+        <div class="split" style="margin-top:18px">
+          ${card(t("dash.series"), `
+            ${barChart(d.series)}
+            <div class="legend" style="margin-top:8px">
+              <div><i style="background:var(--brand)"></i>${ESC(t("dash.revenue"))}</div>
+              <div><i style="background:var(--accent)"></i>${ESC(t("dash.expenses"))}</div>
+            </div>`, "", "")}
+          ${card(t("dash.cashAccounts"), `
+            ${d.cash_accounts.map(a => `<div class="stat-line"><span>${ESC(APP.lang === "ar" ? a.name_ar : (a.name_en || a.name_ar))}<br><small class="muted">${ESC(a.gl_code)}</small></span>
+                <strong>${fmtMoney(a.balance_cents)}</strong></div>`).join("")}
+            <div class="stat-line" style="border-top:2px solid var(--border-strong);margin-top:6px">
+              <span><strong>${ESC(t("common.total"))}</strong></span><strong>${fmtMoney(k.cash_cents)}</strong></div>`)}
+        </div>
+
+        <div class="split" style="margin-top:18px">
+          ${card(t("dash.topVendors"), renderTable([
+            { key: "name_ar", label: t("common.vendor"), cls: "wrap", render: r => `<div>${ESC(APP.lang === "ar" ? r.name_ar : r.name_en)}<br><small class="muted">${ESC(r.code)}</small></div>` },
+            { key: "outstanding_cents", label: t("payables.outstanding"), cls: "num", render: r => fmtMoney(r.outstanding_cents) },
+            { key: "overdue_cents", label: t("payables.overdue"), cls: "num", render: r => r.overdue_cents ? `<span class="neg">${fmtMoney(r.overdue_cents)}</span>` : "—" },
+          ], d.top_vendors, { compact: true }), `<a class="btn btn-sm btn-ghost" href="#/payables">${ESC(t("common.viewAll"))}</a>`)}
+          ${card(t("dash.recent"), renderTable([
+            { key: "entry_no", label: "#", render: r => `<a href="#/journal/${r.id}">${ESC(r.entry_no)}</a>` },
+            { key: "entry_date", label: t("common.date"), render: r => fmtDate(r.entry_date) },
+            { key: "memo", label: t("common.description"), cls: "wrap", render: r => `<span title="${ESC(r.memo)}">${ESC(r.memo.slice(0, 34))}${r.memo.length > 34 ? "…" : ""}</span>` },
+            { key: "total_debit_cents", label: t("common.amount"), cls: "num", render: r => fmtMoney(r.total_debit_cents) },
+            { key: "status", label: t("common.status"), render: r => statusBadge(r.status) },
+          ], d.recent_entries, { compact: true }), `<a class="btn btn-sm btn-ghost" href="#/journal">${ESC(t("common.viewAll"))}</a>`)}
+        </div>
+
+        <div class="split" style="margin-top:18px">
+          ${card(t("dash.arAging"), doughnut([
+            { label: t("reports.bucket.current"), value: d.ar_aging.current },
+            { label: t("reports.bucket.1_30"), value: d.ar_aging["1_30"] },
+            { label: t("reports.bucket.31_60"), value: d.ar_aging["31_60"] },
+            { label: t("reports.bucket.61_90"), value: d.ar_aging["61_90"] },
+            { label: t("reports.bucket.over_90"), value: d.ar_aging.over_90 },
+          ]))}
+          ${card(t("dash.apAging"), doughnut([
+            { label: t("reports.bucket.current"), value: d.ap_aging.current },
+            { label: t("reports.bucket.1_30"), value: d.ap_aging["1_30"] },
+            { label: t("reports.bucket.31_60"), value: d.ap_aging["31_60"] },
+            { label: t("reports.bucket.61_90"), value: d.ap_aging["61_90"] },
+            { label: t("reports.bucket.over_90"), value: d.ap_aging.over_90 },
+          ]))}
+        </div>`;
+      view.innerHTML = main;
+    }
+  };
+
+  /* ==================================================================
+     CHART OF ACCOUNTS
+     ================================================================== */
+  PAGES.accounts = {
+    perm: "accounts.view",
+    async render(view) {
+      setTitle("nav.accounts");
+      const data = await api("/api/accounts");
+      const typeNames = { asset: "accounts.asset", liability: "accounts.liability", equity: "accounts.equity", revenue: "accounts.revenue", expense: "accounts.expense" };
+      const actions = `${can("accounts.create") ? `<button class="btn btn-primary btn-sm" id="new-acc">＋ ${ESC(t("accounts.new"))}</button>` : ""}`;
+      const groups = {};
+      data.accounts.forEach(a => { (groups[a.type] = groups[a.type] || []).push(a); });
+
+      const tree = Object.keys(typeNames).map(type => {
+        const rows = groups[type] || [];
+        if (!rows.length) return "";
+        const total = rows.filter(r => r.is_postable).reduce((s, r) => s + r.display_balance_cents, 0);
+        return `<div class="section-title"><span>${ESC(t(typeNames[type]))}</span><span class="line"></span>
+            <span class="mono">${fmtMoney(total)}</span></div>
+          ${rows.map(a => `
+            <div class="tree-row ${a.is_postable ? "postable" : ""}" style="padding-inline-start:${12 + (a.level - 1) * 18}px"
+                 ${a.is_postable ? `data-acc="${a.id}"` : ""}>
+              <span class="code">${ESC(a.code)}</span>
+              <span class="name ${a.is_postable ? "" : "muted"}">${ESC(APP.lang === "ar" ? a.name_ar : a.name_en)}
+                ${a.is_postable ? "" : `<span class="pill">${ESC(L("تجميعي", "group"))}</span>`}
+                ${a.is_active ? "" : `<span class="badge red">${ESC(t("status.inactive"))}</span>`}</span>
+              <span class="bal">${fmtMoney(a.display_balance_cents)}</span>
+            </div>`).join("")}`;
+      }).join("");
+
+      view.innerHTML = `${pageHead("accounts.title", "accounts.subtitle", actions)}
+        ${card("", `
+          <div class="table-toolbar"><input id="acc-search" placeholder="${ESC(t("common.search"))}" style="flex:1;max-width:320px"/>
+            <span class="muted small">${data.accounts.length} ${ESC(t("common.rows"))}</span></div>
+          <div id="acc-tree" style="padding:8px 10px 16px">${tree}</div>`)}`;
+
+      const wire = (root) => {
+        root.querySelectorAll("[data-acc]").forEach(el => el.onclick = () => accountsLedgerModal(Number(el.dataset.acc), data.accounts.find(a => a.id === Number(el.dataset.acc))));
+      };
+      wire(view);
+      $("#acc-search").oninput = (e) => {
+        const q = e.target.value.toLowerCase();
+        $$("#acc-tree .tree-row").forEach(r => {
+          r.style.display = r.textContent.toLowerCase().includes(q) ? "" : "none";
+        });
+      };
+      if (can("accounts.create")) {
+        $("#new-acc").onclick = () => openForm({
+          title: t("accounts.new"),
+          fields: [
+            { name: "code", label: t("common.code"), required: true },
+            { name: "type", label: t("accounts.type"), type: "select", required: true,
+              options: Object.keys(typeNames).map(k => ({ value: k, label: t(typeNames[k]) })) },
+            { name: "name_ar", label: "الاسم بالعربية", required: true },
+            { name: "name_en", label: "Name (English)", required: true },
+            { name: "parent_id", label: t("accounts.parent"), type: "select",
+              options: [{ value: "", label: "—" }, ...data.accounts.map(a => ({ value: a.id, label: `${a.code} — ${a.name_ar}` }))] },
+          ],
+          onSubmit: async (d) => {
+            await api("/api/accounts", { method: "POST", body: { ...d, parent_id: d.parent_id || null } });
+            toast(t("common.saved")); render();
+          }
+        });
+      }
+    }
+  };
+
+  async function accountsLedgerModal(accountId, acc) {
+    const to = today(), from = yearStart();
+    const data = await api(`/api/reports/ledger?account_id=${accountId}&from=${from}&to=${to}`);
+    openModal({
+      title: `${acc.code} — ${APP.lang === "ar" ? acc.name_ar : acc.name_en}`,
+      wide: true,
+      body: `<div class="table-toolbar" style="border:1px solid var(--border);border-radius:12px;margin-bottom:12px">
+          <span class="muted small">${from} → ${to}</span><div style="flex:1"></div>
+          ${exportBtn("journal", { from, to })}</div>
+        ${renderTable([
+          { key: "entry_date", label: t("common.date") },
+          { key: "entry_no", label: "#" },
+          { key: "description", label: t("common.description") },
+          { key: "debit_cents", label: t("common.debit"), cls: "num", render: r => r.debit_cents ? fmtMoney(r.debit_cents) : "" },
+          { key: "credit_cents", label: t("common.credit"), cls: "num", render: r => r.credit_cents ? fmtMoney(r.credit_cents) : "" },
+          { key: "running_cents", label: t("common.balance"), cls: "num", render: r => fmtMoney(r.running_cents) },
+        ], data.rows, {
+          footer: `<tr><td colspan="3">${ESC(t("reports.closing"))}</td>
+            <td class="num"></td><td class="num"></td><td class="num">${fmtMoney(data.closing_cents)}</td></tr>`
+        })}`
+    });
+  }
+
+  /* ==================================================================
+     JOURNAL
+     ================================================================== */
+  const STATUS_FILTERS = ["all", "draft", "review", "approved", "posted", "reversed"];
+
+  PAGES.journal = {
+    perm: "journal.view",
+    async render(view, params) {
+      if (params && params[0]) return PAGES.journal.detail(view, params[0]);
+      setTitle("nav.journal");
+      const state = { status: new URLSearchParams((location.hash.split("?")[1] || "")).get("status") || "all", q: "", from: "", to: "" };
+      view.innerHTML = `${pageHead("journal.title", "journal.subtitle",
+        can("journal.create") ? `<button class="btn btn-primary btn-sm" id="new-je">＋ ${ESC(t("journal.new"))}</button>` : "")}
+        <div class="card">
+          <div class="table-toolbar">
+            <div class="chip-row" id="status-chips">
+              ${STATUS_FILTERS.map(s => `<span class="chip ${state.status === s ? "active" : ""}" data-status="${s}">${ESC(s === "all" ? t("common.all") : t("status." + s))}</span>`).join("")}
+            </div>
+            <div style="flex:1"></div>
+            <input id="je-q" placeholder="${ESC(t("common.search"))}" />
+            <input id="je-from" type="date" value="" />
+            <input id="je-to" type="date" value="" />
+          </div>
+          <div id="je-table">${renderTable([{ key: "entry_no", label: "#" }], [], {})}</div>
+        </div>`;
+      const load = async () => {
+        const qs = new URLSearchParams({ status: state.status, q: state.q, from: state.from, to: state.to, per_page: 60 });
+        const data = await api("/api/journal-entries?" + qs.toString());
+        $("#je-table").innerHTML = renderTable([
+          { key: "entry_no", label: "#", render: r => `<a href="#/journal/${r.id}"><strong>${ESC(r.entry_no)}</strong></a>` },
+          { key: "entry_date", label: t("common.date"), render: r => fmtDate(r.entry_date) },
+          { key: "memo", label: t("common.description"), cls: "wrap", render: r => `<span title="${ESC(r.memo)}">${ESC(r.memo.slice(0, 52))}${r.memo.length > 52 ? "…" : ""}</span>` },
+          { key: "entry_type", label: t("journal.type"), render: r => `<span class="pill">${ESC(r.entry_type)}</span>` },
+          { key: "total_debit_cents", label: t("common.debit"), cls: "num", render: r => fmtMoney(r.total_debit_cents) },
+          { key: "status", label: t("common.status"), render: r => statusBadge(r.status) },
+          { key: "created_by_name", label: t("journal.createdBy"), render: r => ESC(r.created_by_name || "—") },
+        ], data.entries, {
+          onRowClick: null,
+          empty: t("common.empty")
+        });
+        $$("#je-table tbody tr").forEach(tr => tr.onclick = (e) => {
+          if (e.target.closest("a")) return;
+          const idx = Number(tr.dataset.idx);
+          location.hash = "#/journal/" + data.entries[idx].id;
+        });
+        $("#je-table").insertAdjacentHTML("beforeend",
+          `<div class="muted small" style="padding:10px 14px">${data.total} ${ESC(t("common.rows"))}</div>`);
+      };
+      await load();
+      $$("#status-chips .chip").forEach(chip => chip.onclick = () => {
+        state.status = chip.dataset.status;
+        $$("#status-chips .chip").forEach(c => c.classList.toggle("active", c === chip));
+        load();
+      });
+      $("#je-q").oninput = (e) => { state.q = e.target.value; clearTimeout(window.__jt); window.__jt = setTimeout(load, 250); };
+      $("#je-from").onchange = (e) => { state.from = e.target.value; load(); };
+      $("#je-to").onchange = (e) => { state.to = e.target.value; load(); };
+      if (can("journal.create")) $("#new-je").onclick = () => PAGES.journal.newEntry();
+    },
+
+    async detail(view, id) {
+      const data = await api("/api/journal-entries/" + id);
+      const e = data.entry;
+      setTitle("journal.details", [e.entry_no]);
+      const total = data.lines.reduce((s, l) => s + l.debit_cents, 0);
+      const actions = [];
+      if (e.status === "draft" && can("journal.create")) actions.push(`<button class="btn btn-primary btn-sm" id="act-submit">⇧ ${ESC(t("common.submit"))}</button>`);
+      if (e.status === "review" && can("journal.review")) {
+        actions.push(`<button class="btn btn-ok btn-sm" id="act-review">✓ ${ESC(t("common.review"))}</button>`);
+        actions.push(`<button class="btn btn-danger btn-sm" id="act-reject">✕ ${ESC(t("common.reject"))}</button>`);
+      }
+      if (e.status === "approved" && can("journal.post")) actions.push(`<button class="btn btn-primary btn-sm" id="act-post">⇩ ${ESC(t("common.post"))}</button>`);
+      if (e.status === "posted" && can("journal.reverse")) actions.push(`<button class="btn btn-danger btn-sm" id="act-reverse">↺ ${ESC(t("common.reverse"))}</button>`);
+      actions.push(printBtn());
+
+      view.innerHTML = `${pageHead("journal.details", "journal.subtitle", actions.join(""))}
+        <div class="grid cols-4" style="margin-bottom:16px">
+          ${kpi({ label: t("common.amount"), value: total, icon: "◈" })}
+          ${kpi({ label: t("common.status"), value: statusBadge(e.status), icon: "◔", raw: true })}
+          ${kpi({ label: t("common.date"), value: fmtDate(e.entry_date), icon: "▤", raw: true })}
+          ${kpi({ label: t("journal.type"), value: ESC(e.entry_type), icon: "⌘", raw: true })}
+        </div>
+        ${card(t("journal.lines"), renderTable([
+            { key: "line_no", label: "#", cls: "num" },
+            { key: "account_code", label: t("common.code"), render: r => `<span class="mono">${ESC(r.account_code)}</span>` },
+            { key: "account_ar", label: t("common.account"), render: r => ESC(APP.lang === "ar" ? r.account_ar : r.account_en) },
+            { key: "description", label: t("common.description") },
+            { key: "debit_cents", label: t("common.debit"), cls: "num", render: r => r.debit_cents ? fmtMoney(r.debit_cents) : "" },
+            { key: "credit_cents", label: t("common.credit"), cls: "num", render: r => r.credit_cents ? fmtMoney(r.credit_cents) : "" },
+          ], data.lines, {
+            footer: `<tr><td colspan="4">${ESC(t("common.total"))}</td>
+              <td class="num">${fmtMoney(data.lines.reduce((s, l) => s + l.debit_cents, 0))}</td>
+              <td class="num">${fmtMoney(data.lines.reduce((s, l) => s + l.credit_cents, 0))}</td></tr>`
+        }))}
+        <div class="split" style="margin-top:16px">
+            ${card(t("common.details"), `
+              <div class="stat-line"><span>${ESC(t("journal.memo"))}</span><strong style="text-align:end">${ESC(e.memo)}</strong></div>
+              <div class="stat-line"><span>${ESC(t("journal.createdBy"))}</span><strong>${e.created_by || "—"}</strong></div>
+              <div class="stat-line"><span>${ESC(t("journal.approvedBy"))}</span><strong>${e.approved_by || "—"}</strong></div>
+              <div class="stat-line"><span>${ESC(t("journal.postedAt"))}</span><strong>${ESC(e.posted_at || "—")}</strong></div>
+              ${e.reversal_of_id ? `<div class="stat-line"><span>${ESC(t("journal.reversalOf"))}</span>
+                <strong><a href="#/journal/${e.reversal_of_id}">#${e.reversal_of_id}</a></strong></div>` : ""}
+              ${e.reversed_by_id ? `<div class="stat-line"><span>${ESC(t("common.reverse"))}</span>
+                <strong><a href="#/journal/${e.reversed_by_id}">#${e.reversed_by_id}</a></strong></div>` : ""}
+            `)}
+            ${card(t("journal.workflow"), `
+              <div class="stat-line"><span>1. ${ESC(t("status.draft"))}</span><strong>✓</strong></div>
+              <div class="stat-line"><span>2. ${ESC(t("status.review"))}</span><strong>${["review", "approved", "posted", "reversed"].includes(e.status) ? "✓" : "—"}</strong></div>
+              <div class="stat-line"><span>3. ${ESC(t("status.approved"))}</span><strong>${["approved", "posted", "reversed"].includes(e.status) ? "✓" : "—"}</strong></div>
+              <div class="stat-line"><span>4. ${ESC(t("status.posted"))}</span><strong>${["posted", "reversed"].includes(e.status) ? "✓" : "—"}</strong></div>
+              <p class="field-hint" style="margin-top:10px">${ESC(L("القيود التي تتجاوز 200,000 ج.م تحتاج اعتماد المدير المالي، ولا يمكن للمنشئ اعتماد قيده.",
+                "Entries above EGP 200,000 require Financial Manager approval; creators cannot approve their own entries."))}</p>
+            `)}
+        </div>`;
+
+      const act = (btn, fn) => { const b = document.getElementById(btn); if (b) b.onclick = fn; };
+      act("act-submit", async () => {
+        try { await api(`/api/journal-entries/${id}/submit`, { method: "POST", body: {} }); toast(t("toast.submitted")); render(); }
+        catch (e) { toast(e.message, "err"); }
+      });
+      act("act-review", async () => {
+        try { const res = await api(`/api/journal-entries/${id}/review`, { method: "POST", body: { decision: "approve" } });
+          toast(res.note === "REQUIRES_APPROVAL" ? L("تمت المراجعة — بانتظار اعتماد المدير المالي", "Reviewed — awaiting FM approval") : t("toast.approved")); render(); }
+        catch (e) { toast(e.message, "err"); }
+      });
+      act("act-reject", () => openForm({
+        title: t("common.reject"), fields: [{ name: "comment", label: t("journal.comment"), type: "textarea", required: true }],
+        onSubmit: async (d) => { await api(`/api/journal-entries/${id}/review`, { method: "POST", body: { decision: "reject", comment: d.comment } }); toast(t("toast.rejected")); render(); }
+      }));
+      act("act-post", async () => {
+        try { await api(`/api/journal-entries/${id}/post`, { method: "POST", body: {} }); toast(t("toast.posted")); render(); }
+        catch (e) { toast(e.message, "err"); }
+      });
+      act("act-reverse", () => openForm({
+        title: t("common.reverse"),
+        fields: [
+          { name: "reason", label: t("journal.reverseReason"), type: "textarea", required: true },
+          { name: "date", label: t("common.date"), type: "date", value: today(), required: true },
+        ],
+        onSubmit: async (d) => { await api(`/api/journal-entries/${id}/reverse`, { method: "POST", body: d }); toast(t("toast.saved")); render(); }
+      }));
+    },
+
+    async newEntry() {
+      const accs = await api("/api/accounts");
+      const postable = accs.accounts.filter(a => a.is_postable && a.is_active);
+      const accOptions = postable.map(a => ({ value: a.id, label: `${a.code} — ${APP.lang === "ar" ? a.name_ar : a.name_en}` }));
+      const rowHtml = () => `
+        <tr>
+          <td><select class="input line-acc">${accOptions.map(o => `<option value="${o.value}">${ESC(o.label)}</option>`).join("")}</select></td>
+          <td><input class="input line-desc" placeholder="${ESC(t("common.description"))}"/></td>
+          <td><input class="input line-debit" type="number" step="0.01" min="0" placeholder="0.00"/></td>
+          <td><input class="input line-credit" type="number" step="0.01" min="0" placeholder="0.00"/></td>
+          <td><button class="icon-btn rm-line" title="حذف">✕</button></td>
+        </tr>`;
+      openModal({
+        title: t("journal.new"), wide: true,
+        body: `
+          <div class="grid cols-2" style="gap:0 16px">
+            <div class="field"><span>${ESC(t("common.date"))} *</span><input type="date" id="je-date" value="${today()}"/></div>
+            <div class="field"><span>${ESC(t("journal.memo"))} *</span><input id="je-memo" placeholder="${ESC(L("مثال: قيد تسوية مصروفات مستحقة", "e.g. Accrued expenses adjustment"))}"/></div>
+          </div>
+          <div class="table-wrap" style="border:1px solid var(--border);border-radius:12px">
+            <table class="data compact" id="je-lines">
+              <thead><tr><th>${ESC(t("common.account"))}</th><th>${ESC(t("common.description"))}</th>
+                <th style="width:130px">${ESC(t("common.debit"))}</th><th style="width:130px">${ESC(t("common.credit"))}</th><th></th></tr></thead>
+              <tbody>${rowHtml()}${rowHtml()}</tbody>
+            </table>
+          </div>
+          <div style="display:flex;gap:16px;align-items:center;margin-top:12px;flex-wrap:wrap">
+            <button class="btn btn-sm" id="add-line">＋ ${ESC(t("journal.addLine"))}</button>
+            <span class="muted small">${ESC(t("common.debit"))}: <strong id="sum-d">0.00</strong></span>
+            <span class="muted small">${ESC(t("common.credit"))}: <strong id="sum-c">0.00</strong></span>
+            <span id="balance-flag" class="badge gray">—</span>
+            <div style="flex:1"></div>
+            <label class="checkbox"><input type="checkbox" id="submit-now" checked/> ${ESC(L("إرسال للمراجعة بعد الحفظ", "Submit for review after saving"))}</label>
+          </div>
+          <div class="form-error hidden" id="je-error"></div>`,
+        footer: `<button class="btn" data-close>${ESC(t("common.cancel"))}</button>
+                 <button class="btn btn-primary" id="save-je">${ESC(t("common.save"))}</button>`,
+        onMount: (root, close) => {
+          const linesBody = $("#je-lines tbody", root);
+          const recalc = () => {
+            let d = 0, c = 0;
+            $$("#je-lines tbody tr", root).forEach(tr => {
+              d += Number($(".line-debit", tr).value || 0);
+              c += Number($(".line-credit", tr).value || 0);
+            });
+            $("#sum-d", root).textContent = d.toFixed(2);
+            $("#sum-c", root).textContent = c.toFixed(2);
+            const flag = $("#balance-flag", root);
+            const ok = Math.abs(d - c) < 0.005 && d > 0;
+            flag.className = "badge " + (ok ? "green" : "amber");
+            flag.textContent = ok ? t("journal.balanced") : `${t("journal.difference")}: ${(d - c).toFixed(2)}`;
+          };
+          const wire = () => {
+            $$(".rm-line", root).forEach(b => b.onclick = () => {
+              if ($$("#je-lines tbody tr", root).length > 2) { b.closest("tr").remove(); recalc(); }
+            });
+            $$(".line-debit,.line-credit", root).forEach(inp => inp.oninput = () => {
+              if (inp.classList.contains("line-debit") && Number(inp.value) > 0) $(".line-credit", inp.closest("tr")).value = "";
+              if (inp.classList.contains("line-credit") && Number(inp.value) > 0) $(".line-debit", inp.closest("tr")).value = "";
+              recalc();
+            });
+            recalc();
+          };
+          $("#add-line", root).onclick = () => { linesBody.insertAdjacentHTML("beforeend", rowHtml()); wire(); };
+          wire();
+          $("#save-je", root).onclick = async () => {
+            const err = $("#je-error", root);
+            err.classList.add("hidden");
+            const lines = $$("#je-lines tbody tr", root).map(tr => ({
+              account_id: Number($(".line-acc", tr).value),
+              description: $(".line-desc", tr).value,
+              debit: Number($(".line-debit", tr).value || 0),
+              credit: Number($(".line-credit", tr).value || 0),
+            })).filter(l => l.debit || l.credit);
+            const memo = $("#je-memo", root).value.trim();
+            if (!memo) { showErr(root, t("journal.memo") + ": " + t("common.required")); return; }
+            const d = lines.reduce((s, l) => s + l.debit, 0);
+            const c = lines.reduce((s, l) => s + l.credit, 0);
+            if (Math.abs(d - c) > 0.005) { showErr(root, t("common.unbalanced")); return; }
+            try {
+              const res = await api("/api/journal-entries", { method: "POST", body: { entry_date: $("#je-date", root).value, memo, lines } });
+              if ($("#submit-now", root).checked) {
+                try { await api(`/api/journal-entries/${res.id}/submit`, { method: "POST", body: {} }); } catch (e) { /* requires another user */ }
+              }
+              toast(t("common.saved")); close(); location.hash = "#/journal/" + res.id;
+            } catch (e) { showErr(root, e.message); }
+          };
+        }
+      });
+    }
+  };
+
+  /* ==================================================================
+     SALES
+     ================================================================== */
+  PAGES.sales = {
+    perm: "sales.view",
+    async render(view, params) {
+      if (params && params[0]) return salesDetail(view, params[0]);
+      setTitle("nav.sales");
+      const data = await api("/api/sales-invoices");
+      view.innerHTML = `${pageHead("sales.title", "sales.subtitle",
+        `${can("sales.create") ? `<button class="btn btn-primary btn-sm" id="new-si">＋ ${ESC(t("sales.new"))}</button>` : ""}`)}
+        ${card("", renderTable([
+          { key: "invoice_no", label: "#", render: r => `<a href="#/sales/${r.id}"><strong>${ESC(r.invoice_no)}</strong></a>` },
+          { key: "invoice_date", label: t("common.date"), render: r => fmtDate(r.invoice_date) },
+          { key: "customer_ar", label: t("common.customer"), render: r => ESC(APP.lang === "ar" ? r.customer_ar : r.customer_en) },
+          { key: "due_date", label: t("common.dueDate"), render: r => fmtDate(r.due_date) },
+          { key: "total_cents", label: t("common.total"), cls: "num", render: r => fmtMoney(r.total_cents) },
+          { key: "paid_cents", label: t("common.paid"), cls: "num", render: r => fmtMoney(r.paid_cents) },
+          { key: "remaining", label: t("common.remaining"), cls: "num", render: r => fmtMoney(r.total_cents - r.paid_cents) },
+          { key: "status", label: t("common.status"), render: r => statusBadge(r.status) },
+        ], data.invoices, {
+          footer: `<tr><td colspan="4">${ESC(t("common.total"))}</td>
+            <td class="num">${fmtMoney(data.invoices.reduce((s, r) => s + r.total_cents, 0))}</td>
+            <td class="num">${fmtMoney(data.invoices.reduce((s, r) => s + r.paid_cents, 0))}</td>
+            <td class="num">${fmtMoney(data.invoices.reduce((s, r) => s + r.total_cents - r.paid_cents, 0))}</td><td></td></tr>`
+        }))}`;
+      if (can("sales.create")) $("#new-si").onclick = () => PAGES.sales.newInvoice();
+    },
+
+    async newInvoice() {
+      const [cust, prods, meta] = await Promise.all([api("/api/customers"), api("/api/products"), api("/api/meta")]);
+      const customers = cust.customers.filter(c => c.is_active);
+      const products = prods.products.filter(p => p.is_active);
+      const rowHtml = () => `<tr>
+          <td><select class="input li-prod">${products.map(p => `<option value="${p.id}" data-price="${p.sale_price_cents}" data-tax="${p.tax_rate_bp}">${ESC(p.sku)} — ${ESC(p.name_ar)}</option>`).join("")}</select></td>
+          <td><input class="input li-qty" type="number" step="0.001" min="0" value="1"/></td>
+          <td><input class="input li-price" type="number" step="0.01" min="0"/></td>
+          <td><input class="input li-tax" type="number" step="0.01" min="0" value="14"/></td>
+          <td class="num li-total mono">0.00</td>
+          <td><button class="icon-btn rm">✕</button></td></tr>`;
+      openModal({
+        title: t("sales.new"), wide: true,
+        body: `
+          <div class="grid cols-3" style="gap:0 16px">
+            <div class="field"><span>${ESC(t("common.customer"))} *</span>
+              <select id="si-cust">${customers.map(c => `<option value="${c.id}">${ESC(c.code)} — ${ESC(APP.lang === "ar" ? c.name_ar : c.name_en)}</option>`).join("")}</select></div>
+            <div class="field"><span>${ESC(t("sales.invoiceDate"))}</span><input type="date" id="si-date" value="${today()}"/></div>
+            <div class="field"><span>${ESC(t("common.dueDate"))}</span><input type="date" id="si-due" value="${today()}"/></div>
+            <div class="field"><span>${ESC(t("common.warehouse"))}</span>
+              <select id="si-wh">${meta.warehouses.map(w => `<option value="${w.id}">${ESC(w.name_ar)}</option>`).join("")}</select></div>
+            <div class="field" style="grid-column:span 2"><span>${ESC(t("common.notes"))}</span><input id="si-notes"/></div>
+          </div>
+          <div class="table-wrap" style="border:1px solid var(--border);border-radius:12px">
+            <table class="data compact" id="si-lines">
+              <thead><tr><th>${ESC(L("الصنف", "Product"))}</th><th>${ESC(t("common.qty"))}</th><th>${ESC(t("common.price"))}</th>
+                <th>${ESC(t("common.tax"))} %</th><th class="num">${ESC(t("common.total"))}</th><th></th></tr></thead>
+              <tbody>${rowHtml()}</tbody>
+            </table>
+          </div>
+          <div style="display:flex;gap:18px;align-items:center;margin-top:12px;flex-wrap:wrap">
+            <button class="btn btn-sm" id="si-add">＋ ${ESC(t("common.add"))}</button>
+            <span class="muted small">${ESC(t("common.subtotal"))}: <strong id="si-sub">0.00</strong></span>
+            <span class="muted small">${ESC(t("common.tax"))}: <strong id="si-tax">0.00</strong></span>
+            <span class="muted small">${ESC(t("common.total"))}: <strong id="si-total">0.00</strong></span>
+            <div style="flex:1"></div>
+            <label class="checkbox"><input type="checkbox" id="si-post" checked/> ${ESC(L("ترحيل الفاتورة فورًا", "Post invoice immediately"))}</label>
+          </div>
+          <div class="form-error hidden" id="si-error"></div>`,
+        footer: `<button class="btn" data-close>${ESC(t("common.cancel"))}</button>
+                 <button class="btn btn-primary" id="si-save">${ESC(t("common.save"))}</button>`,
+        onMount: (root, close) => {
+          const recalc = () => {
+            let sub = 0, tax = 0;
+            $$("#si-lines tbody tr", root).forEach(tr => {
+              const q = Number($(".li-qty", tr).value || 0), p = Number($(".li-price", tr).value || 0);
+              const tRate = Number($(".li-tax", tr).value || 0);
+              const line = q * p, lineTax = line * tRate / 100;
+              sub += line; tax += lineTax;
+              $(".li-total", tr).textContent = (line + lineTax).toFixed(2);
+            });
+            $("#si-sub", root).textContent = sub.toFixed(2);
+            $("#si-tax", root).textContent = tax.toFixed(2);
+            $("#si-total", root).textContent = (sub + tax).toFixed(2);
+          };
+          const wire = () => {
+            $$(".li-prod", root).forEach(sel => sel.onchange = () => {
+              const tr = sel.closest("tr");
+              $(".li-price", tr).value = (Number(sel.selectedOptions[0].dataset.price) / 100).toFixed(2);
+              $(".li-tax", tr).value = (Number(sel.selectedOptions[0].dataset.tax) / 100).toFixed(2);
+              recalc();
+            });
+            $$("input", root).forEach(i => i.oninput = recalc);
+            $$(".rm", root).forEach(b => b.onclick = () => {
+              if ($$("#si-lines tbody tr", root).length > 1) { b.closest("tr").remove(); recalc(); }
+            });
+            $$(".li-prod", root).forEach(sel => sel.dispatchEvent(new Event("change")));
+          };
+          wire();
+          $("#si-add", root).onclick = () => {
+            $("#si-lines tbody", root).insertAdjacentHTML("beforeend", rowHtml());
+            wire();
+          };
+          $("#si-save", root).onclick = async () => {
+            try {
+              const lines = $$("#si-lines tbody tr", root).map(tr => ({
+                product_id: Number($(".li-prod", tr).value),
+                qty: Number($(".li-qty", tr).value || 0),
+                unit_price: Number($(".li-price", tr).value || 0),
+                tax_rate_bp: Math.round(Number($(".li-tax", tr).value || 0) * 100),
+              }));
+              const res = await api("/api/sales-invoices", {
+                method: "POST", body: {
+                  customer_id: Number($("#si-cust", root).value),
+                  invoice_date: $("#si-date", root).value,
+                  due_date: $("#si-due", root).value,
+                  warehouse_id: Number($("#si-wh", root).value),
+                  notes: $("#si-notes", root).value,
+                  lines, post: $("#si-post", root).checked,
+                }
+              });
+              toast(t("common.saved")); close(); location.hash = "#/sales/" + res.id;
+            } catch (e) { showErr(root, e.message); }
+          };
+        }
+      });
+    }
+  };
+
+  async function salesDetail(view, id) {
+    const d = await api("/api/sales-invoices/" + id);
+    const inv = d.invoice;
+    setTitle("sales.title", [inv.invoice_no]);
+    const actions = [];
+    if (inv.status === "draft" && can("sales.post")) actions.push(`<button class="btn btn-primary btn-sm" id="si-post-now">⇩ ${ESC(t("common.post"))}</button>`);
+    if (["posted", "partially_paid"].includes(inv.status) && can("payments.create")) actions.push(`<button class="btn btn-ok btn-sm" id="si-receipt">₪ ${ESC(t("payments.receipt"))}</button>`);
+    actions.push(docToolbar("sales", id));
+    view.innerHTML = `${pageHead(inv.invoice_no, "sales.subtitle", actions.join(""))}
+      <div class="grid cols-4" style="margin-bottom:16px">
+        ${kpi({ label: t("common.total"), value: inv.total_cents, icon: "◈" })}
+        ${kpi({ label: t("common.paid"), value: inv.paid_cents, icon: "✓", tone: "ok" })}
+        ${kpi({ label: t("common.remaining"), value: inv.total_cents - inv.paid_cents, icon: "◔", tone: "warn" })}
+        ${kpi({ label: t("common.status"), value: statusBadge(inv.status), icon: "▤", raw: true })}
+      </div>
+      ${card(L("سطور الفاتورة", "Invoice lines"), renderTable([
+          { key: "line_no", label: "#", cls: "num" },
+          { key: "product_ar", label: L("الصنف", "Product"), cls: "wrap" },
+          { key: "qty_milli", label: t("common.qty"), cls: "num", render: r => fmtNum(r.qty_milli / 1000, 0) },
+          { key: "unit_price_cents", label: t("common.price"), cls: "num", render: r => fmtMoney(r.unit_price_cents) },
+          { key: "line_subtotal_cents", label: t("common.subtotal"), cls: "num", render: r => fmtMoney(r.line_subtotal_cents) },
+          { key: "line_tax_cents", label: t("common.tax"), cls: "num", render: r => fmtMoney(r.line_tax_cents) },
+          { key: "line_total_cents", label: t("common.total"), cls: "num", render: r => fmtMoney(r.line_total_cents) },
+        ], d.lines, {
+          footer: `<tr><td colspan="4">${ESC(t("common.total"))}</td>
+            <td class="num" data-label="${ESC(t("common.subtotal"))}">${fmtMoney(inv.subtotal_cents)}</td>
+            <td class="num" data-label="${ESC(t("common.tax"))}">${fmtMoney(inv.tax_cents)}</td>
+            <td class="num" data-label="${ESC(t("common.total"))}">${fmtMoney(inv.total_cents)}</td></tr>`
+      }))}
+      <div class="split" style="margin-top:16px">
+          ${card(t("common.details"), `
+            <div class="stat-line"><span>${ESC(t("common.customer"))}</span><strong>${ESC(APP.lang === "ar" ? inv.customer_ar : inv.customer_en)}</strong></div>
+            <div class="stat-line"><span>${ESC(t("sales.invoiceDate"))}</span><strong>${fmtDate(inv.invoice_date)}</strong></div>
+            <div class="stat-line"><span>${ESC(t("common.dueDate"))}</span><strong>${fmtDate(inv.due_date)}</strong></div>
+            <div class="stat-line"><span>${ESC(t("journal.createdBy"))}</span><strong>${ESC(inv.created_by_name || "—")}</strong></div>
+            <div class="stat-line"><span>${ESC(t("journal.postedAt"))}</span><strong>${ESC(inv.posted_at || "—")}</strong></div>
+            ${inv.notes ? `<div class="stat-line"><span>${ESC(t("common.notes"))}</span><strong>${ESC(inv.notes)}</strong></div>` : ""}`)}
+          ${card(t("payments.allocate"), d.allocations.length ? d.allocations.map(a =>
+            `<div class="stat-line"><span>${ESC(a.payment_no)} <small class="muted">${fmtDate(a.payment_date)}</small></span>
+              <strong>${fmtMoney(a.amount_cents)}</strong></div>`).join("") : `<div class="muted small">${ESC(t("common.empty"))}</div>`)}
+      </div>`;
+    const btn = $("#si-post-now");
+    if (btn) btn.onclick = async () => {
+      try { await api(`/api/sales-invoices/${id}/post`, { method: "POST", body: {} }); toast(t("toast.posted")); render(); }
+      catch (e) { toast(e.message, "err"); }
+    };
+    const rb = $("#si-receipt");
+    if (rb) rb.onclick = () => PAGES.payments.newVoucher("receipt", { party_type: "customer", party_id: inv.customer_id, invoice_id: id, amount: (inv.total_cents - inv.paid_cents) / 100 });
+    wireExports(view);
+  }
+
+  /* ==================================================================
+     PURCHASES
+     ================================================================== */
+  PAGES.purchases = {
+    perm: "purchases.view",
+    async render(view, params) {
+      if (params && params[0]) return purchaseDetail(view, params[0]);
+      setTitle("nav.purchases");
+      const data = await api("/api/purchase-invoices");
+      view.innerHTML = `${pageHead("purchases.title", "purchases.subtitle",
+        can("purchases.create") ? `<button class="btn btn-primary btn-sm" id="new-pi">＋ ${ESC(t("purchases.new"))}</button>` : "")}
+        ${card("", renderTable([
+          { key: "invoice_no", label: "#", render: r => `<a href="#/purchases/${r.id}"><strong>${ESC(r.invoice_no)}</strong></a>` },
+          { key: "invoice_date", label: t("common.date"), render: r => fmtDate(r.invoice_date) },
+          { key: "vendor_ar", label: t("common.vendor"), render: r => ESC(APP.lang === "ar" ? r.vendor_ar : r.vendor_en) },
+          { key: "supplier_ref", label: t("purchases.supplierRef") },
+          { key: "due_date", label: t("common.dueDate"), render: r => fmtDate(r.due_date) },
+          { key: "total_cents", label: t("common.total"), cls: "num", render: r => fmtMoney(r.total_cents) },
+          { key: "paid_cents", label: t("common.paid"), cls: "num", render: r => fmtMoney(r.paid_cents) },
+          { key: "status", label: t("common.status"), render: r => statusBadge(r.status) },
+          { key: "three_way_match", label: t("purchases.threeWay"), render: r => r.three_way_match ? `<span class="badge green">✓</span>` : `<span class="badge gray">—</span>` },
+        ], data.invoices, {
+          footer: `<tr><td colspan="5">${ESC(t("common.total"))}</td>
+            <td class="num">${fmtMoney(data.invoices.reduce((s, r) => s + r.total_cents, 0))}</td>
+            <td class="num">${fmtMoney(data.invoices.reduce((s, r) => s + r.paid_cents, 0))}</td><td colspan="2"></td></tr>`
+        }))}`;
+      if (can("purchases.create")) $("#new-pi").onclick = () => PAGES.purchases.newInvoice();
+    },
+
+    async newInvoice() {
+      const [vend, prods, meta] = await Promise.all([api("/api/vendors"), api("/api/products"), api("/api/meta")]);
+      const vendors = vend.vendors.filter(v => v.is_active);
+      const products = prods.products.filter(p => p.is_active && !p.is_service);
+      const rowHtml = () => `<tr>
+          <td><select class="input li-prod">${products.map(p => `<option value="${p.id}" data-price="${p.purchase_price_cents}" data-tax="${p.tax_rate_bp}">${ESC(p.sku)} — ${ESC(p.name_ar)}</option>`).join("")}</select></td>
+          <td><input class="input li-qty" type="number" step="0.001" min="0" value="1"/></td>
+          <td><input class="input li-price" type="number" step="0.01" min="0"/></td>
+          <td><input class="input li-tax" type="number" step="0.01" min="0" value="14"/></td>
+          <td class="num li-total mono">0.00</td>
+          <td><button class="icon-btn rm">✕</button></td></tr>`;
+      openModal({
+        title: t("purchases.new"), wide: true,
+        body: `
+          <div class="grid cols-3" style="gap:0 16px">
+            <div class="field"><span>${ESC(t("common.vendor"))} *</span>
+              <select id="pi-vend">${vendors.map(v => `<option value="${v.id}">${ESC(v.code)} — ${ESC(APP.lang === "ar" ? v.name_ar : v.name_en)}</option>`).join("")}</select></div>
+            <div class="field"><span>${ESC(t("purchases.supplierRef"))}</span><input id="pi-ref" placeholder="INV-…"/></div>
+            <div class="field"><span>${ESC(t("common.warehouse"))}</span>
+              <select id="pi-wh">${meta.warehouses.map(w => `<option value="${w.id}">${ESC(w.name_ar)}</option>`).join("")}</select></div>
+            <div class="field"><span>${ESC(t("sales.invoiceDate"))}</span><input type="date" id="pi-date" value="${today()}"/></div>
+            <div class="field"><span>${ESC(t("common.dueDate"))}</span><input type="date" id="pi-due" value="${today()}"/></div>
+            <div class="field"><span>${ESC(t("purchases.po"))}</span><input id="pi-po"/></div>
+            <div class="field"><span>${ESC(t("purchases.grn"))}</span><input id="pi-grn"/></div>
+          </div>
+          <div class="table-wrap" style="border:1px solid var(--border);border-radius:12px">
+            <table class="data compact" id="pi-lines">
+              <thead><tr><th>${ESC(L("الصنف", "Product"))}</th><th>${ESC(t("common.qty"))}</th><th>${ESC(t("common.price"))}</th>
+                <th>${ESC(t("common.tax"))} %</th><th class="num">${ESC(t("common.total"))}</th><th></th></tr></thead>
+              <tbody>${rowHtml()}</tbody></table>
+          </div>
+          <div style="display:flex;gap:18px;align-items:center;margin-top:12px;flex-wrap:wrap">
+            <button class="btn btn-sm" id="pi-add">＋ ${ESC(t("common.add"))}</button>
+            <span class="muted small">${ESC(t("common.total"))}: <strong id="pi-total">0.00</strong></span>
+            <div style="flex:1"></div>
+            <label class="checkbox"><input type="checkbox" id="pi-post" checked/> ${ESC(L("ترحيل الفاتورة فورًا", "Post invoice immediately"))}</label>
+          </div>
+          <div class="form-error hidden" id="pi-error"></div>`,
+        footer: `<button class="btn" data-close>${ESC(t("common.cancel"))}</button>
+                 <button class="btn btn-primary" id="pi-save">${ESC(t("common.save"))}</button>`,
+        onMount: (root, close) => {
+          const recalc = () => {
+            let total = 0;
+            $$("#pi-lines tbody tr", root).forEach(tr => {
+              const q = Number($(".li-qty", tr).value || 0), p = Number($(".li-price", tr).value || 0);
+              const rate = Number($(".li-tax", tr).value || 0);
+              const line = q * p * (1 + rate / 100);
+              total += line;
+              $(".li-total", tr).textContent = line.toFixed(2);
+            });
+            $("#pi-total", root).textContent = total.toFixed(2);
+          };
+          const wire = () => {
+            $$(".li-prod", root).forEach(sel => sel.onchange = () => {
+              const tr = sel.closest("tr");
+              $(".li-price", tr).value = (Number(sel.selectedOptions[0].dataset.price) / 100).toFixed(2);
+              $(".li-tax", tr).value = (Number(sel.selectedOptions[0].dataset.tax) / 100).toFixed(2);
+              recalc();
+            });
+            $$("input", root).forEach(i => i.oninput = recalc);
+            $$(".rm", root).forEach(b => b.onclick = () => { if ($$("#pi-lines tbody tr", root).length > 1) { b.closest("tr").remove(); recalc(); } });
+            $$(".li-prod", root).forEach(s => s.dispatchEvent(new Event("change")));
+          };
+          wire();
+          $("#pi-add", root).onclick = () => { $("#pi-lines tbody", root).insertAdjacentHTML("beforeend", rowHtml()); wire(); };
+          $("#pi-save", root).onclick = async () => {
+            try {
+              const lines = $$("#pi-lines tbody tr", root).map(tr => ({
+                product_id: Number($(".li-prod", tr).value),
+                qty: Number($(".li-qty", tr).value || 0),
+                unit_price: Number($(".li-price", tr).value || 0),
+                tax_rate_bp: Math.round(Number($(".li-tax", tr).value || 0) * 100),
+              }));
+              const res = await api("/api/purchase-invoices", {
+                method: "POST", body: {
+                  vendor_id: Number($("#pi-vend", root).value),
+                  supplier_ref: $("#pi-ref", root).value,
+                  invoice_date: $("#pi-date", root).value,
+                  due_date: $("#pi-due", root).value,
+                  po_number: $("#pi-po", root).value,
+                  grn_number: $("#pi-grn", root).value,
+                  warehouse_id: Number($("#pi-wh", root).value),
+                  lines, post: $("#pi-post", root).checked,
+                }
+              });
+              toast(t("common.saved")); close(); location.hash = "#/purchases/" + res.id;
+            } catch (e) { showErr(root, e.message); }
+          };
+        }
+      });
+    }
+  };
+
+  async function purchaseDetail(view, id) {
+    const d = await api("/api/purchase-invoices/" + id);
+    const inv = d.invoice;
+    setTitle("purchases.title", [inv.invoice_no]);
+    const actions = [];
+    if (inv.status === "draft" && can("purchases.post")) actions.push(`<button class="btn btn-primary btn-sm" id="pi-post-now">⇩ ${ESC(t("common.post"))}</button>`);
+    actions.push(docToolbar("purchase", id));
+    view.innerHTML = `${pageHead(inv.invoice_no, "purchases.subtitle", actions.join(""))}
+      <div class="grid cols-4" style="margin-bottom:16px">
+        ${kpi({ label: t("common.total"), value: inv.total_cents, icon: "◈" })}
+        ${kpi({ label: t("common.paid"), value: inv.paid_cents, icon: "✓", tone: "ok" })}
+        ${kpi({ label: t("common.remaining"), value: inv.total_cents - inv.paid_cents, icon: "◔", tone: "warn" })}
+        ${kpi({ label: t("common.status"), value: statusBadge(inv.status), icon: "▤", raw: true })}
+      </div>
+      ${card(L("سطور الفاتورة", "Invoice lines"), renderTable([
+          { key: "line_no", label: "#", cls: "num" },
+          { key: "product_ar", label: L("الصنف", "Product"), cls: "wrap" },
+          { key: "qty_milli", label: t("common.qty"), cls: "num", render: r => fmtNum(r.qty_milli / 1000, 0) },
+          { key: "unit_price_cents", label: t("common.price"), cls: "num", render: r => fmtMoney(r.unit_price_cents) },
+          { key: "line_subtotal_cents", label: t("common.subtotal"), cls: "num", render: r => fmtMoney(r.line_subtotal_cents) },
+          { key: "line_tax_cents", label: t("common.tax"), cls: "num", render: r => fmtMoney(r.line_tax_cents) },
+          { key: "line_total_cents", label: t("common.total"), cls: "num", render: r => fmtMoney(r.line_total_cents) },
+        ], d.lines, {
+          footer: `<tr><td colspan="4">${ESC(t("common.total"))}</td>
+            <td class="num">${fmtMoney(inv.subtotal_cents)}</td><td class="num">${fmtMoney(inv.tax_cents)}</td>
+            <td class="num">${fmtMoney(inv.total_cents)}</td></tr>`
+      }))}
+      <div style="margin-top:16px">
+        ${card(t("common.details"), `
+          <div class="stat-line"><span>${ESC(t("common.vendor"))}</span><strong>${ESC(APP.lang === "ar" ? inv.vendor_ar : inv.vendor_en)}</strong></div>
+          <div class="stat-line"><span>${ESC(t("purchases.supplierRef"))}</span><strong>${ESC(inv.supplier_ref || "—")}</strong></div>
+          <div class="stat-line"><span>${ESC(t("purchases.po"))}</span><strong>${ESC(inv.po_number || "—")}</strong></div>
+          <div class="stat-line"><span>${ESC(t("purchases.grn"))}</span><strong>${ESC(inv.grn_number || "—")}</strong></div>
+          <div class="stat-line"><span>${ESC(t("purchases.threeWay"))}</span><strong>${inv.three_way_match ? "✓" : "—"}</strong></div>
+          <div class="stat-line"><span>${ESC(t("common.dueDate"))}</span><strong>${fmtDate(inv.due_date)}</strong></div>
+          <div class="stat-line"><span>${ESC(t("journal.createdBy"))}</span><strong>${ESC(inv.created_by_name || "—")}</strong></div>
+          <div class="stat-line"><span>${ESC(t("journal.postedAt"))}</span><strong>${ESC(inv.posted_at || "—")}</strong></div>`)}
+      </div>`;
+    const btn = $("#pi-post-now");
+    if (btn) btn.onclick = async () => {
+      try { await api(`/api/purchase-invoices/${id}/post`, { method: "POST", body: {} }); toast(t("toast.posted")); render(); }
+      catch (e) { toast(e.message, "err"); }
+    };
+    wireExports(view);
+  }
+
+  /* ==================================================================
+     PAYMENTS
+     ================================================================== */
+  PAGES.payments = {
+    perm: "payments.view",
+    async render(view) {
+      setTitle("nav.payments");
+      const data = await api("/api/payments");
+      view.innerHTML = `${pageHead("payments.title", "payments.subtitle",
+        can("payments.create") ? `<button class="btn btn-primary btn-sm" id="new-pay">＋ ${ESC(t("payments.new"))}</button>` : "")}
+        ${card("", renderTable([
+          { key: "payment_no", label: "#", render: r => `<strong>${ESC(r.payment_no)}</strong>` },
+          { key: "payment_date", label: t("common.date"), render: r => fmtDate(r.payment_date) },
+          { key: "payment_type", label: t("payments.type"), render: r => `<span class="badge ${r.payment_type === "receipt" ? "green" : "amber"}">${ESC(r.payment_type === "receipt" ? t("payments.receipt") : t("payments.payment"))}</span>` },
+          { key: "party_name", label: t("payments.party"), render: r => ESC(r.party_name || "—") },
+          { key: "gl_name", label: t("common.account"), render: r => `${ESC(r.gl_name)}<br><small class="muted">${ESC(r.gl_code)}</small>` },
+          { key: "amount_cents", label: t("common.amount"), cls: "num", render: r => fmtMoney(r.amount_cents) },
+          { key: "unallocated", label: t("payments.unallocated"), cls: "num", render: r => r.amount_cents - r.allocated_cents ? `<span class="neg">${fmtMoney(r.amount_cents - r.allocated_cents)}</span>` : "—" },
+          { key: "status", label: t("common.status"), render: r => statusBadge(r.status) },
+        ], data.payments))}`;
+      if (can("payments.create")) $("#new-pay").onclick = () => PAGES.payments.newVoucher("receipt");
+    },
+
+    async newVoucher(type = "receipt", preset = {}) {
+      const [banks, cust, vend, sinv, pinv] = await Promise.all([
+        api("/api/banks"), api("/api/customers"), api("/api/vendors"),
+        api("/api/sales-invoices"), api("/api/purchase-invoices"),
+      ]);
+      const glOptions = banks.accounts.map(b => ({ value: b.gl_account_id, label: `${b.name_ar} (${b.gl_code})` }));
+      const partylist = type === "receipt" ? cust.customers : vend.vendors;
+      const openInvoices = type === "receipt"
+        ? sinv.invoices.filter(i => ["posted", "partially_paid"].includes(i.status) && i.total_cents > i.paid_cents)
+        : pinv.invoices.filter(i => ["posted", "partially_paid"].includes(i.status) && i.total_cents > i.paid_cents);
+      openModal({
+        title: t("payments.new"), wide: true,
+        body: `
+          <div class="grid cols-3" style="gap:0 16px">
+            <div class="field"><span>${ESC(t("payments.type"))}</span>
+              <select id="pv-type">
+                <option value="receipt" ${type === "receipt" ? "selected" : ""}>${ESC(t("payments.receipt"))}</option>
+                <option value="payment" ${type === "payment" ? "selected" : ""}>${ESC(t("payments.payment"))}</option>
+              </select></div>
+            <div class="field"><span>${ESC(t("common.date"))}</span><input type="date" id="pv-date" value="${today()}"/></div>
+            <div class="field"><span>${ESC(t("payments.method"))}</span>
+              <select id="pv-gl">${glOptions.map(o => `<option value="${o.value}">${ESC(o.label)}</option>`).join("")}</select></div>
+            <div class="field"><span>${ESC(t("payments.party"))}</span>
+              <select id="pv-party">${partylist.map(p => `<option value="${p.id}" ${preset.party_id === p.id ? "selected" : ""}>${ESC(APP.lang === "ar" ? p.name_ar : p.name_en)}</option>`).join("")}</select></div>
+            <div class="field"><span>${ESC(t("common.amount"))} *</span><input id="pv-amount" type="number" step="0.01" min="0.01" value="${preset.amount ? preset.amount.toFixed(2) : ""}"/></div>
+            <div class="field"><span>${ESC(t("common.notes"))}</span><input id="pv-notes"/></div>
+          </div>
+          <div class="section-title" style="margin-top:6px"><span>${ESC(t("payments.allocate"))}</span><span class="line"></span></div>
+          <div class="table-wrap" style="border:1px solid var(--border);border-radius:12px;max-height:250px;overflow:auto">
+            <table class="data compact" id="pv-alloc">
+              <thead><tr><th></th><th>${ESC(t("common.invoice"))}</th><th>${ESC(t("common.date"))}</th>
+                <th class="num">${ESC(t("common.remaining"))}</th><th style="width:140px">${ESC(t("common.amount"))}</th></tr></thead>
+              <tbody>${openInvoices.map(i => `<tr data-inv="${i.id}" data-rem="${(i.total_cents - i.paid_cents) / 100}">
+                <td><input type="checkbox" class="al-chk" ${preset.invoice_id === i.id ? "checked" : ""}/></td>
+                <td>${ESC(i.invoice_no)}<br><small class="muted">${ESC(APP.lang === "ar" ? (i.customer_ar || i.vendor_ar) : (i.customer_en || i.vendor_en))}</small></td>
+                <td>${fmtDate(i.invoice_date)}</td>
+                <td class="num">${fmtMoney(i.total_cents - i.paid_cents)}</td>
+                <td><input class="input al-amt" type="number" step="0.01" min="0"
+                     value="${preset.invoice_id === i.id ? ((i.total_cents - i.paid_cents) / 100).toFixed(2) : ""}" ${preset.invoice_id === i.id ? "" : "disabled"}/></td>
+              </tr>`).join("") || `<tr><td colspan="5" class="empty">${ESC(t("common.empty"))}</td></tr>`}</tbody>
+            </table>
+          </div>
+          <div class="form-error hidden" id="pv-error"></div>`,
+        footer: `<button class="btn" data-close>${ESC(t("common.cancel"))}</button>
+                 <button class="btn btn-primary" id="pv-save">${ESC(L("حفظ وترحيل", "Save & post"))}</button>`,
+        onMount: (root, close) => {
+          $$(".al-chk", root).forEach(chk => chk.onchange = () => {
+            const tr = chk.closest("tr");
+            const amt = $(".al-amt", tr);
+            amt.disabled = !chk.checked;
+            if (chk.checked) {
+              amt.value = Number(tr.dataset.rem).toFixed(2);
+              const cur = Number($("#pv-amount", root).value || 0);
+              $("#pv-amount", root).value = (cur + Number(tr.dataset.rem)).toFixed(2);
+            }
+          });
+          $("#pv-save", root).onclick = async () => {
+            try {
+              const kind = $("#pv-type", root).value;
+              const allocations = [];
+              $$("#pv-alloc tbody tr", root).forEach(tr => {
+                const chk = $(".al-chk", tr);
+                if (chk && chk.checked) allocations.push({
+                  invoice_kind: kind === "receipt" ? "sales" : "purchase",
+                  invoice_id: Number(tr.dataset.inv),
+                  amount: Number($(".al-amt", tr).value || 0),
+                });
+              });
+              await api("/api/payments", {
+                method: "POST", body: {
+                  payment_type: kind,
+                  payment_date: $("#pv-date", root).value,
+                  party_type: kind === "receipt" ? "customer" : "vendor",
+                  party_id: Number($("#pv-party", root).value),
+                  method: "bank", gl_account_id: Number($("#pv-gl", root).value),
+                  amount: Number($("#pv-amount", root).value || 0),
+                  notes: $("#pv-notes", root).value,
+                  allocations, post: true,
+                }
+              });
+              toast(t("toast.posted")); close(); render();
+            } catch (e) { showErr(root, e.message); }
+          };
+        }
+      });
+    }
+  };
+
+  /* ==================================================================
+     VENDOR PAYABLES
+     ================================================================== */
+  PAGES.payables = {
+    perm: "payables.view",
+    async render(view) {
+      setTitle("nav.payables");
+      const data = await api("/api/payables");
+      const T = data.totals;
+      view.innerHTML = `${pageHead("payables.title", "payables.subtitle",
+        `<div class="doc-toolbar">${exportBtn("vendor-payables", { as_of: data.as_of })}
+           ${reportExports("vendor-payables", { as_of: data.as_of })}
+           <a class="btn btn-sm" href="#/reports?tab=vendor-payables">▤ ${ESC(t("reports.vendorPayables"))}</a></div>`)}
+        <div class="grid cols-4">
+          ${kpi({ label: t("payables.outstanding"), value: T.outstanding_cents, icon: "◫", tone: "warn" })}
+          ${kpi({ label: t("payables.overdue"), value: T.overdue_cents, icon: "⚠", tone: "danger" })}
+          ${kpi({ label: t("payables.invoiced"), value: T.invoiced_cents, icon: "▦" })}
+          ${kpi({ label: t("payables.paid"), value: T.paid_cents, icon: "✓", tone: "ok" })}
+        </div>
+        <div class="split" style="margin-top:16px">
+          ${card(t("payables.aging"), doughnut([
+            { label: t("reports.bucket.current"), value: data.aging.current },
+            { label: t("reports.bucket.1_30"), value: data.aging["1_30"] },
+            { label: t("reports.bucket.31_60"), value: data.aging["31_60"] },
+            { label: t("reports.bucket.61_90"), value: data.aging["61_90"] },
+            { label: t("reports.bucket.over_90"), value: data.aging.over_90 },
+          ]))}
+          ${card(t("payables.title"), `
+            <div class="stat-line"><span>${ESC(t("payables.journal"))}</span><strong>${fmtMoney(T.journal_balance_cents)}</strong></div>
+            <div class="stat-line"><span>${ESC(L("عدد الموردين المدينة", "Vendors with balance"))}</span>
+              <strong>${data.vendors.filter(v => v.outstanding_cents > 0).length}</strong></div>
+            <div class="stat-line"><span>${ESC(L("أقرب استحقاق", "Earliest due"))}</span>
+              <strong>${(data.vendors.filter(v => v.next_due_date).sort((a, b) => a.next_due_date.localeCompare(b.next_due_date))[0] || {}).next_due_date || "—"}</strong></div>
+            <p class="field-hint" style="margin-top:8px">${ESC(L("الأرصدة مطابقة لحساب الموردين في الأستاذ العام — الدفعات لا تؤثر إلا بعد الترحيل.",
+              "Balances reconcile to the AP control account — payments only count once posted."))}</p>`)}
+        </div>
+        <div class="section-title"><span>${ESC(t("payables.title"))}</span><span class="line"></span></div>
+        ${card("", renderTable([
+          { key: "code", label: t("common.code") },
+          { key: "name_ar", label: t("common.vendor"), cls: "wrap", render: r => `<strong>${ESC(APP.lang === "ar" ? r.name_ar : r.name_en)}</strong><br><small class="muted">${ESC(r.phone || "")}</small>` },
+          { key: "invoiced_cents", label: t("payables.invoiced"), cls: "num", render: r => fmtMoney(r.invoiced_cents) },
+          { key: "paid_cents", label: t("payables.paid"), cls: "num", render: r => fmtMoney(r.paid_cents) },
+          { key: "outstanding_cents", label: t("payables.outstanding"), cls: "num", render: r => `<strong>${fmtMoney(r.outstanding_cents)}</strong>` },
+          { key: "overdue_cents", label: t("payables.overdue"), cls: "num", render: r => r.overdue_cents ? `<span class="neg">${fmtMoney(r.overdue_cents)}</span>` : "—" },
+          { key: "next_due_date", label: t("payables.nextDue"), render: r => r.next_due_date ? fmtDate(r.next_due_date) : "—" },
+          { key: "terms", label: t("customers.terms"), render: r => r.payment_terms_days },
+          { key: "act", label: t("common.actions"), render: r => `<button class="btn btn-sm btn-ghost" data-stmt="${r.id}">${ESC(t("payables.statement"))}</button>` },
+        ], data.vendors, {
+          footer: `<tr><td colspan="2">${ESC(t("common.total"))}</td>
+            <td class="num">${fmtMoney(T.invoiced_cents)}</td><td class="num">${fmtMoney(T.paid_cents)}</td>
+            <td class="num">${fmtMoney(T.outstanding_cents)}</td><td class="num">${fmtMoney(T.overdue_cents)}</td>
+            <td colspan="3"></td></tr>`
+        }))}
+        <p class="field-hint" style="margin-top:10px">${ESC(L("ملاحظة: رصيد الأستاذ لكل مورد يساوي إجمالي الفواتير ناقص المدفوعات المرحّلة، ويمكن تتبعه حتى المستند الأصلي.",
+          "Note: each vendor's GL balance equals invoiced minus posted payments and is traceable to source documents."))}</p>`;
+      $$("[data-stmt]", view).forEach(b => b.onclick = () => vendorStatement(Number(b.dataset.stmt)));
+    }
+  };
+
+  async function vendorStatement(vendorId) {
+    const d = await api(`/api/vendors/${vendorId}/statement`);
+    const v = d.vendor;
+    const invoiced = d.invoices.reduce((s, i) => s + i.total_cents, 0);
+    const paid = d.payments.reduce((s, p) => s + p.amount_cents, 0);
+    openModal({
+      title: `${ESC(v.code)} — ${ESC(APP.lang === "ar" ? v.name_ar : v.name_en)}`, wide: true,
+      body: `<div class="grid cols-3" style="margin-bottom:14px">
+          ${kpi({ label: t("payables.invoiced"), value: invoiced, icon: "▦" })}
+          ${kpi({ label: t("payables.paid"), value: paid, icon: "✓", tone: "ok" })}
+          ${kpi({ label: t("payables.outstanding"), value: invoiced - paid, icon: "◫", tone: "warn" })}
+        </div>
+        <h4 style="margin:6px 0 8px">${ESC(t("nav.purchases"))}</h4>
+        ${renderTable([
+          { key: "invoice_no", label: "#" },
+          { key: "invoice_date", label: t("common.date") },
+          { key: "due_date", label: t("common.dueDate") },
+          { key: "total_cents", label: t("common.total"), cls: "num", render: r => fmtMoney(r.total_cents) },
+          { key: "paid_cents", label: t("common.paid"), cls: "num", render: r => fmtMoney(r.paid_cents) },
+          { key: "remaining", label: t("common.remaining"), cls: "num", render: r => fmtMoney(r.total_cents - r.paid_cents) },
+          { key: "status", label: t("common.status"), render: r => statusBadge(r.status) },
+        ], d.invoices, { compact: true })}
+        <h4 style="margin:16px 0 8px">${ESC(t("nav.payments"))}</h4>
+        ${renderTable([
+          { key: "payment_no", label: "#" },
+          { key: "payment_date", label: t("common.date") },
+          { key: "reference", label: t("common.description") },
+          { key: "amount_cents", label: t("common.amount"), cls: "num", render: r => fmtMoney(r.amount_cents) },
+        ], d.payments, { compact: true })}`
+    });
+  }
+
+  /* ==================================================================
+     RECEIVABLES
+     ================================================================== */
+  PAGES.receivables = {
+    perm: "customers.view",
+    async render(view) {
+      setTitle("nav.receivables");
+      const data = await api("/api/receivables");
+      const ag = data.aging, pos = data.position;
+      view.innerHTML = `${pageHead("receivables.title", "receivables.subtitle",
+        `<div class="doc-toolbar">${exportBtn("aging", { as_of: ag.as_of, type: "sales" })}
+           ${reportExports("aging", { as_of: ag.as_of, type: "sales" })}</div>`)}
+        <div class="grid cols-4">
+          ${kpi({ label: t("dash.ar"), value: pos.total_cents, icon: "◨" })}
+          ${kpi({ label: t("reports.bucket.current"), value: ag.buckets.current, icon: "◔" })}
+          ${kpi({ label: t("reports.bucket.1_30"), value: ag.buckets["1_30"], icon: "⚠", tone: "warn" })}
+          ${kpi({ label: t("reports.bucket.over_90"), value: ag.buckets.over_90, icon: "⛔", tone: "danger" })}
+        </div>
+        <div class="section-title"><span>${ESC(t("customers.title"))}</span><span class="line"></span></div>
+        ${card("", renderTable([
+          { key: "code", label: t("common.code") },
+          { key: "name_ar", label: t("common.customer"), render: r => `<strong>${ESC(APP.lang === "ar" ? r.name_ar : r.name_en)}</strong>` },
+          { key: "outstanding_cents", label: t("payables.outstanding"), cls: "num", render: r => fmtMoney(r.outstanding_cents) },
+          { key: "credit_limit_cents", label: t("sales.creditLimit"), cls: "num", render: r => fmtMoney(r.credit_limit_cents) },
+          { key: "utilization", label: L("نسبة الاستخدام", "Utilization"), render: r => {
+              const p = r.credit_limit_cents ? Math.min(100, r.outstanding_cents / r.credit_limit_cents * 100) : 0;
+              return `<div class="progress ${p > 90 ? "danger" : p > 70 ? "warn" : ""}"><span style="width:${p}%"></span></div>
+                      <small class="muted">${p.toFixed(0)}%</small>`;
+            } },
+          { key: "status", label: t("common.status"), render: r => r.outstanding_cents > r.credit_limit_cents && r.credit_limit_cents ? `<span class="badge red">${ESC(L("تجاوز الحد", "Over limit"))}</span>` : `<span class="badge green">${ESC(L("داخل الحد", "Within limit"))}</span>` },
+        ], pos.customers))}
+        <div class="section-title"><span>${ESC(t("reports.agingAR"))}</span><span class="line"></span></div>
+        ${card("", renderTable([
+          { key: "invoice_no", label: "#" },
+          { key: "party_ar", label: t("common.customer"), cls: "wrap" },
+          { key: "due_date", label: t("common.dueDate") },
+          { key: "remaining_cents", label: t("common.remaining"), cls: "num", render: r => fmtMoney(r.remaining_cents) },
+          { key: "days_overdue", label: t("reports.daysOverdue"), cls: "num", render: r => r.days_overdue > 0 ? `<span class="neg">${r.days_overdue}</span>` : "—" },
+          { key: "bucket", label: t("payables.aging"), render: r => `<span class="badge ${r.bucket === "current" ? "green" : r.bucket === "over_90" ? "red" : "amber"}">${ESC(t("reports.bucket." + r.bucket))}</span>` },
+        ], ag.items))}`;
+    }
+  };
+
+  /* ==================================================================
+     CUSTOMERS / VENDORS
+     ================================================================== */
+  PAGES.customers = {
+    perm: "customers.view",
+    async render(view) {
+      setTitle("nav.customers");
+      const data = await api("/api/customers");
+      view.innerHTML = `${pageHead("customers.title", "nav.masters",
+        can("customers.create") ? `<button class="btn btn-primary btn-sm" id="new-cust">＋ ${ESC(t("customers.new"))}</button>` : "")}
+        ${card("", renderTable([
+          { key: "code", label: t("common.code") },
+          { key: "name_ar", label: t("common.name"), render: r => `<strong>${ESC(APP.lang === "ar" ? r.name_ar : r.name_en)}</strong>` },
+          { key: "phone", label: t("customers.phone"), render: r => ESC(r.phone || "—") },
+          { key: "payment_terms_days", label: t("customers.terms") },
+          { key: "credit_limit_cents", label: t("sales.creditLimit"), cls: "num", render: r => fmtMoney(r.credit_limit_cents) },
+          { key: "outstanding_cents", label: t("payables.outstanding"), cls: "num", render: r => fmtMoney(r.outstanding_cents) },
+          { key: "is_active", label: t("common.status"), render: r => statusBadge(r.is_active ? "active" : "inactive") },
+        ], data.customers))}`;
+      if (can("customers.create")) $("#new-cust").onclick = () => openForm({
+        title: t("customers.new"),
+        fields: [
+          { name: "code", label: t("common.code"), required: true, value: "C-" + Math.floor(1000 + Math.random() * 9000) },
+          { name: "name_ar", label: "الاسم بالعربية", required: true },
+          { name: "name_en", label: "Name (English)", required: true },
+          { name: "phone", label: t("customers.phone") },
+          { name: "credit_limit", label: t("sales.creditLimit"), type: "number", step: "0.01", value: "0" },
+          { name: "payment_terms_days", label: t("customers.terms"), type: "number", value: "30" },
+        ],
+        onSubmit: async (d) => { await api("/api/customers", { method: "POST", body: d }); toast(t("common.saved")); render(); }
+      });
+    }
+  };
+
+  PAGES.vendors = {
+    perm: "vendors.view",
+    async render(view) {
+      setTitle("nav.vendors");
+      const data = await api("/api/vendors");
+      view.innerHTML = `${pageHead("vendors.title", "nav.masters",
+        can("vendors.create") ? `<button class="btn btn-primary btn-sm" id="new-vend">＋ ${ESC(t("vendors.new"))}</button>` : "")}
+        ${card("", renderTable([
+          { key: "code", label: t("common.code") },
+          { key: "name_ar", label: t("common.name"), render: r => `<strong>${ESC(APP.lang === "ar" ? r.name_ar : r.name_en)}</strong>` },
+          { key: "phone", label: t("customers.phone"), render: r => ESC(r.phone || "—") },
+          { key: "payment_terms_days", label: t("customers.terms") },
+          { key: "outstanding_cents", label: t("payables.outstanding"), cls: "num", render: r => fmtMoney(r.outstanding_cents) },
+          { key: "is_active", label: t("common.status"), render: r => statusBadge(r.is_active ? "active" : "inactive") },
+          { key: "act", label: t("common.actions"), render: r => `<button class="btn btn-sm btn-ghost" data-stmt="${r.id}">${ESC(t("payables.statement"))}</button>` },
+        ], data.vendors))}`;
+      $$("[data-stmt]", view).forEach(b => b.onclick = () => vendorStatement(Number(b.dataset.stmt)));
+      if (can("vendors.create")) $("#new-vend").onclick = () => openForm({
+        title: t("vendors.new"),
+        fields: [
+          { name: "code", label: t("common.code"), required: true, value: "V-" + Math.floor(2000 + Math.random() * 900) },
+          { name: "name_ar", label: "الاسم بالعربية", required: true },
+          { name: "name_en", label: "Name (English)", required: true },
+          { name: "phone", label: t("customers.phone") },
+          { name: "payment_terms_days", label: t("customers.terms"), type: "number", value: "30" },
+        ],
+        onSubmit: async (d) => { await api("/api/vendors", { method: "POST", body: d }); toast(t("common.saved")); render(); }
+      });
+    }
+  };
+
+  /* ==================================================================
+     INVENTORY
+     ================================================================== */
+  PAGES.inventory = {
+    perm: "inventory.view",
+    async render(view) {
+      setTitle("nav.inventory");
+      const data = await api("/api/inventory");
+      const stock = data.stock.filter(r => r.qty_milli !== 0 || r.value_cents !== 0);
+      view.innerHTML = `${pageHead("inventory.title", "inventory.subtitle",
+        can("inventory.manage") ? `<button class="btn btn-primary btn-sm" id="new-move">＋ ${ESC(t("inventory.newMovement"))}</button>` : "")}
+        <div class="grid cols-3">
+          ${kpi({ label: t("inventory.value"), value: data.totals.value_cents, icon: "▩" })}
+          ${kpi({ label: L("عدد الأصناف", "SKUs"), value: new Set(stock.map(s => s.product_id)).size, icon: "▦", raw: true })}
+          ${kpi({ label: L("أصناف تحت حد إعادة الطلب", "Below reorder level"), value: stock.filter(s => s.reorder_level_milli && s.qty_milli <= s.reorder_level_milli).length, icon: "⚠", tone: "warn", raw: true })}
+        </div>
+        <div class="section-title"><span>${ESC(t("inventory.stock"))}</span><span class="line"></span></div>
+        ${card("", renderTable([
+          { key: "sku", label: t("common.code") },
+          { key: "name_ar", label: L("الصنف", "Product"), render: r => ESC(APP.lang === "ar" ? r.name_ar : r.name_en) },
+          { key: "warehouse_ar", label: t("common.warehouse") },
+          { key: "qty_milli", label: t("common.qty"), cls: "num", render: r => {
+              const low = r.reorder_level_milli && r.qty_milli <= r.reorder_level_milli;
+              return `<span class="${low ? "neg" : ""}">${fmtNum(r.qty_milli / 1000, 0)}</span>`;
+            } },
+          { key: "reorder_level_milli", label: t("inventory.reorder"), cls: "num", render: r => fmtNum(r.reorder_level_milli / 1000, 0) },
+          { key: "value_cents", label: t("inventory.value"), cls: "num", render: r => fmtMoney(r.value_cents) },
+          { key: "avg", label: t("inventory.unitCost"), cls: "num", render: r => r.qty_milli ? fmtMoney(Math.round(r.value_cents * 1000 / r.qty_milli)) : "—" },
+        ], stock))}
+        <div class="section-title"><span>${ESC(t("inventory.movements"))}</span><span class="line"></span></div>
+        ${card("", renderTable([
+          { key: "move_date", label: t("common.date") },
+          { key: "sku", label: t("common.code") },
+          { key: "product_ar", label: L("الصنف", "Product") },
+          { key: "warehouse_ar", label: t("common.warehouse") },
+          { key: "move_type", label: t("inventory.moveType"), render: r => `<span class="badge ${["in", "transfer_in"].includes(r.move_type) ? "green" : r.move_type === "out" ? "amber" : "gray"}">${ESC(r.move_type)}</span>` },
+          { key: "qty_milli", label: t("common.qty"), cls: "num", render: r => fmtNum(r.qty_milli / 1000, 0) },
+          { key: "unit_cost_cents", label: t("inventory.unitCost"), cls: "num", render: r => fmtMoney(r.unit_cost_cents) },
+          { key: "value_cents", label: t("common.total"), cls: "num", render: r => fmtMoney(r.value_cents) },
+          { key: "ref_type", label: t("common.description"), render: r => ESC(r.ref_type || r.notes || "—") },
+        ], data.movements, { compact: true }))}`;
+
+      if (can("inventory.manage")) $("#new-move").onclick = async () => {
+        const [prods, meta] = await Promise.all([api("/api/products"), api("/api/meta")]);
+        openForm({
+          title: t("inventory.newMovement"),
+          fields: [
+            { name: "move_type", label: t("inventory.moveType"), type: "select", required: true,
+              options: [{ value: "in", label: t("inventory.in") }, { value: "out", label: t("inventory.out") },
+                        { value: "adjust", label: t("inventory.adjust") }, { value: "transfer", label: t("inventory.transfer") }] },
+            { name: "product_id", label: L("الصنف", "Product"), type: "select", required: true,
+              options: prods.products.map(p => ({ value: p.id, label: `${p.sku} — ${p.name_ar}` })) },
+            { name: "warehouse_id", label: t("common.warehouse"), type: "select", required: true,
+              options: meta.warehouses.map(w => ({ value: w.id, label: w.name_ar })) },
+            { name: "target_warehouse_id", label: L("المستودع المستهدف (للتحويل)", "Target warehouse (transfer)"), type: "select",
+              options: [{ value: "", label: "—" }, ...meta.warehouses.map(w => ({ value: w.id, label: w.name_ar }))] },
+            { name: "qty", label: t("common.qty"), type: "number", step: "0.001", required: true },
+            { name: "unit_cost", label: t("inventory.unitCost"), type: "number", step: "0.01" },
+            { name: "move_date", label: t("common.date"), type: "date", value: today() },
+            { name: "notes", label: t("common.notes") },
+          ],
+          onSubmit: async (d) => { await api("/api/inventory/movements", { method: "POST", body: d }); toast(t("common.saved")); render(); }
+        });
+      };
+    }
+  };
+
+  /* ==================================================================
+     BANKS
+     ================================================================== */
+  PAGES.banks = {
+    perm: "banks.view",
+    async render(view) {
+      setTitle("nav.banks");
+      const [banks, txns] = await Promise.all([api("/api/banks"), api("/api/bank-transactions")]);
+      const unreconciled = txns.transactions.filter(t => !t.is_reconciled);
+      view.innerHTML = `${pageHead("banks.title", "banks.subtitle",
+        can("banks.manage") ? `<button class="btn btn-primary btn-sm" id="new-txn">＋ ${ESC(t("banks.newTransaction"))}</button>` : "")}
+        <div class="grid cols-3">
+          ${banks.position.accounts.map(a => kpi({ label: APP.lang === "ar" ? a.name_ar : (a.name_en || a.name_ar), value: a.balance_cents, icon: a.account_type === "cash" ? "₪" : "▬",
+            sub: `${a.account_type === "cash" ? t("payments.cash") : t("payments.bank")} · ${a.gl_code}` })).join("")}
+        </div>
+        <div class="section-title"><span>${ESC(t("banks.transactions"))}</span><span class="line"></span>
+          <span class="small muted">${unreconciled.length} ${ESC(t("banks.unreconciled"))}</span></div>
+        ${card("", renderTable([
+          { key: "txn_date", label: t("common.date") },
+          { key: "bank_name", label: t("common.account") },
+          { key: "description", label: t("common.description"), render: r => ESC(r.description) },
+          { key: "statement_ref", label: L("مرجع", "Ref"), render: r => ESC(r.statement_ref || "—") },
+          { key: "debit_cents", label: t("common.debit"), cls: "num", render: r => r.debit_cents ? fmtMoney(r.debit_cents) : "" },
+          { key: "credit_cents", label: t("common.credit"), cls: "num", render: r => r.credit_cents ? fmtMoney(r.credit_cents) : "" },
+          { key: "matched_payment_no", label: t("payments.receipt"), render: r => ESC(r.matched_payment_no || "—") },
+          { key: "is_reconciled", label: t("common.status"), render: r => r.is_reconciled ? `<span class="badge green">${ESC(t("banks.reconciled"))}</span>` : `<span class="badge amber">${ESC(t("banks.unreconciled"))}</span>` },
+          { key: "act", label: "", render: r => !r.is_reconciled && can("banks.manage") ? `<button class="btn btn-sm btn-ghost" data-rec="${r.id}">${ESC(t("banks.reconcile"))}</button>` : "" },
+        ], txns.transactions))}`;
+
+      if (can("banks.manage")) {
+        $("#new-txn").onclick = () => openForm({
+          title: t("banks.newTransaction"),
+          fields: [
+            { name: "bank_account_id", label: t("common.account"), type: "select", required: true,
+              options: banks.accounts.map(b => ({ value: b.id, label: b.name_ar })) },
+            { name: "txn_date", label: t("common.date"), type: "date", value: today(), required: true },
+            { name: "description", label: t("common.description"), required: true },
+            { name: "direction", label: L("الاتجاه", "Direction"), type: "select",
+              options: [{ value: "debit", label: L("إيداع", "Deposit") }, { value: "credit", label: L("سحب", "Withdrawal") }] },
+            { name: "amount", label: t("common.amount"), type: "number", step: "0.01", required: true },
+            { name: "statement_ref", label: L("مرجع كشف الحساب", "Statement ref") },
+          ],
+          onSubmit: async (d) => { await api("/api/bank-transactions", { method: "POST", body: d }); toast(t("common.saved")); render(); }
+        });
+        $$("[data-rec]", view).forEach(b => b.onclick = async () => {
+          const sug = await api("/api/bank-transactions/suggestions");
+          const forTxn = sug.suggestions.find(s => s.transaction.id === Number(b.dataset.rec));
+          openModal({
+            title: t("banks.reconcile"), narrow: true,
+            body: forTxn && forTxn.candidates.length
+              ? `<p class="small muted">${ESC(t("banks.suggestions"))}</p>` + forTxn.candidates.map(c =>
+                `<label class="menu-item" style="display:flex;gap:8px;align-items:center">
+                    <input type="radio" name="cand" value="${c.id}"/>
+                    <span>${ESC(c.payment_no)} · ${fmtDate(c.payment_date)} · ${fmtMoney(c.amount_cents)}</span></label>`).join("")
+              : `<p class="muted small">${ESC(t("banks.noSuggestions"))}</p>`,
+            footer: `<button class="btn" data-close>${ESC(t("common.cancel"))}</button>
+                     ${forTxn && forTxn.candidates.length ? `<button class="btn btn-primary" id="rec-ok">${ESC(t("banks.confirm"))}</button>` : ""}`,
+            onMount: (root, close) => {
+              const btn = $("#rec-ok", root);
+              if (!btn) return;
+              btn.onclick = async () => {
+                const sel = root.querySelector("input[name=cand]:checked");
+                try {
+                  await api(`/api/bank-transactions/${b.dataset.rec}/reconcile`, {
+                    method: "POST", body: { payment_id: sel ? Number(sel.value) : null }
+                  });
+                  toast(t("common.saved")); close(); render();
+                } catch (e) { toast(e.message, "err"); }
+              };
+            }
+          });
+        });
+      }
+    }
+  };
+
+  /* ==================================================================
+     FIXED ASSETS
+     ================================================================== */
+  PAGES.assets = {
+    perm: "assets.view",
+    async render(view) {
+      setTitle("nav.assets");
+      const data = await api("/api/assets");
+      const totalCost = data.assets.reduce((s, a) => s + a.cost_cents, 0);
+      const totalAcc = data.assets.reduce((s, a) => s + a.accumulated_cents, 0);
+      view.innerHTML = `${pageHead("assets.title", "assets.subtitle",
+        `${can("assets.manage") ? `<button class="btn btn-primary btn-sm" id="new-asset">＋ ${ESC(t("assets.new"))}</button>
+          <button class="btn btn-sm" id="run-dep">↻ ${ESC(t("assets.runDepreciation"))}</button>` : ""}`)}
+        <div class="grid cols-3">
+          ${kpi({ label: t("assets.cost"), value: totalCost, icon: "▣" })}
+          ${kpi({ label: t("assets.accumulated"), value: totalAcc, icon: "▼", tone: "warn" })}
+          ${kpi({ label: t("assets.bookValue"), value: totalCost - totalAcc, icon: "◈", tone: "ok" })}
+        </div>
+        <div class="section-title"><span>${ESC(t("assets.title"))}</span><span class="line"></span></div>
+        ${card("", renderTable([
+          { key: "code", label: t("common.code") },
+          { key: "name_ar", label: t("common.name"), render: r => `<strong>${ESC(APP.lang === "ar" ? r.name_ar : r.name_en)}</strong>` },
+          { key: "category", label: L("التصنيف", "Category") },
+          { key: "start_date", label: L("بدء التشغيل", "In service"), render: r => fmtDate(r.start_date) },
+          { key: "cost_cents", label: t("assets.cost"), cls: "num", render: r => fmtMoney(r.cost_cents) },
+          { key: "useful_life_months", label: t("assets.life"), cls: "num" },
+          { key: "bv", label: t("assets.bookValue"), cls: "num", render: r => fmtMoney(r.cost_cents - r.accumulated_cents) },
+          { key: "status", label: t("common.status"), render: r => statusBadge(r.status === "active" ? "active" : "inactive") },
+        ], data.assets))}
+        <div class="section-title"><span>${ESC(t("assets.runs"))}</span><span class="line"></span></div>
+        ${card("", renderTable([
+          { key: "run_no", label: "#" },
+          { key: "period_start", label: t("common.from"), render: r => fmtDate(r.period_start) },
+          { key: "period_end", label: t("common.to"), render: r => fmtDate(r.period_end) },
+          { key: "total_cents", label: t("common.amount"), cls: "num", render: r => fmtMoney(r.total_cents) },
+          { key: "status", label: t("common.status"), render: r => statusBadge(r.status) },
+          { key: "journal_entry_id", label: L("القيد", "Journal"), render: r => r.journal_entry_id ? `<a href="#/journal/${r.journal_entry_id}">#${r.journal_entry_id}</a>` : "—" },
+        ], data.runs, { compact: true }))}`;
+
+      if (can("assets.manage")) {
+        $("#new-asset").onclick = () => openForm({
+          title: t("assets.new"),
+          fields: [
+            { name: "code", label: t("common.code"), required: true, value: "FA-" + Math.floor(100 + Math.random() * 900) },
+            { name: "category", label: L("التصنيف", "Category") },
+            { name: "name_ar", label: "الاسم بالعربية", required: true },
+            { name: "name_en", label: "Name (English)", required: true },
+            { name: "cost", label: t("assets.cost"), type: "number", step: "0.01", required: true },
+            { name: "salvage", label: t("assets.salvage"), type: "number", step: "0.01", value: "0" },
+            { name: "useful_life_months", label: t("assets.life"), type: "number", required: true, value: "60" },
+            { name: "start_date", label: L("بدء التشغيل", "In service"), type: "date", value: today() },
+            { name: "asset_account_code", label: t("common.account"), type: "select",
+              options: [{ value: "1450", label: "1450 — أثاث ومفروشات" }, { value: "1430", label: "1430 — سيارات" },
+                        { value: "1440", label: "1440 — حاسوب" }, { value: "1420", label: "1420 — مباني" }] },
+          ],
+          onSubmit: async (d) => { await api("/api/assets", { method: "POST", body: d }); toast(t("common.saved")); render(); }
+        });
+        $("#run-dep").onclick = () => openForm({
+          title: t("assets.runDepreciation"),
+          fields: [
+            { name: "period_start", label: t("common.from"), type: "date", value: today().slice(0, 7) + "-01", required: true },
+            { name: "period_end", label: t("common.to"), type: "date", value: today(), required: true },
+          ],
+          onSubmit: async (d) => {
+            const res = await api("/api/assets/depreciation", { method: "POST", body: d });
+            toast(`${t("toast.posted")} — ${fmtMoney(res.total_cents)}`); render();
+          }
+        });
+      }
+    }
+  };
+
+  /* ==================================================================
+     PAYROLL
+     ================================================================== */
+  PAGES.payroll = {
+    perm: "payroll.view",
+    async render(view) {
+      setTitle("nav.payroll");
+      const data = await api("/api/payroll");
+      const gross = data.employees.reduce((s, e) => s + e.basic_salary_cents + e.allowances_cents, 0);
+      const net = data.employees.reduce((s, e) => s + e.basic_salary_cents + e.allowances_cents - e.deductions_cents - e.insurance_cents - e.tax_cents, 0);
+      view.innerHTML = `${pageHead("payroll.title", "payroll.subtitle",
+        `${can("payroll.manage") ? `<button class="btn btn-primary btn-sm" id="run-pay">↻ ${ESC(t("payroll.run"))}</button>
+          <button class="btn btn-sm" id="new-emp">＋ ${ESC(t("payroll.newEmployee"))}</button>` : ""}`)}
+        <div class="grid cols-3">
+          ${kpi({ label: t("payroll.gross"), value: gross, icon: "◍" })}
+          ${kpi({ label: t("payroll.net"), value: net, icon: "◈", tone: "ok" })}
+          ${kpi({ label: L("عدد الموظفين", "Employees"), value: data.employees.filter(e => e.is_active).length, icon: "☺", raw: true })}
+        </div>
+        <div class="section-title"><span>${ESC(t("payroll.employees"))}</span><span class="line"></span></div>
+        ${card("", renderTable([
+          { key: "code", label: t("common.code") },
+          { key: "name_ar", label: t("common.name"), render: r => `<strong>${ESC(APP.lang === "ar" ? r.name_ar : r.name_en)}</strong>` },
+          { key: "department", label: L("الإدارة", "Department") },
+          { key: "job_title", label: L("الوظيفة", "Job title") },
+          { key: "basic_salary_cents", label: t("payroll.basic"), cls: "num", render: r => fmtMoney(r.basic_salary_cents) },
+          { key: "allowances_cents", label: t("payroll.allowances"), cls: "num", render: r => fmtMoney(r.allowances_cents) },
+          { key: "ded", label: t("payroll.deductions"), cls: "num", render: r => fmtMoney(r.deductions_cents + r.insurance_cents + r.tax_cents) },
+          { key: "net", label: t("payroll.net"), cls: "num", render: r => fmtMoney(r.basic_salary_cents + r.allowances_cents - r.deductions_cents - r.insurance_cents - r.tax_cents) },
+        ], data.employees))}
+        <div class="section-title"><span>${ESC(t("payroll.runs"))}</span><span class="line"></span></div>
+        ${card("", renderTable([
+          { key: "run_no", label: "#" },
+          { key: "period", label: t("payroll.period") },
+          { key: "gross_cents", label: t("payroll.gross"), cls: "num", render: r => fmtMoney(r.gross_cents) },
+          { key: "deductions_cents", label: t("payroll.deductions"), cls: "num", render: r => fmtMoney(r.deductions_cents) },
+          { key: "net_cents", label: t("payroll.net"), cls: "num", render: r => fmtMoney(r.net_cents) },
+          { key: "status", label: t("common.status"), render: r => statusBadge(r.status) },
+          { key: "journal_entry_id", label: L("القيد", "Journal"), render: r => r.journal_entry_id ? `<a href="#/journal/${r.journal_entry_id}">#${r.journal_entry_id}</a>` : "—" },
+        ], data.runs, { compact: true }))}`;
+
+      if (can("payroll.manage")) {
+        $("#run-pay").onclick = () => openForm({
+          title: t("payroll.run"),
+          fields: [{ name: "period", label: t("payroll.period"), value: today().slice(0, 7), required: true, hint: "YYYY-MM" }],
+          onSubmit: async (d) => { const r = await api("/api/payroll/run", { method: "POST", body: d }); toast(`${t("toast.posted")} — ${fmtMoney(r.net_cents)}`); render(); }
+        });
+        $("#new-emp").onclick = () => openForm({
+          title: t("payroll.newEmployee"),
+          fields: [
+            { name: "code", label: t("common.code"), required: true, value: "EMP-" + Math.floor(100 + Math.random() * 899) },
+            { name: "name_ar", label: "الاسم بالعربية", required: true },
+            { name: "name_en", label: "Name (English)", required: true },
+            { name: "department", label: L("الإدارة", "Department") },
+            { name: "job_title", label: L("الوظيفة", "Job title") },
+            { name: "hire_date", label: L("تاريخ التعيين", "Hire date"), type: "date", value: today() },
+            { name: "basic_salary", label: t("payroll.basic"), type: "number", step: "0.01", required: true },
+            { name: "allowances", label: t("payroll.allowances"), type: "number", step: "0.01", value: "0" },
+            { name: "deductions", label: t("payroll.deductions"), type: "number", step: "0.01", value: "0" },
+          ],
+          onSubmit: async (d) => { await api("/api/employees", { method: "POST", body: d }); toast(t("common.saved")); render(); }
+        });
+      }
+    }
+  };
+
+  /* ==================================================================
+     BUDGETS
+     ================================================================== */
+  PAGES.budgets = {
+    perm: "budgets.view",
+    async render(view) {
+      setTitle("nav.budgets");
+      const data = await api("/api/budgets");
+      const rows = data.variance;
+      const over = rows.filter(r => r.variance_cents < 0);
+      view.innerHTML = `${pageHead("budgets.title", "budgets.subtitle",
+        `${can("budgets.manage") ? `<button class="btn btn-primary btn-sm" id="new-budget">＋ ${ESC(t("budgets.new"))}</button>` : ""}
+         <a class="btn btn-sm" href="#/reports?tab=vendor-payables">▤ ${ESC(t("nav.reports"))}</a>`)}
+        <div class="grid cols-3">
+          ${kpi({ label: t("budgets.budget"), value: rows.reduce((s, r) => s + r.budget_cents, 0), icon: "◑" })}
+          ${kpi({ label: t("budgets.actual"), value: rows.reduce((s, r) => s + r.actual_cents, 0), icon: "▦" })}
+          ${kpi({ label: L("بنود تجاوزت الموازنة", "Over-budget lines"), value: over.length, icon: "⚠", tone: "danger", raw: true })}
+        </div>
+        <div class="section-title"><span>${ESC(L("الموازنة مقابل الفعلي", "Budget vs actual"))}</span><span class="line"></span></div>
+        ${card("", renderTable([
+          { key: "code", label: t("common.code") },
+          { key: "name_ar", label: t("common.name"), render: r => ESC(APP.lang === "ar" ? r.name_ar : r.name_en) },
+          { key: "budget_cents", label: t("budgets.budget"), cls: "num", render: r => fmtMoney(r.budget_cents) },
+          { key: "actual_cents", label: t("budgets.actual"), cls: "num", render: r => fmtMoney(r.actual_cents) },
+          { key: "variance_cents", label: t("budgets.variance"), cls: "num", render: r => `<span class="${r.variance_cents < 0 ? "neg" : "pos"}">${fmtMoney(r.variance_cents)}</span>` },
+          { key: "util", label: L("الاستخدام", "Utilization"), render: r => {
+              const p = r.budget_cents ? Math.min(150, r.actual_cents / r.budget_cents * 100) : 0;
+              return `<div class="progress ${p > 100 ? "danger" : p > 85 ? "warn" : ""}"><span style="width:${Math.min(100, p)}%"></span></div>
+                      <small class="muted">${p.toFixed(0)}%</small>`;
+            } },
+        ], rows, {
+          footer: `<tr><td colspan="2">${ESC(t("common.total"))}</td>
+            <td class="num">${fmtMoney(rows.reduce((s, r) => s + r.budget_cents, 0))}</td>
+            <td class="num">${fmtMoney(rows.reduce((s, r) => s + r.actual_cents, 0))}</td>
+            <td class="num">${fmtMoney(rows.reduce((s, r) => s + r.variance_cents, 0))}</td><td></td></tr>`
+        }))}`;
+      if (can("budgets.manage")) $("#new-budget").onclick = async () => {
+        const [accs, meta] = await Promise.all([api("/api/accounts"), api("/api/meta")]);
+        openForm({
+          title: t("budgets.new"),
+          fields: [
+            { name: "fiscal_year_id", label: t("periods.year"), type: "select", required: true,
+              options: meta.fiscal_years.map(f => ({ value: f.id, label: f.name })) },
+            { name: "account_id", label: t("common.account"), type: "select", required: true,
+              options: accs.accounts.filter(a => a.is_postable && ["expense", "revenue"].includes(a.type))
+                .map(a => ({ value: a.id, label: `${a.code} — ${a.name_ar}` })) },
+            { name: "cost_center_id", label: t("common.costCenter"), type: "select",
+              options: [{ value: "", label: "—" }, ...meta.cost_centers.map(c => ({ value: c.id, label: c.name_ar }))] },
+            { name: "period_month", label: t("budgets.month"), type: "select", required: true,
+              options: Array.from({ length: 12 }, (_, i) => ({ value: i + 1, label: String(i + 1) })) },
+            { name: "budget", label: t("budgets.budget"), type: "number", step: "0.01", required: true },
+          ],
+          onSubmit: async (d) => { await api("/api/budgets", { method: "POST", body: d }); toast(t("common.saved")); render(); }
+        });
+      };
+    }
+  };
+
+  /* ==================================================================
+     REPORTS
+     ================================================================== */
+  PAGES.reports = {
+    perm: "reports.view",
+    async render(view) {
+      setTitle("nav.reports");
+      const tab = new URLSearchParams((location.hash.split("?")[1] || "")).get("tab") || "trial-balance";
+      const from = yearStart(), to = today();
+      const tabs = [
+        ["trial-balance", "reports.trialBalance"],
+        ["income-statement", "reports.incomeStatement"],
+        ["balance-sheet", "reports.balanceSheet"],
+        ["cash-flow", "reports.cashFlow"],
+        ["aging-ar", "reports.agingAR"],
+        ["aging-ap", "reports.agingAP"],
+        ["vendor-payables", "reports.vendorPayables"],
+      ];
+      view.innerHTML = `${pageHead("reports.title", "reports.subtitle", printBtn())}
+        <div class="tabs">${tabs.map(([k, l]) => `<button class="tab ${tab === k ? "active" : ""}" data-tab="${k}">${ESC(t(l))}</button>`).join("")}</div>
+        <div class="filters">
+          <div class="field"><span>${ESC(t("common.from"))}</span><input type="date" id="r-from" value="${from}"/></div>
+          <div class="field"><span>${ESC(t("common.to"))}</span><input type="date" id="r-to" value="${to}"/></div>
+          <button class="btn btn-sm btn-primary" id="r-apply">${ESC(t("common.filter"))}</button>
+          <div style="flex:1"></div>
+          <span id="r-export"></span>
+        </div>
+        <div id="report-body"><div class="skeleton"></div></div>`;
+      $$("[data-tab]", view).forEach(b => b.onclick = () => { location.hash = `#/reports?tab=${b.dataset.tab}`; });
+
+      const body = $("#report-body");
+      const load = async () => {
+        const f = $("#r-from").value, t2 = $("#r-to").value;
+        body.innerHTML = `<div class="skeleton"></div>`;
+        if (tab === "trial-balance") {
+          $("#r-export").innerHTML = reportExports("trial-balance", { from: f, to: t2 });
+          const d = await api(`/api/reports/trial-balance?from=${f}&to=${t2}`);
+          body.innerHTML = `${card(`${t("reports.trialBalance")} — ${f} → ${t2}`, renderTable([
+            { key: "code", label: t("common.code") },
+            { key: "name_ar", label: t("common.account"), render: r => ESC(APP.lang === "ar" ? r.name_ar : r.name_en) },
+            { key: "opening", label: t("reports.opening"), cls: "num", render: r => fmtMoney(r.opening) },
+            { key: "period_debit", label: t("reports.periodDebit"), cls: "num", render: r => fmtMoney(r.period_debit) },
+            { key: "period_credit", label: t("reports.periodCredit"), cls: "num", render: r => fmtMoney(r.period_credit) },
+            { key: "closing", label: t("reports.closing"), cls: "num", render: r => fmtMoney(r.closing) },
+          ], d.rows, {
+            footer: `<tr><td colspan="2">${ESC(t("common.total"))}</td>
+              <td class="num">${fmtMoney(d.totals.opening_net)}</td>
+              <td class="num">${fmtMoney(d.totals.period_debit)}</td>
+              <td class="num">${fmtMoney(d.totals.period_credit)}</td>
+              <td class="num">${fmtMoney(d.totals.closing_net)}</td></tr>`
+          }), `<span class="badge ${d.balanced ? "green" : "red"}">${ESC(d.balanced ? t("reports.balanced") : t("reports.notBalanced"))}</span>`) }`;
+        } else if (tab === "income-statement") {
+          $("#r-export").innerHTML = reportExports("income-statement", { from: f, to: t2 });
+          const d = await api(`/api/reports/income-statement?from=${f}&to=${t2}`);
+          const line = (i) => `<div class="stat-line"><span>${ESC(i.code)} — ${ESC(APP.lang === "ar" ? i.name_ar : i.name_en)}</span><strong>${fmtMoney(i.amount_cents)}</strong></div>`;
+          body.innerHTML = `<div class="grid cols-2">
+            ${card(t("reports.revenue"), d.revenue.map(line).join("") + `<div class="stat-line" style="border-top:2px solid var(--border-strong)"><strong>${ESC(t("common.total"))}</strong><strong>${fmtMoney(d.total_revenue_cents)}</strong></div>`)}
+            ${card(t("reports.expenses"), d.expenses.map(line).join("") + `<div class="stat-line" style="border-top:2px solid var(--border-strong)"><strong>${ESC(t("common.total"))}</strong><strong>${fmtMoney(d.total_expenses_cents)}</strong></div>`)}
+          </div>
+          <div class="grid cols-3" style="margin-top:16px">
+            ${kpi({ label: t("reports.grossProfit"), value: d.gross_profit_cents, icon: "◈" })}
+            ${kpi({ label: t("reports.profit"), value: d.net_profit_cents, icon: "▲", tone: d.net_profit_cents >= 0 ? "ok" : "danger" })}
+            ${kpi({ label: L("هامش صافي الربح", "Net margin"), value: d.total_revenue_cents ? ((d.net_profit_cents / d.total_revenue_cents) * 100).toFixed(1) + "%" : "—", icon: "％", raw: true })}
+          </div>`;
+        } else if (tab === "balance-sheet") {
+          $("#r-export").innerHTML = reportExports("balance-sheet", { as_of: t2 });
+          const d = await api(`/api/reports/balance-sheet?as_of=${t2}`);
+          const line = (i) => `<div class="stat-line"><span>${ESC(i.code)} — ${ESC(APP.lang === "ar" ? i.name_ar : i.name_en)}</span><strong>${fmtMoney(i.amount_cents)}</strong></div>`;
+          body.innerHTML = `<div class="grid cols-3">
+            ${card(t("reports.assets"), d.assets.map(line).join("") + `<div class="stat-line"><strong>${ESC(t("common.total"))}</strong><strong>${fmtMoney(d.total_assets_cents)}</strong></div>`)}
+            ${card(t("reports.liabilities"), d.liabilities.map(line).join("") + `<div class="stat-line"><strong>${ESC(t("common.total"))}</strong><strong>${fmtMoney(d.total_liabilities_cents)}</strong></div>`)}
+            ${card(t("reports.equity"), d.equity.map(line).join("") + `<div class="stat-line"><strong>${ESC(t("common.total"))}</strong><strong>${fmtMoney(d.total_equity_cents)}</strong></div>`)}
+          </div>
+          <p class="field-hint" style="margin-top:10px">${ESC(L("تحقق التوازن: الأصول = الالتزامات + حقوق الملكية", "Balance check: assets = liabilities + equity"))}:
+            <span class="badge ${d.balanced ? "green" : "red"}">${d.balanced ? "✓" : "✗"}</span></p>`;
+        } else if (tab === "cash-flow") {
+          $("#r-export").innerHTML = "";
+          const d = await api(`/api/reports/cash-flow?from=${f}&to=${t2}`);
+          body.innerHTML = `<div class="grid cols-3">
+            ${kpi({ label: t("reports.inflow"), value: d.inflow_cents, icon: "▲", tone: "ok" })}
+            ${kpi({ label: t("reports.outflow"), value: d.outflow_cents, icon: "▼", tone: "danger" })}
+            ${kpi({ label: t("reports.netCash"), value: d.net_cents, icon: "◈" })}
+          </div>
+          ${card(t("reports.cashFlow"), renderTable([
+            { key: "entry_date", label: t("common.date") },
+            { key: "entry_no", label: "#" },
+            { key: "description", label: t("common.description") },
+            { key: "d", label: t("common.debit"), cls: "num", render: r => fmtMoney(r.d) },
+            { key: "c", label: t("common.credit"), cls: "num", render: r => fmtMoney(r.c) },
+          ], d.rows, { compact: true }), `<span class="muted small">${ESC(L("الطريقة غير المباشرة — من حركات حسابات البنوك والصناديق", "Indirect view — from cash & bank GL movements"))}</span>`)}`;
+        } else if (tab === "aging-ar" || tab === "aging-ap") {
+          const kind = tab === "aging-ar" ? "sales" : "purchase";
+          $("#r-export").innerHTML = reportExports("aging", { as_of: t2, type: kind });
+          const d = await api(`/api/reports/aging?as_of=${t2}&kind=${kind}`);
+          body.innerHTML = `<div class="grid cols-5" style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px">
+              ${Object.keys(d.buckets).map(b => `<div class="card kpi ${b === "over_90" ? "danger" : b === "current" ? "ok" : ""}">
+                  <div><div class="kpi-label">${ESC(t("reports.bucket." + b))}</div>
+                  <div class="kpi-value" style="font-size:17px">${fmtMoney(d.buckets[b])}</div></div></div>`).join("")}
+            </div>
+            ${card(t("payables.invoices"), renderTable([
+              { key: "invoice_no", label: "#" },
+              { key: "party_ar", label: kind === "sales" ? t("common.customer") : t("common.vendor") },
+              { key: "invoice_date", label: t("common.date") },
+              { key: "due_date", label: t("common.dueDate") },
+              { key: "total_cents", label: t("common.total"), cls: "num", render: r => fmtMoney(r.total_cents) },
+              { key: "remaining_cents", label: t("common.remaining"), cls: "num", render: r => fmtMoney(r.remaining_cents) },
+              { key: "days_overdue", label: t("reports.daysOverdue"), cls: "num", render: r => r.days_overdue > 0 ? `<span class="neg">${r.days_overdue}</span>` : "—" },
+              { key: "bucket", label: t("payables.aging"), render: r => `<span class="badge ${r.bucket === "current" ? "green" : r.bucket === "over_90" ? "red" : "amber"}">${ESC(t("reports.bucket." + r.bucket))}</span>` },
+            ], d.items))}`;
+        } else if (tab === "vendor-payables") {
+          $("#r-export").innerHTML = reportExports("vendor-payables", { as_of: t2 });
+          const d = await api(`/api/reports/vendor-payables?as_of=${t2}`);
+          body.innerHTML = `<div class="grid cols-4">
+              ${kpi({ label: t("payables.outstanding"), value: d.totals.outstanding_cents, icon: "◫", tone: "warn" })}
+              ${kpi({ label: t("payables.overdue"), value: d.totals.overdue_cents, icon: "⚠", tone: "danger" })}
+              ${kpi({ label: t("payables.invoiced"), value: d.totals.invoiced_cents, icon: "▦" })}
+              ${kpi({ label: t("payables.journal"), value: d.totals.journal_balance_cents, icon: "⇄" })}
+            </div>
+            ${card(t("reports.vendorPayables"), renderTable([
+              { key: "code", label: t("common.code") },
+              { key: "name_ar", label: t("common.vendor"), render: r => ESC(APP.lang === "ar" ? r.name_ar : r.name_en) },
+              { key: "invoiced_cents", label: t("payables.invoiced"), cls: "num", render: r => fmtMoney(r.invoiced_cents) },
+              { key: "paid_cents", label: t("payables.paid"), cls: "num", render: r => fmtMoney(r.paid_cents) },
+              { key: "outstanding_cents", label: t("payables.outstanding"), cls: "num", render: r => fmtMoney(r.outstanding_cents) },
+              { key: "overdue_cents", label: t("payables.overdue"), cls: "num", render: r => r.overdue_cents ? `<span class="neg">${fmtMoney(r.overdue_cents)}</span>` : "—" },
+              { key: "next_due_date", label: t("payables.nextDue"), render: r => r.next_due_date ? fmtDate(r.next_due_date) : "—" },
+              { key: "journal_balance_cents", label: t("payables.journal"), cls: "num", render: r => fmtMoney(r.journal_balance_cents) },
+            ], d.vendors))}`;
+        }
+      };
+      $("#r-apply").onclick = load;
+      $("#r-to").onchange = load;
+      await load();
+      wireExports(view);
+    }
+  };
+
+  /* ==================================================================
+     USERS
+     ================================================================== */
+  PAGES.users = {
+    perm: "users.manage",
+    async render(view) {
+      setTitle("nav.users");
+      const data = await api("/api/users");
+      view.innerHTML = `${pageHead("users.title", "users.subtitle",
+        can("users.manage") ? `<button class="btn btn-primary btn-sm" id="new-user">＋ ${ESC(t("users.new"))}</button>` : "")}
+        ${card("", renderTable([
+          { key: "username", label: t("users.username"), render: r => `<strong>${ESC(r.username)}</strong>` },
+          { key: "full_name_ar", label: t("common.name"), render: r => `${ESC(APP.lang === "ar" ? r.full_name_ar : r.full_name_en)}<br><small class="muted">${ESC(r.email || "")}</small>` },
+          { key: "role_code", label: t("users.role"), render: r => `<span class="badge violet">${ESC(APP.lang === "ar" ? r.role_ar : r.role_en)}</span>` },
+          { key: "last_login_at", label: t("users.lastLogin"), render: r => r.last_login_at ? `<span dir="ltr">${ESC(r.last_login_at)}</span>` : "—" },
+          { key: "is_active", label: t("common.status"), render: r => statusBadge(r.is_active ? "active" : "inactive") },
+          { key: "act", label: t("common.actions"), render: r => `<button class="btn btn-sm btn-ghost" data-perm="${r.role_code}">${ESC(t("users.permissions"))}</button>` },
+        ], data.users))}
+        <div class="section-title"><span>${ESC(t("users.role"))}</span><span class="line"></span></div>
+        ${card("", renderTable([
+          { key: "name_ar", label: t("users.role"), render: r => `<strong>${ESC(APP.lang === "ar" ? r.name_ar : r.name_en)}</strong>` },
+          { key: "code", label: t("common.code") },
+          { key: "data_scope", label: L("نطاق البيانات", "Data scope") },
+          { key: "count", label: L("عدد الصلاحيات", "Permissions"), cls: "num", render: r => {
+              const p = JSON.parse(r.permissions || "[]"); return p.includes("*") ? "all" : p.length; } },
+        ], data.roles))}`;
+      $$("[data-perm]", view).forEach(b => b.onclick = () => {
+        const role = data.roles.find(r => r.code === b.dataset.perm);
+        const perms = JSON.parse(role.permissions || "[]");
+        openModal({
+          title: `${ESC(APP.lang === "ar" ? role.name_ar : role.name_en)} — ${ESC(t("users.permissions"))}`,
+          body: `<div class="chip-row">${(perms.includes("*") ? ["*"] : perms).map(p => `<span class="chip active">${ESC(p)}</span>`).join("")}</div>
+                 <p class="field-hint" style="margin-top:12px">${ESC(L("الصلاحيات تُفرض على الخادم في كل طلب، وليست إخفاءً في الواجهة فقط.",
+                   "Permissions are enforced server-side on every request — not just hidden in the UI."))}</p>`
+        });
+      });
+      const nu = $("#new-user");
+      if (nu) nu.onclick = () => openForm({
+        title: t("users.new"),
+        fields: [
+          { name: "username", label: t("users.username"), required: true },
+          { name: "email", label: t("users.email"), type: "email" },
+          { name: "full_name_ar", label: t("users.fullNameAr"), required: true },
+          { name: "full_name_en", label: t("users.fullNameEn"), required: true },
+          { name: "role_code", label: t("users.role"), type: "select", required: true,
+            options: data.roles.filter(r => r.code !== "super_admin").map(r => ({ value: r.code, label: APP.lang === "ar" ? r.name_ar : r.name_en })) },
+          { name: "password", label: t("users.password"), type: "password", required: true, hint: "≥ 10" },
+        ],
+        onSubmit: async (d) => { await api("/api/users", { method: "POST", body: d }); toast(t("common.saved")); render(); }
+      });
+    }
+  };
+
+  /* ==================================================================
+     FISCAL PERIODS
+     ================================================================== */
+  PAGES.periods = {
+    perm: "reports.view",
+    async render(view) {
+      setTitle("nav.periods");
+      const data = await api("/api/fiscal-periods");
+      const canClose = can("period.close");
+      // Show the period containing today first, then most recent periods.
+      const today = new Date().toISOString().slice(0, 10);
+      const current = data.periods.find(p => p.start_date <= today && today <= p.end_date);
+      data.periods.sort((a, b) => {
+        const aw = current && a.fiscal_year_id === current.fiscal_year_id ? 0 : 1;
+        const bw = current && b.fiscal_year_id === current.fiscal_year_id ? 0 : 1;
+        return aw - bw || b.start_date.localeCompare(a.start_date);
+      });
+      view.innerHTML = `${pageHead("periods.title", "periods.subtitle")}
+        ${card("", renderTable([
+          { key: "fiscal_year", label: t("periods.year") },
+          { key: "period_no", label: t("periods.period"), render: r => String(r.period_no).padStart(2, "0") },
+          { key: "start_date", label: t("common.from"), render: r => fmtDate(r.start_date) },
+          { key: "end_date", label: t("common.to"), render: r => fmtDate(r.end_date) },
+          { key: "status", label: t("common.status"), render: r => statusBadge(r.status) +
+              (current && r.id === current.id ? ` <span class="pill pill-accent">${ESC(L("الحالية", "Current"))}</span>` : "") },
+          { key: "closed_by_name", label: L("أقفلها", "Closed by"), render: r => ESC(r.closed_by_name || "—") },
+          { key: "closed_at", label: L("تاريخ الإقفال", "Closed at"), render: r => ESC(r.closed_at || "—") },
+          { key: "act", label: "", render: r => canClose
+              ? (r.status === "open"
+                ? `<button class="btn btn-sm btn-ghost" data-close-p="${r.id}">${ESC(t("periods.close"))}</button>`
+                : `<button class="btn btn-sm btn-ghost" data-open-p="${r.id}">${ESC(t("periods.reopen"))}</button>`)
+              : "" },
+        ], data.periods))}`;
+      $$("[data-close-p]", view).forEach(b => b.onclick = () => confirmDialog(
+        t("periods.close") + "؟", async () => {
+          try { await api(`/api/fiscal-periods/${b.dataset.closeP}/close`, { method: "POST", body: {} }); toast(t("common.saved")); render(); }
+          catch (e) { toast(e.message, "err"); }
+        }, { title: t("periods.close") }));
+      $$("[data-open-p]", view).forEach(b => b.onclick = async () => {
+        try { await api(`/api/fiscal-periods/${b.dataset.openP}/reopen`, { method: "POST", body: {} }); toast(t("common.saved")); render(); }
+        catch (e) { toast(e.message, "err"); }
+      });
+    }
+  };
+
+  /* ==================================================================
+     AUDIT LOG
+     ================================================================== */
+  PAGES.audit = {
+    perm: "audit.view",
+    async render(view) {
+      setTitle("nav.audit");
+      const data = await api("/api/audit-logs?limit=300");
+      view.innerHTML = `${pageHead("audit.title", "audit.subtitle")}
+        ${card("", renderTable([
+          { key: "created_at", label: t("audit.time"), render: r => `<span class="mono small" dir="ltr">${ESC(r.created_at)}</span>` },
+          { key: "username", label: t("audit.user") },
+          { key: "action", label: t("audit.action"), render: r => `<span class="pill">${ESC(r.action)}</span>` },
+          { key: "entity", label: t("audit.entity"), render: r => `<span class="mono small" dir="ltr">${ESC(r.entity || "—")} #${r.entity_id ?? "—"}</span>` },
+          { key: "details", label: t("audit.details"), render: r => `<span class="json-cell" dir="ltr" title="${ESC(r.details || "")}">${ESC((r.details || "").replace(/\s+/g, " ").slice(0, 90) || "—")}</span>` },
+          { key: "ip", label: "IP", render: r => ESC(r.ip || "—") },
+        ], data.logs, { compact: true }))}`;
+    }
+  };
+
+  /* ==================================================================
+     AI ASSISTANT
+     ================================================================== */
+  PAGES.assistant = {
+    perm: "ai.use",
+    async render(view) {
+      setTitle("nav.assistant");
+      const suggestions = APP.lang === "ar"
+        ? ["ما إجمالي مديونية الموردين؟", "ما صافي الربح هذا العام؟", "ما هي السيولة المتاحة؟", "أكبر بنود المصروفات؟", "أعمار ديون العملاء؟", "ملخص الأداء"]
+        : ["What are total vendor payables?", "What is the net profit this year?", "What is the available liquidity?", "Largest expense lines?", "Receivables aging?", "Performance summary"];
+      view.innerHTML = `${pageHead("assistant.title", "assistant.subtitle", `<span class="badge violet">✦ ${ESC(L("تحليلات من القيود المرحّلة", "Analytics from posted entries"))}</span>`)}
+        <div class="split">
+          ${card("", `<div class="assistant" id="chat">
+            <div class="msg bot">${ESC(L("مرحبًا. اسألني عن الأرباح، المصروفات، السيولة، أو مديونية الموردين. كل إجابة مبنية على بياناتك الفعلية وضمن صلاحياتك.",
+              "Hello. Ask me about profit, expenses, liquidity or vendor payables. Every answer is computed from your actual data within your permissions."))}</div>
+            <div class="filters" style="margin:0">
+              <input id="chat-input" placeholder="${ESC(t("assistant.placeholder"))}" style="flex:1"/>
+              <button class="btn btn-primary" id="chat-send">${ESC(t("assistant.send"))}</button>
+            </div>
+            <p class="field-hint">${ESC(t("assistant.disclaimer"))}</p>
+          </div>`)}
+          <div>
+            ${card(t("assistant.suggestions"), `<div class="chip-row" style="flex-direction:column;align-items:stretch">
+              ${suggestions.map(s => `<button class="chip" data-q="${ESC(s)}" style="text-align:start">${ESC(s)}</button>`).join("")}
+            </div>`)}
+          </div>
+        </div>`;
+      const chat = $("#chat");
+      const input = $("#chat-input");
+      const send = async (text) => {
+        const q = (text || input.value || "").trim();
+        if (!q) return;
+        chat.insertAdjacentHTML("beforeend", `<div class="msg user">${ESC(q)}</div>`);
+        input.value = "";
+        const loadingId = "ld" + Date.now();
+        chat.insertAdjacentHTML("beforeend", `<div class="msg bot" id="${loadingId}">${ESC(t("common.loading"))}</div>`);
+        try {
+          const res = await api("/api/assistant/ask", { method: "POST", body: { question: q } });
+          document.getElementById(loadingId).outerHTML =
+            `<div class="msg bot">${ESC(res.answer)}<span class="src">${ESC(t("assistant.source"))}: ${ESC(res.source)}</span></div>`;
+        } catch (e) {
+          document.getElementById(loadingId).outerHTML = `<div class="msg bot">⚠️ ${ESC(e.message)}</div>`;
+        }
+        chat.scrollIntoView({ block: "end" });
+      };
+      $("#chat-send").onclick = () => send();
+      input.onkeydown = (e) => { if (e.key === "Enter") send(); };
+      $$("[data-q]", view).forEach(b => b.onclick = () => send(b.dataset.q));
+    }
+  };
+})();

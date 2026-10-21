@@ -1,0 +1,15 @@
+# Never upload runtime state, local databases or test artifacts to Vercel.
+data/
+*.db
+*.db-shm
+*.db-wal
+backups/
+screenshots/
+tests/
+__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+infra/
+.playwright-cli/

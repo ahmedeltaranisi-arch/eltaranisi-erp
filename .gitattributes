@@ -1,0 +1,8 @@
+* text=auto eol=lf
+*.ttf binary
+*.woff2 binary
+*.png binary
+*.jpg binary
+*.pdf binary
+*.db binary
+schema.sql text eol=lf
