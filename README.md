@@ -4,7 +4,7 @@
 
 # Eltaranisi ERP — الطرانيسي ERP
 
-**🌐 نسخة حيّة / Live demo:** https://eltaranisi-erp-eltaranisi.vercel.app
+**🌐 نسخة حيّة / Live demo:** https://eltaranisi-erp.vercel.app
 
 [![CI](https://github.com/ahmedeltaranisi-arch/eltaranisi-erp/actions/workflows/ci.yml/badge.svg)](https://github.com/ahmedeltaranisi-arch/eltaranisi-erp/actions/workflows/ci.yml)
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/ahmedeltaranisi-arch/eltaranisi-erp)
@@ -150,7 +150,7 @@ npm i -g vercel && vercel --prod
 
 | ماذا | كيف |
 |---|---|
-| **الرابط الحالي** | **https://eltaranisi-erp-eltaranisi.vercel.app** (مشروع Vercel باسم `eltaranisi-erp`) |
+| **الرابط الحالي** | **https://eltaranisi-erp.vercel.app** (مشروع Vercel باسم `eltaranisi-erp`) |
 | **النشر التلقائي** | مربوط بمستودع GitHub: أي `git push` على `main` → نشر إنتاجي تلقائي (تم التحقق) |
 | ملف الضبط | `vercel.json` (output `static` + rewrite لـ `/api/*`) |
 | نقطة الدخول | `api/index.py` — WSGI bridge، يهيّئ قاعدة SQLite في `/tmp` ويبذرها عند أول طلب (~0.5 ثانية) |
