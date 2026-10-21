@@ -36,7 +36,8 @@ if str(ROOT) not in sys.path:
 # 1) Storage bootstrap — must happen BEFORE `db` is imported (it caches the path)
 # --------------------------------------------------------------------------
 ON_VERCEL = bool(os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"))
-if ON_VERCEL:
+D1_BACKEND = (os.environ.get("ERP_DB_BACKEND") or "").strip().lower() == "d1"
+if ON_VERCEL and not D1_BACKEND:
     os.environ.setdefault("ERP_DB", "/tmp/eltaranisi-erp/erp.db")
     os.environ.setdefault("ERP_CREDENTIALS_FILE", "/tmp/eltaranisi-erp/dev-credentials.txt")
     os.makedirs("/tmp/eltaranisi-erp", exist_ok=True)
@@ -50,7 +51,9 @@ os.environ.setdefault("ERP_SEED_DEMO_DATA", "false")
 # Each serverless instance owns its own /tmp database, so a session row written by
 # one instance does not exist in the next one. Signed bearer tokens are therefore
 # accepted without the row (revocation still applies wherever the row is present).
-os.environ.setdefault("ERP_EPHEMERAL_AUTH", "1")
+# With a shared database (Cloudflare D1) the session table is global, so real
+# server-side revocation is enforced again.
+os.environ.setdefault("ERP_EPHEMERAL_AUTH", "0" if D1_BACKEND else "1")
 
 import db  # noqa: E402  (import after ERP_DB is set)
 
@@ -58,7 +61,18 @@ _SEED_LOCK = threading.Lock()
 
 
 def ensure_database() -> None:
-    """Create + seed the SQLite file once per serverless instance."""
+    """Create + seed the SQLite file once per serverless instance.
+
+    With the Cloudflare D1 backend there is nothing local to create: the database
+    is provisioned once by `scripts/setup_cloudflare_d1.py` and shared by every
+    instance, so a cold start only needs to check the schema is reachable.
+    """
+    if D1_BACKEND:
+        try:
+            db.migrate()                 # idempotent, additive
+        except Exception:
+            traceback.print_exc()
+        return
     if db.DB_PATH.exists():
         return
     with _SEED_LOCK:

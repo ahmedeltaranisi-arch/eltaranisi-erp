@@ -102,6 +102,49 @@
   }
 
   /* ==================================================================
+     DATABASE CARD — where the data lives, backups, integrity check
+     ================================================================== */
+  async function wireDatabaseCard(view) {
+    const ar = APP.lang === "ar";
+    const box = $("#db-info", view), out = $("#db-integrity-out", view);
+    if (!box) return;
+    try {
+      const st = await api("/api/admin/storage");
+      const engine = st.engine === "cloudflare-d1"
+        ? (ar ? "Cloudflare D1 (قاعدة بيانات سحابية)" : "Cloudflare D1 (cloud database)")
+        : (ar ? "ملف SQLite على السيرفر" : "SQLite file on the server");
+      const counts = st.counts || {};
+      const rows = Object.keys(counts).slice(0, 6)
+        .map((k) => `${ESC(t("tbl." + k) !== "tbl." + k ? t("tbl." + k) : k)}: <b dir="ltr">${Number(counts[k] || 0).toLocaleString("en-US")}</b>`)
+        .join(" · ");
+      const durable = st.durable
+        ? `<span class="pill pill-ok">${ESC(L("محفوظة بشكل دائم", "Durable"))}</span>`
+        : `<span class="pill pill-warn">${ESC(L("مؤقتة", "Temporary"))}</span>`;
+      box.innerHTML = `
+        <div>${icon("box")} <b>${ESC(engine)}</b> ${durable}</div>
+        <div class="muted" dir="ltr" style="word-break:break-all">${ESC(st.path || "")}</div>
+        ${rows ? `<div class="muted">${rows}</div>` : ""}`;
+    } catch (e) {
+      box.textContent = e.message;
+    }
+    const backup = $("#db-backup", view);
+    if (backup) backup.onclick = () => downloadApi("/api/admin/backup", "eltaranisi-erp-backup.db");
+    const check = $("#db-integrity", view);
+    if (check) check.onclick = async () => {
+      check.disabled = true;
+      out.innerHTML = ESC(L("جارٍ الفحص…", "Checking…"));
+      try {
+        const r = await api("/api/admin/integrity");
+        out.innerHTML = r.passed
+          ? `<span class="pill pill-ok">${ESC(L(`الدفاتر سليمة — ${r.checks_passed}/${r.checks_total} فحصًا ناجحًا`, `Books are clean — ${r.checks_passed}/${r.checks_total} checks passed`))}</span>`
+          : `<span class="pill pill-danger">${ESC(L(`${r.checks_total - r.checks_passed} فحصًا فشل`, `${r.checks_total - r.checks_passed} checks failed`))}</span>
+             <div>${r.results.filter((x) => !x.passed).map((x) => `<div>✗ ${ESC(x.check)} — ${ESC(x.detail)}</div>`).join("")}</div>`;
+      } catch (e) { out.textContent = e.message; }
+      check.disabled = false;
+    };
+  }
+
+  /* ==================================================================
      COMPANY SETTINGS (invoice identity)
      ================================================================== */
   PAGES.settings = {
@@ -140,6 +183,16 @@
               "هذه البيانات تُستخدم في رأس الفاتورة الضريبية وملفات PDF/Excel وفي مستند الجاتوزية.",
               "These values appear on tax invoices, PDF/Excel exports and the e-invoice document."))}</p>`)}
         </div>
+        ${can("settings.manage") ? card(L("قاعدة البيانات والنسخ الاحتياطي", "Database & backups"), `
+          <div id="db-info" class="small" style="line-height:1.9">${ESC(L("جارٍ قراءة حالة قاعدة البيانات…", "Reading database status…"))}</div>
+          <div class="doc-toolbar" style="margin-top:10px">
+            <button class="btn" id="db-backup">${icon("download")} ${ESC(L("تنزيل نسخة احتياطية", "Download backup"))}</button>
+            <button class="btn" id="db-integrity">${icon("check")} ${ESC(L("فحص سلامة الدفاتر", "Check the books"))}</button>
+          </div>
+          <div id="db-integrity-out" class="small" style="margin-top:8px"></div>
+          <p class="field-hint" style="margin-top:10px">${ESC(L(
+            "قاعدة البيانات السحابية على Cloudflare D1 تُحفظ خارج السيرفر، فتبقى البيانات بعد تسجيل الخروج وإعادة التشغيل. النسخة الاحتياطية تُنزَّل كملف يمكن استرجاعه بأمر واحد.",
+            "The Cloudflare D1 cloud database lives outside the server, so data survives logout and restarts. The backup downloads as a file that can be restored with one command."))}</p>`) : ""}
         ${card(L("معاينة رأس الفاتورة", "Invoice header preview"), `
           <div style="border:1px solid var(--border);border-radius:14px;overflow:hidden">
             <div class="inv-preview-head">
@@ -159,6 +212,7 @@
           </div>`)}
       `;
       wireExports(view);
+      if (can("settings.manage")) wireDatabaseCard(view);
       const save = $("#co-save", view);
       if (save) save.onclick = async () => {
         try {

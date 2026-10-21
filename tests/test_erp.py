@@ -1411,6 +1411,12 @@ class ERPTestCase(unittest.TestCase):
     def test_B138_database_backup_downloads_a_restorable_snapshot(self):
         status, body, ctype = self._raw_get("/api/admin/backup")
         self.assertEqual(status, 200)
+        if body.startswith(b"-- ELTARANISI ERP"):          # Cloudflare D1: logical dump
+            text = body.decode("utf-8")
+            self.assertIn('CREATE TABLE', text)
+            self.assertIn('INSERT INTO "journal_lines"', text)
+            self.assertIn('INSERT INTO "users"', text)
+            return
         self.assertTrue(body.startswith(b"SQLite format 3"), "must be a real SQLite database")
         # the snapshot is complete: it carries the users, the chart of accounts
         # and the posted ledger, so restoring it brings the system back as it was
@@ -1454,6 +1460,30 @@ class ERPTestCase(unittest.TestCase):
         self.assertIn("ahmed.taranisi", users)
         self.assertIn("mahmoud.morad", users)
         self.assertEqual(len(users), 7)
+
+    # ================================================================
+    # 8. ACCOUNTING INTEGRITY ENDPOINT (backend-agnostic safety net)
+    # ================================================================
+    def test_B140_integrity_endpoint_proves_the_books_are_clean(self):
+        status, data = self.owner.get("/api/admin/integrity")
+        self.assertEqual(status, 200, data)
+        self.assertTrue(data["passed"], data)
+        self.assertEqual(data["checks_passed"], data["checks_total"])
+        names = [c["check"] for c in data["results"]]
+        self.assertTrue(any("balanced" in n for n in names))
+        self.assertTrue(any("without an entry" in n for n in names))
+        # and it is not readable by a role without settings rights
+        status, _ = self.sales.get("/api/admin/integrity")
+        self.assertEqual(status, 403)
+
+    def test_B141_backup_format_matches_the_backend(self):
+        status, data = self.owner.get("/api/health")
+        self.assertEqual(status, 200)
+        self.assertIn("durable", data["storage"], "health must always state whether data survives")
+        status, info = self.owner.get("/api/admin/storage")
+        self.assertEqual(status, 200)
+        self.assertIn(info["engine"], ("sqlite", "cloudflare-d1"))
+        self.assertIn("backend", info)
 
 
 if __name__ == "__main__":

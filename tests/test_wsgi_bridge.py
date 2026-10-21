@@ -93,14 +93,28 @@ def closed_mode_check():
 
 
 def main():
+    d1_backend = (os.environ.get("ERP_DB_BACKEND") or "").lower() == "d1"
     print("Vercel WSGI bridge — offline verification")
-    print(f"  database: {os.environ['ERP_DB']}")
+    print(f"  backend : {'cloudflare-d1' if d1_backend else 'sqlite'}")
+    print(f"  database: {os.environ.get('CF_D1_DATABASE') or os.environ['ERP_DB']}")
 
-    # 1. cold start actually created + seeded the database
-    check("cold start created the SQLite file", Path(os.environ["ERP_DB"]).exists())
-    check("cold start wrote demo credentials", Path(os.environ["ERP_CREDENTIALS_FILE"]).exists())
-    size = Path(os.environ["ERP_DB"]).stat().st_size
-    check("database is seeded with real data (>500 KB)", size > 500_000, f"({size} bytes)")
+    # 1. cold start actually reached a seeded database
+    if d1_backend:
+        import db
+        conn = db.connect()
+        users = conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"]
+        tables = conn.execute("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table'").fetchone()["n"]
+        conn.close()
+        check("cold start reached the shared D1 database (no local file)", True)
+        check("D1 database has the full schema", tables >= 40, f"({tables} tables)")
+        check("D1 database is seeded with real users", users >= 7, f"({users} users)")
+        check("no local SQLite file was created for the D1 backend",
+              not Path(os.environ["ERP_DB"]).exists())
+    else:
+        check("cold start created the SQLite file", Path(os.environ["ERP_DB"]).exists())
+        check("cold start wrote demo credentials", Path(os.environ["ERP_CREDENTIALS_FILE"]).exists())
+        size = Path(os.environ["ERP_DB"]).stat().st_size
+        check("database is seeded with real data (>500 KB)", size > 500_000, f"({size} bytes)")
 
     # 2. health + public demo accounts
     status, body, headers = call("GET", "/api/health")
@@ -126,6 +140,12 @@ def main():
     check("authenticated /api/meta → 200", status == 200)
     status, body, _ = call("GET", "/api/dashboard", headers=auth)
     check("GET /api/dashboard → 200", status == 200)
+    status, body, _ = call("GET", "/api/health", headers=auth)
+    if d1_backend:
+        check("health reports a durable store (D1)", status == 200 and b'"durable": true' in body,
+              f"({body[:160]!r})")
+    else:
+        check("health reports the storage verdict", status == 200 and b'"durable"' in body)
 
     # 6. binary document export (PDF) through the bridge
     status, body, headers = call("GET", "/api/sales-invoices/54/pdf?lang=ar", headers=auth)

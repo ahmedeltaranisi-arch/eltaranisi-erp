@@ -29,6 +29,8 @@ def is_ephemeral() -> bool:
 
 def storage_info() -> dict:
     """Where the data lives and whether it survives a restart."""
+    if BACKEND == "d1":
+        return _d1_storage_info()
     info = {
         "path": str(DB_PATH),
         "durable": not is_ephemeral(),
@@ -50,13 +52,45 @@ def storage_info() -> dict:
                           "debt_items", "debt_payments", "users")
         }
         conn.close()
-    except sqlite3.Error:
+    except Exception:
+        info["counts"] = {}
+    return info
+
+
+def _d1_storage_info() -> dict:
+    info = {"path": f"cloudflare-d1:{os.environ.get('CF_D1_DATABASE_ID') or os.environ.get('CF_D1_DATABASE') or '?'}",
+            "durable": True, "engine": "cloudflare-d1", "exists": True}
+    try:
+        conn = connect()
+        info["counts"] = {
+            table: conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"]
+            for table in ("journal_entries", "sales_invoices", "purchase_invoices",
+                          "debt_items", "debt_payments", "users")
+        }
+        conn.close()
+    except Exception:
         info["counts"] = {}
     return info
 
 
 def snapshot(target_path) -> str:
-    """Consistent copy of the live database (safe while the server is running)."""
+    """Consistent copy of the live database (safe while the server is running).
+
+    Local SQLite -> binary file copy via the online backup API.
+    Cloudflare D1 -> portable SQL dump (schema + rows), the only export shape a
+    managed HTTP database can give us synchronously.
+    """
+    if BACKEND == "d1":
+        import d1 as _d1
+        target_path = Path(target_path)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = connect()
+        try:
+            dump = _d1.dump_sql(conn)
+        finally:
+            conn.close()
+        target_path.write_text(dump, encoding="utf-8")
+        return str(target_path)
     target_path = Path(target_path)
     target_path.parent.mkdir(parents=True, exist_ok=True)
     src = connect()
@@ -71,7 +105,21 @@ def snapshot(target_path) -> str:
     return str(target_path)
 
 
-def connect() -> sqlite3.Connection:
+# --------------------------------------------------------------------------
+# Backend selection: local SQLite file (default) or Cloudflare D1 over HTTPS
+# --------------------------------------------------------------------------
+BACKEND = (os.environ.get("ERP_DB_BACKEND") or "sqlite").strip().lower()
+
+
+def backend_name() -> str:
+    return "d1" if BACKEND == "d1" else "sqlite"
+
+
+def connect():
+    """Open a connection to the configured backend (SQLite file or D1)."""
+    if BACKEND == "d1":
+        import d1
+        return d1.connect()
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH, timeout=30, isolation_level=None)
     conn.row_factory = sqlite3.Row
@@ -81,9 +129,21 @@ def connect() -> sqlite3.Connection:
     return conn
 
 
+def is_d1() -> bool:
+    return BACKEND == "d1"
+
+
 @contextmanager
 def transaction():
-    """Atomic transaction: everything commits or nothing does."""
+    """Unit of work.
+
+    On a local SQLite file this is a real ``BEGIN IMMEDIATE`` transaction: every
+    statement commits together or not at all. Cloudflare D1 has no interactive
+    transactions over HTTPS (only atomic ``batch()``), so there the unit runs in
+    autocommit and each statement is atomic on its own; anything that must not
+    tear is sent through ``conn.batch([...])`` and `scripts/check_integrity.py`
+    verifies the invariants afterwards.
+    """
     conn = connect()
     try:
         conn.execute("BEGIN IMMEDIATE")
@@ -92,18 +152,57 @@ def transaction():
     except Exception:
         try:
             conn.execute("ROLLBACK")
-        except sqlite3.Error:
+        except Exception:
             pass
         raise
     finally:
-        conn.close()
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def read():
     return connect()
 
 
+def drop_all_objects(conn) -> int:
+    """Remove every user object, children before parents.
+
+    Cloudflare D1 refuses a DROP TABLE while another table references it and
+    cannot defer foreign keys, so we sweep repeatedly: each pass drops what it
+    can, later passes pick up what was blocked.
+    """
+    dropped = 0
+    for _ in range(8):
+        rows = conn.execute("SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' "
+                            "AND type IN ('view','trigger','index','table') ORDER BY "
+                            "CASE type WHEN 'view' THEN 0 WHEN 'trigger' THEN 1 "
+                            "WHEN 'index' THEN 2 ELSE 3 END").fetchall()
+        if not rows:
+            return dropped
+        progress = False
+        for row in rows:
+            try:
+                conn.execute(f'DROP {row["type"].upper()} IF EXISTS "{row["name"]}"')
+                dropped += 1
+                progress = True
+            except Exception:
+                continue
+        if not progress:
+            break
+    return dropped
+
+
 def init_db(force: bool = False) -> None:
+    if BACKEND == "d1":
+        conn = connect()
+        if force:                       # explicit reset of a cloud database
+            drop_all_objects(conn)
+        with open(SCHEMA_PATH, "r", encoding="utf-8") as fh:
+            conn.executescript(fh.read())
+        conn.close()
+        return
     if force and DB_PATH.exists():
         DB_PATH.unlink()
         for suffix in ("-wal", "-shm"):
@@ -128,14 +227,15 @@ COLUMN_MIGRATIONS = [
 def _ensure_columns(conn) -> None:
     for table, column, ddl in COLUMN_MIGRATIONS:
         try:
-            cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
-        except sqlite3.Error:
+            cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")} or \
+                   {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        except Exception:
             continue
         if not cols or column in cols:
             continue
         try:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
-        except sqlite3.Error:
+        except Exception:
             pass
 
 
@@ -145,7 +245,7 @@ def migrate() -> None:
     Runs `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` statements
     from schema.sql, so an older database picks up new tables without a rebuild.
     """
-    if not DB_PATH.exists():
+    if BACKEND != "d1" and not DB_PATH.exists():
         return
     conn = connect()
     try:
@@ -160,7 +260,7 @@ def migrate() -> None:
                     or head.startswith("CREATE VIEW IF NOT EXISTS"):
                 try:
                     conn.execute(stmt)
-                except sqlite3.Error:
+                except Exception:
                     pass
         _ensure_columns(conn)
         _sync_system_roles(conn)
@@ -187,9 +287,12 @@ def _sync_system_roles(conn) -> None:
                    WHERE code=? AND COALESCE(is_system,1)=1""",
                 (role["name_ar"], role["name_en"], json.dumps(role["permissions"]),
                  role["data_scope"], role["code"]))
-        except sqlite3.Error:
+        except Exception:
             pass
-    conn.commit()
+    try:
+        conn.commit()
+    except Exception:
+        pass
 
 
 # --------------------------------------------------------------------------

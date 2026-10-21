@@ -510,7 +510,8 @@ POST /api/payments
 |---|---|---|
 | `GET /api/health` | عام | يحوي `storage.durable` — `false` يعني أن قاعدة البيانات على قرص مؤقت (serverless) |
 | `GET /api/admin/storage` | `settings.manage` | المسار، الحجم، آخر تعديل، عدد الصفوف، حالة الدوام، آخر النسخ الاحتياطية |
-| `GET /api/admin/backup` | `settings.manage` | تنزيل نسخة كاملة متسقة من قاعدة البيانات (SQLite، أثناء العمل) — تُسجَّل في التدقيق |
+| `GET /api/admin/backup` | `settings.manage` | تنزيل نسخة كاملة متسقة — `.db` ثنائي على SQLite، و`.sql` (تفريغ منطقي) على Cloudflare D1 — تُسجَّل في التدقيق |
+| `GET /api/admin/integrity` | `settings.manage` | تشغيل 8 فحوص سلامة على القاعدة الحيّة (توازن الدفتر، قيود ذات طرفين، سطور يتيمة، أرقام مستندات فريدة، ميزان مراجعة مسطّح…) — يعيد `passed` + تفصيل كل فحص |
 | `POST /api/admin/backup` | `settings.manage` | أخذ نسخة على السيرفر في `BACKUP_DIR` بدون تنزيل |
 
 الاسترجاع: `ERP_DB=/path/erp.db python3 scripts/restore_backup.py <backup>.db`

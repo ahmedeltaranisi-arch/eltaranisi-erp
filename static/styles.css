@@ -382,6 +382,9 @@ table.data.compact tbody td { padding: 7px 12px; }
 .tree-row .bal { font-variant-numeric: tabular-nums; font-weight: 600; }
 .tree-row.type-header { background: var(--surface-2); font-weight: 700; }
 .pill { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--surface-3); color: var(--text-2); }
+.pill-ok { background: color-mix(in srgb, var(--ok) 14%, transparent); color: var(--ok); font-weight: 600; }
+.pill-warn { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); font-weight: 600; }
+.pill-danger { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); font-weight: 600; }
 .pill-accent { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); font-weight: 600; }
 .split { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 16px; }
 .split-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }

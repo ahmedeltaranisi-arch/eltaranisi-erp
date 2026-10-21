@@ -18,6 +18,7 @@ from datetime import date, timedelta
 
 import accounting
 import documents
+import db
 from db import init_db, transaction, to_milli
 from security import ROLE_DEFINITIONS, hash_password, utcnow
 
@@ -203,6 +204,20 @@ def add_months(d: date, n: int) -> date:
 
 
 def seed():
+    # A demo reset is destructive. On a shared/cloud database (Cloudflare D1)
+    # it may only happen when the operator says so explicitly.
+    if db.is_d1() and (os.environ.get("ERP_SEED_FORCE") or "").lower() not in ("1", "true", "yes"):
+        conn = db.connect()
+        try:
+            users = conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"]
+        except Exception:
+            users = 0
+        finally:
+            conn.close()
+        if users:
+            raise SystemExit(
+                "✗ this Cloudflare D1 database already holds data (%d users).\n"
+                "  Seeding would wipe it. Re-run with ERP_SEED_FORCE=1 if that is really what you want." % users)
     init_db(force=True)
     creds = []
     with transaction() as conn:

@@ -422,9 +422,11 @@ def health(ctx):
 def admin_storage(ctx):
     """Where the database lives, whether it survives a restart, row counts."""
     info = db.storage_info()
+    info["backend"] = db.backend_name()
     info["backup_dir"] = str(BACKUP_DIR)
     try:
-        files = sorted(BACKUP_DIR.glob("erp-*.db"), key=lambda f: f.stat().st_mtime, reverse=True)[:10]
+        files = sorted(list(BACKUP_DIR.glob("erp-*.db")) + list(BACKUP_DIR.glob("erp-*.sql")),
+                       key=lambda f: f.stat().st_mtime, reverse=True)[:10]
         info["backups"] = [{"name": f.name, "size_bytes": f.stat().st_size,
                             "created_at": datetime.fromtimestamp(f.stat().st_mtime).isoformat(timespec="seconds")}
                            for f in files]
@@ -433,23 +435,52 @@ def admin_storage(ctx):
     return info
 
 
+@route("GET", r"/api/admin/integrity", "settings.manage")
+def admin_integrity(ctx):
+    """Run the accounting invariants against the live database (audited).
+
+    This is the safety net for the Cloudflare D1 backend: an HTTP database has no
+    interactive transactions, so every write is verified here — balanced ledger,
+    two-sided entries, no orphans, unique document numbers, flat trial balance.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_ci", BASE_DIR / "scripts" / "check_integrity.py")
+    ci = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ci)
+
+    results = [{"check": name, "passed": bool(ok), "detail": detail}
+               for name, ok, detail in ci.run(ctx.conn)]
+    failed = [r for r in results if not r["passed"]]
+    audit(ctx.conn, ctx.user, "admin.integrity", "database", 0,
+          {"failed": [r["check"] for r in failed], "backend": db.backend_name()},
+          company_id=ctx.user["company_id"])
+    return {"backend": db.backend_name(), "passed": not failed,
+            "checks_passed": len(results) - len(failed), "checks_total": len(results),
+            "results": results}
+
+
 @route("GET", r"/api/admin/backup", "settings.manage")
 def admin_backup(ctx):
     """Download a consistent snapshot of the whole database (audited)."""
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    tmp = BACKUP_DIR / f"erp-{stamp}.db"
+    ext = ".sql" if db.backend_name() == "d1" else ".db"
+    tmp = BACKUP_DIR / f"erp-{stamp}{ext}"
     db.snapshot(tmp)
     audit(ctx.conn, ctx.user, "admin.backup", "database", 0,
-          {"file": tmp.name, "size": tmp.stat().st_size}, company_id=ctx.user["company_id"])
-    return {"__file__": True, "content": tmp.read_bytes(), "content_type": "application/x-sqlite3",
-            "filename": f"eltaranisi-erp-backup-{stamp}.db"}
+          {"file": tmp.name, "size": tmp.stat().st_size, "backend": db.backend_name()},
+          company_id=ctx.user["company_id"])
+    return {"__file__": True, "content": tmp.read_bytes(),
+            "content_type": "application/sql" if ext == ".sql" else "application/x-sqlite3",
+            "filename": f"eltaranisi-erp-backup-{stamp}{ext}"}
 
 
 @route("POST", r"/api/admin/backup", "settings.manage")
 def admin_backup_now(ctx):
     """Take a server-side snapshot into BACKUP_DIR without downloading it."""
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    tmp = BACKUP_DIR / f"erp-{stamp}.db"
+    ext = ".sql" if db.backend_name() == "d1" else ".db"
+    tmp = BACKUP_DIR / f"erp-{stamp}{ext}"
     db.snapshot(tmp)
     audit(ctx.conn, ctx.user, "admin.backup.server", "database", 0,
           {"file": tmp.name, "size": tmp.stat().st_size}, company_id=ctx.user["company_id"])

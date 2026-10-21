@@ -96,3 +96,17 @@ curl -H "Authorization: Bearer <token>" https://<your-host>/api/admin/storage
 - `ERP_SECRET_KEY` ثابت ومشترك ضروري إذا كانت هناك أكثر من نسخة تعمل بالتوازي.
 - نسخ احتياطي يومي على السيرفر: `infra/backup.sh` (يدعم التشفير بـ age/GPG).
 - الاحتفاظ بالنسخ: `RETENTION_DAYS` في `.env`.
+
+---
+
+## 11) الحل المُنفَّذ: Cloudflare D1
+
+الخيار (ب) في القسم 3 (قاعدة سحابية عبر HTTPS) صار **مُنفَّذًا ومُختبَرًا**:
+`ERP_DB_BACKEND=d1` يوجّه كل قراءة/كتابة إلى **Cloudflare D1**، والـ API وقيود
+الترحيل والتقارير والتصدير تعمل بلا تغيير لأن طبقة `d1.py` تتصرف مثل `sqlite3`.
+
+* الدليل الكامل: **`docs/deployment/CLOUDFLARE_D1.md`**
+* التهيئة: `python3 scripts/setup_cloudflare_d1.py --name eltaranisi-erp --seed`
+* التحقق: `/api/health → storage.durable=true`، `/api/admin/storage`، `/api/admin/integrity`
+* النسخة الاحتياطية: `.sql` منطقي (D1 لا يعطي ملفًا) — `scripts/restore_backup.py` يسترجعها
+* التجربة بلا حساب Cloudflare: `python3 tools/d1_emulator.py --port 8787 --db /tmp/d1emu/erp.db`
