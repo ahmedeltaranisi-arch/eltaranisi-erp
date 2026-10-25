@@ -936,3 +936,8 @@ for ch in "اأإآؤدذرزو ةىء":   # <-- المسافة قبل «ة» ج
   مثال: «إجمالى المستحق» عرضنا 54.87pt = HarfBuzz 54.87pt.
 * الاختبارات: `test_erp` **72/72** (منها اختبار انحدار جديد `test_B136`)،
   `test_allowance` **22/22**، `test_wsgi_bridge` **21/21**.
+
+**الإنتاج:** `eltaranisi-dfevn6hft` READY، والكشف الفعلي من الإنتاج يحتوي على أشكال الوصل
+`FC91` (يـ+ر) و`FCCC` (ل+م) — أي أن الكلمات بقت موصولة زي الخط الأصلي. الخطوط المضمّنة:
+`PTBoldHeading` (العنوان) + `NotoSansArabic` (الجسم) + `DejaVuSans` (الأرقام).
+للتبديل لجسم الجدول بخط PT: `ERP_PDF_BODY_FONT=PTBoldHeading.ttf`.
