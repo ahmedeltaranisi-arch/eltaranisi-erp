@@ -90,8 +90,23 @@
     const b = $("#al-save");
     if (b) b.classList.add("btn-primary");
   }
+  /** Recompute each section's subtotal row from the live grid. */
+  function recalcSections() {
+    const lines = (S.period && S.period.lines) || [];
+    document.querySelectorAll("tr.sheet-section-total").forEach(tr => {
+      const dept = tr.getAttribute("data-section") || "";
+      const group = lines.filter(l => (l.department || "") === dept);
+      const days = group.reduce((s, l) => s + num(l.net_days), 0);
+      const cents = group.reduce((s, l) => s + num(l.total_cents), 0);
+      const d = tr.querySelector(".sec-days");
+      const m = tr.querySelector(".sec-money");
+      if (d) d.textContent = days;
+      if (m) m.textContent = moneyLabel(cents);
+    });
+  }
   function recalcFooter() {
     const tot = totals();
+    recalcSections();
     const el = $("#al-total");
     if (el) el.textContent = moneyLabel(tot.cents);
     const d = $("#al-days");
@@ -169,12 +184,16 @@
     const today = (APP.meta && APP.meta.today) || new Date().toISOString().slice(0, 10);
     const month = today.slice(0, 7);
     const departments = (S.meta && S.meta.departments) || [];
+    const both = (S.meta && S.meta.all_departments) || departments.join(" + ");
+    const workers = (S.meta && S.meta.people || []).filter(p => p.is_active).length;
     openForm({
       title: L("كشف إعاشة جديد", "New subsistence sheet"),
       submitLabel: L("إنشاء الكشف", "Create sheet"),
       fields: [
-        { name: "department", label: L("القسم", "Department"), type: "select",
-          options: departments.map(d => ({ value: d, label: d })) },
+        { name: "scope", label: L("أقسام الكشف", "Sheet sections"), type: "text", readonly: true,
+          value: L(both, both), span: 2,
+          hint: L(`الكشف يشمل دائمًا «${departments.join("» و«")}» — ${workers} عاملًا في بيان واحد.`,
+                  `The sheet always covers “${departments.join("” and “")}” — ${workers} workers in one statement.`) },
         { name: "start_date", label: L("بداية الفترة", "Period start"), type: "date", value: `${month}-01` },
         { name: "end_date", label: L("نهاية الفترة", "Period end"), type: "date", value: monthRange(month).end },
         { name: "att_from", label: L("أيام الحضور من (اختياري)", "Attendance from (optional)"), type: "date",
@@ -188,7 +207,7 @@
         const res = await api("/api/allowance/periods", {
           method: "POST",
           body: {
-            department: data.department, start_date: data.start_date, end_date: data.end_date,
+            department: "", start_date: data.start_date, end_date: data.end_date,
             copy_roster: data.copy_roster !== "0",
             att_from: data.att_from || null, att_to: data.att_to || null,
           },
@@ -264,8 +283,8 @@
       <div class="page-head">
         <div>
           <h1>${ESC(L("إعاشة العاملين", "Staff subsistence allowance"))}</h1>
-          <p>${ESC(L(`بيان بإعاشة العاملين بـ${period.department} — الفترة ${dmy(period.start_date)} إلى ${dmy(period.end_date)} (${period.days} يومًا)`,
-                     `Subsistence for ${period.department} — ${dmy(period.start_date)} to ${dmy(period.end_date)} (${period.days} days)`))}</p>
+          <p>${ESC(L(`بيان بإعاشة العاملين — ${period.department} — الفترة ${dmy(period.start_date)} إلى ${dmy(period.end_date)} (${period.days} يومًا)`,
+                     `Subsistence statement — ${period.department} — ${dmy(period.start_date)} to ${dmy(period.end_date)} (${period.days} days)`))}</p>
         </div>
         <div class="actions">
           <a class="btn btn-sm" href="#/allowance">${icon("chevron")} ${ESC(L("كل الكشوف", "All sheets"))}</a>
@@ -321,7 +340,7 @@
               </tr>
             </thead>
             <tbody>
-              ${period.lines.map((line, idx) => lineRow(line, idx, days, editable, startDay, period)).join("")}
+              ${sheetBody(period, days, editable, startDay)}
             </tbody>
             <tfoot>
               <tr class="sheet-total">
@@ -350,10 +369,44 @@
     wireSheet(view, period, editable, days);
   }
 
+  /** The sheet is one statement holding both sections — render them as blocks. */
+  function sheetBody(period, days, editable, startDay) {
+    const cols = (editable ? 15 : 14) + days;
+    const lines = period.lines || [];
+    let sections = (period.totals && period.totals.sections) || [];
+    if (!sections.length) {
+      sections = [{ department: period.department || "", people_count: lines.length }];
+    }
+    const known = sections.map(x => x.department || "");
+    const orphans = lines.filter(l => !known.includes(l.department || ""));
+    if (orphans.length) sections = sections.concat([{ department: "", people_count: orphans.length }]);
+    if (sections.length === 1 && !sections[0].department) {
+      // single-section sheet: no header rows, just the rows
+      return lines.map((line, idx) => lineRow(line, idx, days, editable, startDay, period)).join("");
+    }
+    return sections.map(sec => {
+      const dept = sec.department || "";
+      const group = lines.filter(l => (l.department || "") === dept);
+      if (!group.length) return "";
+      const head = `<tr class="sheet-section"><td colspan="${cols}">${ESC(dept || L("بدون قسم", "No section"))}
+        <span class="sec-count">${L(`${group.length} عاملًا`, `${group.length} workers`)}</span></td></tr>`;
+      const rows = group.map((line, idx) => lineRow(line, idx, days, editable, startDay, period)).join("");
+      const sub = `<tr class="sheet-section-total" data-section="${ESC(dept)}">
+          <td colspan="3">${ESC(L("إجمالي القسم", "Section total"))}</td>
+          <td colspan="7"></td>
+          <td class="num sec-days">${group.reduce((s, l) => s + num(l.net_days), 0)}</td>
+          <td></td>
+          <td class="num"><strong class="sec-money">${moneyLabel(group.reduce((s, l) => s + num(l.total_cents), 0))}</strong></td>
+          <td></td>
+          <td colspan="${days}" class="${S.grid ? "" : "hidden"}"></td>
+        </tr>`;
+      return head + rows + sub;
+    }).join("");
+  }
+
   function lineRow(line, idx, days, editable, startDay, period) {
     const codes = line.day_codes || {};
     const [winFrom, winTo] = windowOf(line, period);
-    const custom = !!line.att_from;
     const cell = (field, extra = "") => editable
       ? `<input class="cell-input ${extra}" type="number" min="0" step="1" data-id="${line.id}" data-field="${field}" value="${line[field] ?? 0}" />`
       : `<span class="num">${line[field] ?? 0}</span>`;
@@ -368,9 +421,7 @@
       <td class="num">${rateCell}</td>
       <td class="name-col">${editable
         ? `<input class="cell-input name-input" data-id="${line.id}" data-field="name_ar" value="${ESC(line.name_ar)}" />`
-        : ESC(line.name_ar)}
-        ${custom ? `<div class="range-chip" data-range="${line.id}" title="${ESC(L("نطاق الحضور", "Attendance range"))}">
-            ${icon("calendar")} ${ESC(dmy(line.att_from))} — ${ESC(dmy(line.att_to))}</div>` : ""}</td>
+        : ESC(line.name_ar)}</td>
       <td class="num"><span class="calc" data-calc="present_days" data-id="${line.id}">${line.present_days}</span></td>
       <td class="num">${cell("leave_annual")}</td>
       <td class="num"><span class="calc" data-calc="leave_sick" data-id="${line.id}">${line.leave_sick}</span></td>

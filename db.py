@@ -221,6 +221,7 @@ def init_db(force: bool = False) -> None:
 COLUMN_MIGRATIONS = [
     ("allowance_lines", "att_from", "TEXT"),
     ("allowance_lines", "att_to", "TEXT"),
+    ("allowance_lines", "department", "TEXT"),
     ("debt_payments", "description", "TEXT"),
     ("debt_payments", "advance_cents", "INTEGER NOT NULL DEFAULT 0"),
 ]
@@ -239,6 +240,28 @@ def _ensure_columns(conn) -> None:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
         except Exception:
             pass
+
+
+# «الإدارة والمخازن» was the old name of the administration section; the client
+# now calls it «الإدارة والإشراف». Rename it everywhere once, and label every
+# existing sheet line with its department so the sheet can be grouped by section.
+DEPARTMENT_RENAMES = {"الإدارة والمخازن": "الإدارة والإشراف"}
+
+
+def _rename_allowance_departments(conn) -> None:
+    try:
+        for old, new in DEPARTMENT_RENAMES.items():
+            conn.execute("UPDATE allowance_people SET department=? WHERE department=?", (new, old))
+            conn.execute("UPDATE allowance_periods SET department=? WHERE department=?", (new, old))
+            conn.execute("UPDATE allowance_lines SET department=? WHERE department=?", (new, old))
+        # backfill the section of older lines from the roster
+        conn.execute(
+            """UPDATE allowance_lines SET department=(
+                   SELECT p.department FROM allowance_people p WHERE p.id=allowance_lines.person_id)
+               WHERE (department IS NULL OR department='')
+                 AND EXISTS (SELECT 1 FROM allowance_people p WHERE p.id=allowance_lines.person_id)""")
+    except Exception:
+        pass
 
 
 ALLOWANCE_EXPENSE_ACCOUNT = ("5215", "إعاشة العاملين", "Staff Subsistence Allowance", "52")
@@ -319,6 +342,7 @@ def migrate() -> None:
                 except Exception:
                     pass
         _ensure_columns(conn)
+        _rename_allowance_departments(conn)
         _sync_system_roles(conn)
         _apply_dark_theme_default(conn)
         _ensure_allowance_accounts(conn)

@@ -38,7 +38,10 @@ MANUAL_FIELDS = ["leave_annual", "ded_salary_days", "adjustments_cents"]
 
 ACCOUNTS = {"expense": "5215", "payable": "2140"}
 
-DEFAULT_DEPARTMENTS = ["الإدارة والمخازن", "ورشة الصيانة"]
+DEFAULT_DEPARTMENTS = ["الإدارة والإشراف", "ورشة الصيانة"]
+# The customer's sheet always covers the two sections together (two blocks in the
+# Excel file), so a period created without a department holds both.
+ALL_DEPARTMENTS = " + ".join(DEFAULT_DEPARTMENTS)
 
 CODE_LABELS = {
     "ام": ("اجازة مرضية", "Sick leave"),
@@ -223,10 +226,21 @@ def compute_line(line: dict, days: int, start_date: str = None) -> dict:
 
 
 def summarize(lines) -> dict:
+    buckets = {}
+    for line in lines:
+        dept = line.get("department") or ""
+        b = buckets.setdefault(dept, {"department": dept, "people_count": 0,
+                                      "total_days": 0, "total_cents": 0})
+        b["people_count"] += 1
+        b["total_days"] += int(line.get("net_days") or 0)
+        b["total_cents"] += int(line.get("total_cents") or 0)
+    order = {name: i for i, name in enumerate(DEFAULT_DEPARTMENTS)}
+    sections = sorted(buckets.values(), key=lambda b: (order.get(b["department"], 99), b["department"]))
     return {
         "people_count": len(lines),
         "total_days": sum(int(x.get("net_days") or 0) for x in lines),
         "total_cents": sum(int(x.get("total_cents") or 0) for x in lines),
+        "sections": sections,
     }
 
 
@@ -279,11 +293,21 @@ def departments(conn, company_id: int) -> list:
     return names
 
 
-def create_period(conn, user, company_id: int, department: str, start: str, end: str,
+def create_period(conn, user, company_id: int, department: str | None, start: str, end: str,
                   branch_id=None, copy_roster: bool = True, att_from=None, att_to=None) -> dict:
+    """Create a sheet. No department (or the combined label) ⇒ both sections.
+
+    The customer's sheet is one statement that always contains «الإدارة والإشراف»
+    and «ورشة الصيانة», so the department is only a filter for exceptions.
+    """
     days = period_days(start, end)
-    if not department:
-        raise AllowanceError("MISSING_FIELD: القسم مطلوب / Department required")
+    selected = (department or "").strip()
+    combined = selected in ("", ALL_DEPARTMENTS)
+    if combined:
+        department = ALL_DEPARTMENTS
+        target_depts = list(DEFAULT_DEPARTMENTS)
+    else:
+        target_depts = [selected]
     exists = _q1(conn, "SELECT id FROM allowance_periods WHERE company_id=? AND department=? "
                        "AND start_date=? AND end_date=?", (company_id, department, start, end))
     if exists:
@@ -296,7 +320,7 @@ def create_period(conn, user, company_id: int, department: str, start: str, end:
          _val(user, "id"), datetime.utcnow().isoformat(timespec="seconds")))
     period_id = cur.lastrowid
     if copy_roster:
-        people = list_people(conn, company_id, department)
+        people = [p for dept in target_depts for p in list_people(conn, company_id, dept)]
         for i, p in enumerate(people):
             line = compute_line({"name_ar": p["name_ar"], "person_id": p["id"],
                                  "daily_rate_cents": p["daily_rate_cents"], "day_codes": {},
@@ -306,15 +330,15 @@ def create_period(conn, user, company_id: int, department: str, start: str, end:
                 """INSERT INTO allowance_lines (period_id, person_id, name_ar, daily_rate_cents,
                       days_in_period, leave_annual, leave_sick, leave_unpaid, absence_days, mission_days,
                       ded_allowance_days, ded_salary_days, present_days, net_days, adjustments_cents,
-                      total_cents, day_codes, att_from, att_to, notes, sort_order)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                      total_cents, day_codes, att_from, att_to, department, notes, sort_order)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (period_id, p["id"], line["name_ar"], line["daily_rate_cents"], line["days_in_period"],
                  line["leave_annual"], line["leave_sick"], line["leave_unpaid"], line["absence_days"],
                  line["mission_days"], line["ded_allowance_days"], line["ded_salary_days"],
                  line["present_days"], line["net_days"], line["adjustments_cents"],
-                 line["total_cents"], None, line["att_from"], line["att_to"], None, i))
-    recalc_period(conn, period_id)
-    return {"id": period_id}
+                 line["total_cents"], None, line["att_from"], line["att_to"], p["department"], None, i))
+    stats = recalc_period(conn, period_id)
+    return {"id": period_id, "department": department, **stats}
 
 
 def recalc_period(conn, period_id: int) -> dict:
@@ -358,7 +382,8 @@ def save_period(conn, user, company_id: int, period_id: int, payload: dict) -> d
     for i, raw in enumerate(incoming):
         line_id = raw.get("id")
         base = dict(existing.get(line_id) or {})
-        merged = {k: base.get(k) for k in ("person_id", "name_ar", "daily_rate_cents", "day_codes")}
+        merged = {k: base.get(k) for k in ("person_id", "name_ar", "daily_rate_cents", "day_codes",
+                                           "department")}
         merged.update({k: raw[k] for k in raw if k not in ("id",)})
         name = (merged.get("name_ar") or "").strip()
         if not name:
@@ -383,15 +408,15 @@ def save_period(conn, user, company_id: int, period_id: int, payload: dict) -> d
                 """INSERT INTO allowance_lines (period_id, person_id, name_ar, daily_rate_cents,
                      days_in_period, leave_annual, leave_sick, leave_unpaid, absence_days, mission_days,
                      ded_allowance_days, ded_salary_days, present_days, net_days, adjustments_cents,
-                     total_cents, day_codes, att_from, att_to, notes, sort_order)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                     total_cents, day_codes, att_from, att_to, department, notes, sort_order)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (period_id, merged.get("person_id"), line["name_ar"], line["daily_rate_cents"],
                  line["days_in_period"],
                  line["leave_annual"], line["leave_sick"], line["leave_unpaid"], line["absence_days"],
                  line["mission_days"], line["ded_allowance_days"], line["ded_salary_days"],
                  line["present_days"], line["net_days"], line["adjustments_cents"],
                  line["total_cents"], line["day_codes"], line["att_from"], line["att_to"],
-                 merged.get("notes"), i))
+                 merged.get("department"), merged.get("notes"), i))
             seen.add(cur.lastrowid)
     for line_id in existing:
         if line_id not in seen:
@@ -553,27 +578,51 @@ def fmt_iso(value) -> str:
 
 
 def export_matrix(period: dict, with_grid: bool = True) -> dict:
-    """Rows for Excel/PDF export, mirroring the paper sheet."""
+    """Rows for Excel/PDF export, mirroring the paper sheet.
+
+    A sheet that holds both departments is exported as two blocks — a section
+    header, the workers (numbering restarts), then the section subtotal — exactly
+    like the customer's Excel file.
+    """
     days = period["days"]
     start_day = period["start_day"]
-    head = ["م", "الفئة", "الاسم", "الحضور", "اعتيادى", "مرضي", "بدون مرتب", "غياب", "ماموريات",
-            "خصم إعاشة", "خصم مرتب", "الصافى", "تطبيقات", "إجمالى المستحق"]
-    if any(line.get("att_from") for line in period["lines"]):
+    head = ["م", "القسم", "الفئة", "الاسم", "الحضور", "اعتيادى", "مرضي", "بدون مرتب", "غياب",
+            "ماموريات", "خصم إعاشة", "خصم مرتب", "الصافى", "تطبيقات", "إجمالى المستحق"]
+    has_range = any(line.get("att_from") for line in period["lines"])
+    if has_range:
         head += ["من تاريخ", "إلى تاريخ"]
     if with_grid:
         head += [str(d) for d in range(start_day, start_day + days)]
+    width = len(head)
+    pad = lambda cells: cells + [""] * (width - len(cells))
+    sections = period["totals"].get("sections") or [{"department": "", "people_count": len(period["lines"]),
+                                                     "total_days": period["totals"]["total_days"],
+                                                     "total_cents": period["totals"]["total_cents"]}]
     rows = []
-    for i, line in enumerate(period["lines"], start=1):
-        codes = line.get("day_codes") or {}
-        row = [str(i), f"{line['daily_rate_cents'] / 100:.0f}", line["name_ar"],
-               str(line["present_days"]), str(line["leave_annual"]), str(line["leave_sick"]),
-               str(line["leave_unpaid"]), str(line["absence_days"]), str(line["mission_days"]),
-               str(line["ded_allowance_days"]), str(line["ded_salary_days"]), str(line["net_days"]),
-               f"{line['adjustments_cents'] / 100:.2f}" if line["adjustments_cents"] else "",
-               f"{line['total_cents'] / 100:.2f}"]
-        if any(line.get("att_from") for line in period["lines"]):
-            row += [fmt_iso(line.get("att_from")), fmt_iso(line.get("att_to"))]
-        if with_grid:
-            row += [codes.get(str(d), "") for d in range(1, days + 1)]
-        rows.append(row)
-    return {"head": head, "rows": rows}
+    for section in sections:
+        dept = section.get("department") or ""
+        rows.append(pad(["", f"القسم: {dept}" if dept else "", "", ""]))
+        group = [ln for ln in period["lines"] if (ln.get("department") or "") == dept]
+        for i, line in enumerate(group, start=1):
+            codes = line.get("day_codes") or {}
+            row = ["", dept, str(i), f"{line['daily_rate_cents'] / 100:.0f}", line["name_ar"],
+                   str(line["present_days"]), str(line["leave_annual"]), str(line["leave_sick"]),
+                   str(line["leave_unpaid"]), str(line["absence_days"]), str(line["mission_days"]),
+                   str(line["ded_allowance_days"]), str(line["ded_salary_days"]), str(line["net_days"]),
+                   f"{line['adjustments_cents'] / 100:.2f}" if line["adjustments_cents"] else "",
+                   f"{line['total_cents'] / 100:.2f}"]
+            if has_range:
+                row += [fmt_iso(line.get("att_from")), fmt_iso(line.get("att_to"))]
+            if with_grid:
+                row += [codes.get(str(d), "") for d in range(1, days + 1)]
+            rows.append(row)
+        total = ["", f"إجمالي {dept}" if dept else "الإجمالي", "", "", "", "", "", "", "", "", "", "",
+                 str(section["total_days"]), "", f"{section['total_cents'] / 100:.2f}"]
+        if has_range:
+            total += ["", ""]
+        rows.append(pad(total))
+    grand = ["", "الإجمالي العام", "", "", "", "", "", "", "", "", "", "",
+             str(period["totals"]["total_days"]), "", f"{period['totals']['total_cents'] / 100:.2f}"]
+    if has_range:
+        grand += ["", ""]
+    return {"head": head, "rows": rows, "total_row": pad(grand)}

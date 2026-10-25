@@ -868,6 +868,7 @@ CREATE TABLE IF NOT EXISTS allowance_lines (
     day_codes           TEXT,                          -- JSON {"3":"ام","7":"غ"}
     att_from            TEXT,                          -- نطاق الحضور (اختياري): من تاريخ
     att_to              TEXT,                          -- نطاق الحضور (اختياري): إلى تاريخ
+    department          TEXT,                          -- القسم الذي ينتمي إليه العامل
     notes               TEXT,
     sort_order          INTEGER NOT NULL DEFAULT 0
 );

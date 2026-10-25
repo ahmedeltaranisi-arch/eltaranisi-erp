@@ -127,6 +127,17 @@ class AllowanceMathTest(unittest.TestCase):
         self.assertEqual(allowance.compute_line({"daily_rate": 30, "att_from": "", "att_to": None},
                                                 31, "2026-10-01")["days_in_period"], 31)
 
+    def test_summarize_splits_sections(self):
+        lines = [allowance.compute_line({"daily_rate": 40, "department": "الإدارة والإشراف"}, 30),
+                 allowance.compute_line({"daily_rate": 30, "department": "ورشة الصيانة"}, 30),
+                 allowance.compute_line({"daily_rate": 30, "department": "ورشة الصيانة"}, 30)]
+        stats = allowance.summarize(lines)
+        self.assertEqual(stats["people_count"], 3)
+        self.assertEqual([s["department"] for s in stats["sections"]],
+                         ["الإدارة والإشراف", "ورشة الصيانة"])
+        self.assertEqual(stats["sections"][1]["people_count"], 2)
+        self.assertEqual(stats["sections"][1]["total_cents"], 60 * 3000)
+
     def test_summarize(self):
         lines = [
             allowance.compute_line({"daily_rate": 30, "day_codes": {"1": "غ"}}, 30),
@@ -244,6 +255,32 @@ class AllowanceApiTest(unittest.TestCase):
         first = sheet["lines"][0]
         self.assertEqual(first["days_in_period"], sheet["days"])
         self.assertEqual(first["net_days"], sheet["days"] - 2)
+
+    def test_02d_sheet_always_covers_both_sections(self):
+        """No department ⇒ «الإدارة والإشراف» + «ورشة الصيانة» in one statement."""
+        payload = {"department": "", "start_date": "2026-03-01", "end_date": "2026-03-31",
+                   "copy_roster": True}
+        status, created = self.call("POST", "/api/allowance/periods", payload)
+        if status == 409:                       # earlier run left it behind
+            _, listing = self.call("GET", "/api/allowance/periods")
+            match = [x for x in listing["periods"] if x["start_date"] == "2026-03-01"
+                     and x["department"] == allowance.ALL_DEPARTMENTS]
+            if match:
+                self.call("DELETE", f"/api/allowance/periods/{match[0]['id']}")
+                status, created = self.call("POST", "/api/allowance/periods", payload)
+        self.assertEqual(status, 200, created)
+        pid = created["id"]
+        try:
+            self.assertEqual(created["department"], allowance.ALL_DEPARTMENTS)
+            _, sheet = self.call("GET", f"/api/allowance/periods/{pid}")
+            depts = [sec["department"] for sec in sheet["totals"]["sections"]]
+            self.assertEqual(depts, allowance.DEFAULT_DEPARTMENTS)
+            self.assertEqual({line["department"] for line in sheet["lines"]}, set(allowance.DEFAULT_DEPARTMENTS))
+            self.assertEqual(sheet["totals"]["people_count"], len(sheet["lines"]))
+            self.assertEqual(sum(sec["people_count"] for sec in sheet["totals"]["sections"]),
+                             sheet["totals"]["people_count"])
+        finally:
+            self.call("DELETE", f"/api/allowance/periods/{pid}")
 
     def test_02c_window_rejects_a_bad_date_with_422(self):
         if not self.period_id:

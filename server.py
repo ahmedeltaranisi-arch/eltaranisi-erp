@@ -1314,6 +1314,7 @@ def allowance_meta(ctx):
     cid = ensure_company(ctx.user)
     return {
         "departments": allowance.departments(ctx.conn, cid),
+        "all_departments": allowance.ALL_DEPARTMENTS,
         "people": allowance.list_people(ctx.conn, cid),
         "code_labels": {k: {"ar": v[0], "en": v[1]} for k, v in allowance.CODE_LABELS.items()},
         "accounts": allowance.ACCOUNTS,
@@ -1349,7 +1350,8 @@ def allowance_period_create(ctx):
                                   copy_roster=b.get("copy_roster", True),
                                   att_from=b.get("att_from"), att_to=b.get("att_to"))
     audit(ctx.conn, ctx.user, "allowance.create", "allowance_period", res["id"],
-          {"department": b.get("department"), "from": b.get("start_date"), "to": b.get("end_date")},
+          {"department": res.get("department") or b.get("department"),
+           "from": b.get("start_date"), "to": b.get("end_date")},
           company_id=cid)
     return res
 
@@ -1407,9 +1409,7 @@ def allowance_period_xlsx(ctx, period_id):
     with_grid = (ctx.qs.get("grid") or "1") not in ("0", "false")
     matrix = allowance.export_matrix(period, with_grid=with_grid)
     title = f"إعاشة {period['department']} {period['start_date']} — {period['end_date']}"
-    rows = matrix["rows"] + [["", "", "الإجمالي", "", "", "", "", "", "", "", "",
-                              str(period["totals"]["total_days"]), "",
-                              f"{period['totals']['total_cents'] / 100:.2f}"] + ([""] * period["days"] if with_grid else [])]
+    rows = matrix["rows"] + [matrix["total_row"]]
     out = exporter.report_xlsx(title, matrix["head"], rows, rtl=True)
     audit(ctx.conn, ctx.user, "allowance.xlsx", "allowance_period", int(period_id), {}, company_id=cid)
     return {"__file__": True, "content": out,
@@ -1425,12 +1425,11 @@ def allowance_period_pdf(ctx, period_id):
     ar = lang != "en"
     with_grid = (ctx.qs.get("grid") or "1") not in ("0", "false")
     matrix = allowance.export_matrix(period, with_grid=with_grid)
-    cols = [{"ar": h, "en": h, "w": 0.8 if i in (0, 1, 3, 4, 5, 6, 7, 8, 9, 10, 11) else (2.6 if i == 2 else 1.15),
-             "align": "start" if i == 2 else "center", "rtl": i == 2}
+    cols = [{"ar": h, "en": h,
+             "w": 2.4 if h in ("الاسم", "القسم") else (0.8 if i < 15 else 1.15),
+             "align": "start" if h in ("الاسم", "القسم") else "center", "rtl": h in ("الاسم", "القسم")}
             for i, h in enumerate(matrix["head"])]
-    rows = matrix["rows"] + [["", "", "الإجمالي" if ar else "Total", "", "", "", "", "", "", "", "",
-                              str(period["totals"]["total_days"]), "",
-                              f"{period['totals']['total_cents'] / 100:,.2f}"] + ([""] * period["days"] if with_grid else [])]
+    rows = matrix["rows"] + [matrix["total_row"]]
     company = exporter.company_block(ctx.conn, cid)
     out = exporter.report_pdf(
         f"إعاشة {period['department']}", f"Subsistence — {period['department']}", cols, rows,
