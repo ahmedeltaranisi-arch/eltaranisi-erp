@@ -19,7 +19,7 @@ from datetime import date, timedelta
 import accounting
 import documents
 import db
-from db import init_db, transaction, to_milli
+from db import BASE_DIR, init_db, transaction, to_milli
 from security import ROLE_DEFINITIONS, hash_password, utcnow
 
 random.seed(20261020)
@@ -78,6 +78,7 @@ ACCOUNTS = [
     ("52", "مصروفات تشغيلية", "Operating Expenses", "expense", "5", 0),
     ("5200", "رواتب وأجور", "Salaries & Wages", "expense", "52", 1),
     ("5210", "بدلات ومزايا", "Allowances & Benefits", "expense", "52", 1),
+    ("5215", "إعاشة العاملين", "Staff Subsistence Allowance", "expense", "52", 1),
     ("5300", "إيجارات", "Rent", "expense", "52", 1),
     ("5310", "كهرباء ومياه", "Utilities", "expense", "52", 1),
     ("5320", "مصروف الإهلاك", "Depreciation Expense", "expense", "52", 1),
@@ -258,6 +259,20 @@ def seed():
             conn.execute("INSERT INTO user_company_access (user_id, company_id) VALUES (?,?)",
                          (cur.lastrowid, company_id))
             creds.append((username, name_ar, role, pwd))
+
+        # ---------------- إعاشة: كشف العاملين (roster from the customer's sheet) --
+        roster = BASE_DIR / "samples" / "allowance_roster.csv"
+        if roster.exists():
+            import csv as _csv
+            with open(roster, newline="", encoding="utf-8-sig") as fh:
+                for i, r in enumerate(_csv.DictReader(fh)):
+                    if not (r.get("name_ar") or "").strip():
+                        continue
+                    conn.execute(
+                        """INSERT OR IGNORE INTO allowance_people (company_id, department, name_ar,
+                              daily_rate_cents, is_active, sort_order) VALUES (?,?,?,?,1,?)""",
+                        (company_id, r["department"], r["name_ar"].strip(),
+                         int(round(float(r.get("daily_rate") or 30) * 100)), i))
 
         ahmed = conn.execute("SELECT * FROM users WHERE username='ahmed.taranisi'").fetchone()
         mahmoud = conn.execute("SELECT * FROM users WHERE username='mahmoud.morad'").fetchone()

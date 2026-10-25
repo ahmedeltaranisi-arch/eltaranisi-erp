@@ -757,6 +757,7 @@ const NAV = [
   { id: "banks", icon: "banks", label: "nav.banks", perm: "banks.view" },
   { id: "assets", icon: "assets", label: "nav.assets", perm: "assets.view" },
   { id: "payroll", icon: "payroll", label: "nav.payroll", perm: "payroll.view" },
+  { id: "allowance", icon: "coins", label: "allow.nav", perm: "allowance.view" },
   { id: "budgets", icon: "budgets", label: "nav.budgets", perm: "budgets.view" },
   { section: "nav.admin" },
   { id: "settings", icon: "settings", label: "nav.settings", perm: "settings.manage" },

@@ -806,3 +806,70 @@ CREATE TABLE IF NOT EXISTS debt_payments (
 CREATE INDEX IF NOT EXISTS idx_debt_items_account ON debt_items(company_id, account_id, doc_date);
 CREATE INDEX IF NOT EXISTS idx_debt_pay_account ON debt_payments(company_id, account_id, pay_date);
 CREATE INDEX IF NOT EXISTS idx_debt_accounts_kind ON debt_accounts(company_id, kind);
+
+-- ---------------------------------------------------------------------
+-- إعاشة العاملين — staff subsistence (meals) allowance
+-- Mirrors the monthly paper sheet: one row per worker, day-by-day
+-- attendance codes, derived day counts and a money total per period.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS allowance_people (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id        INTEGER NOT NULL REFERENCES companies(id),
+    department        TEXT NOT NULL,
+    name_ar           TEXT NOT NULL,
+    name_en           TEXT,
+    daily_rate_cents  INTEGER NOT NULL DEFAULT 3000,   -- فئة اليوم (30.00)
+    employee_id       INTEGER REFERENCES employees(id),
+    is_active         INTEGER NOT NULL DEFAULT 1,
+    sort_order        INTEGER NOT NULL DEFAULT 0,
+    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (company_id, department, name_ar)
+);
+
+CREATE TABLE IF NOT EXISTS allowance_periods (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id        INTEGER NOT NULL REFERENCES companies(id),
+    branch_id         INTEGER REFERENCES branches(id),
+    department        TEXT NOT NULL,
+    start_date        TEXT NOT NULL,
+    end_date          TEXT NOT NULL,
+    status            TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','posted')),
+    people_count      INTEGER NOT NULL DEFAULT 0,
+    total_days        INTEGER NOT NULL DEFAULT 0,
+    total_cents       INTEGER NOT NULL DEFAULT 0,
+    journal_entry_id  INTEGER REFERENCES journal_entries(id),
+    notes             TEXT,
+    created_by        INTEGER REFERENCES users(id),
+    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at        TEXT,
+    posted_by         INTEGER REFERENCES users(id),
+    posted_at         TEXT,
+    UNIQUE (company_id, department, start_date, end_date)
+);
+
+CREATE TABLE IF NOT EXISTS allowance_lines (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    period_id           INTEGER NOT NULL REFERENCES allowance_periods(id) ON DELETE CASCADE,
+    person_id           INTEGER REFERENCES allowance_people(id),
+    name_ar             TEXT NOT NULL,
+    daily_rate_cents    INTEGER NOT NULL DEFAULT 0,
+    days_in_period      INTEGER NOT NULL DEFAULT 30,
+    leave_annual        INTEGER NOT NULL DEFAULT 0,   -- اعتيادي
+    leave_sick          INTEGER NOT NULL DEFAULT 0,   -- مرضي   (code ام)
+    leave_unpaid        INTEGER NOT NULL DEFAULT 0,   -- بدون مرتب (code بم)
+    absence_days        INTEGER NOT NULL DEFAULT 0,   -- غياب   (code غ)
+    mission_days        INTEGER NOT NULL DEFAULT 0,   -- ماموريات (code م)
+    ded_allowance_days  INTEGER NOT NULL DEFAULT 0,   -- خصم إعاشة (code خ)
+    ded_salary_days     INTEGER NOT NULL DEFAULT 0,   -- خصم مرتب
+    present_days        INTEGER NOT NULL DEFAULT 0,
+    net_days            INTEGER NOT NULL DEFAULT 0,
+    adjustments_cents   INTEGER NOT NULL DEFAULT 0,   -- تطبيقات
+    total_cents         INTEGER NOT NULL DEFAULT 0,
+    day_codes           TEXT,                          -- JSON {"3":"ام","7":"غ"}
+    notes               TEXT,
+    sort_order          INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_allowance_periods_company ON allowance_periods(company_id, start_date);
+CREATE INDEX IF NOT EXISTS idx_allowance_lines_period ON allowance_lines(period_id);
+CREATE INDEX IF NOT EXISTS idx_allowance_people_company ON allowance_people(company_id, department, sort_order);

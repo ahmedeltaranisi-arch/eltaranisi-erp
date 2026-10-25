@@ -24,7 +24,7 @@ import sys
 
 PAGES = ["dashboard", "accounts", "journal", "reports", "sales", "purchases", "payments",
          "debt", "payables", "receivables", "customers", "vendors", "inventory", "banks",
-         "assets", "payroll", "budgets", "settings", "users", "periods", "audit", "assistant"]
+         "assets", "payroll", "allowance", "budgets", "settings", "users", "periods", "audit", "assistant"]
 
 # Any element sticking out of the viewport is a problem *unless* it lives inside
 # its own scroller (that is a deliberate inner scroll area) or is hidden /

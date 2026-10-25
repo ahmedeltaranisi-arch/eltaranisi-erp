@@ -239,6 +239,32 @@ def _ensure_columns(conn) -> None:
             pass
 
 
+ALLOWANCE_EXPENSE_ACCOUNT = ("5215", "إعاشة العاملين", "Staff Subsistence Allowance", "52")
+
+
+def _ensure_allowance_accounts(conn) -> None:
+    """Add the subsistence-allowance expense account to every existing company."""
+    code, name_ar, name_en, parent_code = ALLOWANCE_EXPENSE_ACCOUNT
+    try:
+        companies = conn.execute("SELECT id FROM companies").fetchall()
+    except Exception:
+        return
+    for row in companies:
+        cid = row["id"]
+        try:
+            if conn.execute("SELECT 1 FROM accounts WHERE company_id=? AND code=?", (cid, code)).fetchone():
+                continue
+            parent = conn.execute("SELECT id, level FROM accounts WHERE company_id=? AND code=?",
+                                  (cid, parent_code)).fetchone()
+            conn.execute(
+                """INSERT INTO accounts (company_id, code, name_ar, name_en, type, parent_id, level,
+                      is_postable, is_active, currency) VALUES (?,?,?,?,'expense',?,?,1,1,'EGP')""",
+                (cid, code, name_ar, name_en, parent["id"] if parent else None,
+                 (parent["level"] + 1) if parent else 2))
+        except Exception:
+            continue
+
+
 def _apply_dark_theme_default(conn) -> None:
     """Dark mode became the product default: move untouched accounts over once.
 
@@ -293,6 +319,7 @@ def migrate() -> None:
         _ensure_columns(conn)
         _sync_system_roles(conn)
         _apply_dark_theme_default(conn)
+        _ensure_allowance_accounts(conn)
     finally:
         conn.close()
 

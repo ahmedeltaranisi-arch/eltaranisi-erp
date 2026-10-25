@@ -17,6 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import accounting
+import allowance
 import debt
 import deletion
 import documents
@@ -1304,6 +1305,171 @@ def payroll_run(ctx):
     return documents.payroll_run(ctx.conn, ctx.user, cid, period)
 
 
+
+# ------------------------------- إعاشة العاملين ---------------------------
+# Staff subsistence (meals) allowance — a monthly sheet per department that
+# mirrors the paper form and posts one balanced entry to the ledger.
+@route("GET", r"/api/allowance/meta", "allowance.view")
+def allowance_meta(ctx):
+    cid = ensure_company(ctx.user)
+    return {
+        "departments": allowance.departments(ctx.conn, cid),
+        "people": allowance.list_people(ctx.conn, cid),
+        "code_labels": {k: {"ar": v[0], "en": v[1]} for k, v in allowance.CODE_LABELS.items()},
+        "accounts": allowance.ACCOUNTS,
+    }
+
+
+@route("GET", r"/api/allowance/periods", "allowance.view")
+def allowance_periods(ctx):
+    cid = ensure_company(ctx.user)
+    sql = "SELECT * FROM allowance_periods WHERE company_id=?"
+    params = [cid]
+    if ctx.qs.get("department"):
+        sql += " AND department=?"
+        params.append(ctx.qs["department"])
+    if ctx.qs.get("from"):
+        sql += " AND end_date>=?"
+        params.append(ctx.qs["from"])
+    if ctx.qs.get("to"):
+        sql += " AND start_date<=?"
+        params.append(ctx.qs["to"])
+    sql += " ORDER BY start_date DESC, department LIMIT 300"
+    return {"periods": qall(ctx.conn, sql, tuple(params))}
+
+
+@route("POST", r"/api/allowance/periods", "allowance.manage")
+def allowance_period_create(ctx):
+    cid = ensure_company(ctx.user)
+    b = ctx.body
+    res = allowance.create_period(ctx.conn, ctx.user, cid, (b.get("department") or "").strip(),
+                                  b.get("start_date") or date.today().replace(day=1).isoformat(),
+                                  b.get("end_date") or date.today().isoformat(),
+                                  branch_id=b.get("branch_id"),
+                                  copy_roster=b.get("copy_roster", True))
+    audit(ctx.conn, ctx.user, "allowance.create", "allowance_period", res["id"],
+          {"department": b.get("department"), "from": b.get("start_date"), "to": b.get("end_date")},
+          company_id=cid)
+    return res
+
+
+@route("GET", r"/api/allowance/periods/([0-9]+)", "allowance.view")
+def allowance_period_get(ctx, period_id):
+    cid = ensure_company(ctx.user)
+    data = allowance.get_period(ctx.conn, cid, int(period_id))
+    data["people"] = allowance.list_people(ctx.conn, cid, data["department"])
+    return data
+
+
+@route("PUT", r"/api/allowance/periods/([0-9]+)", "allowance.manage")
+def allowance_period_save(ctx, period_id):
+    cid = ensure_company(ctx.user)
+    stats = allowance.save_period(ctx.conn, ctx.user, cid, int(period_id), ctx.body or {})
+    audit(ctx.conn, ctx.user, "allowance.save", "allowance_period", int(period_id), stats, company_id=cid)
+    return {"ok": True, **stats}
+
+
+@route("DELETE", r"/api/allowance/periods/([0-9]+)", "allowance.manage")
+def allowance_period_delete(ctx, period_id):
+    cid = ensure_company(ctx.user)
+    res = allowance.delete_period(ctx.conn, cid, int(period_id))
+    audit(ctx.conn, ctx.user, "allowance.delete", "allowance_period", int(period_id), {}, company_id=cid)
+    return res
+
+
+@route("POST", r"/api/allowance/periods/([0-9]+)/post", "allowance.post")
+def allowance_period_post(ctx, period_id):
+    cid = ensure_company(ctx.user)
+    res = allowance.post_period(ctx.conn, ctx.user, cid, int(period_id),
+                                (ctx.body or {}).get("entry_date"))
+    audit(ctx.conn, ctx.user, "allowance.post", "allowance_period", int(period_id), res, company_id=cid)
+    return res
+
+
+@route("GET", r"/api/allowance/periods/([0-9]+)/xlsx", "allowance.view")
+def allowance_period_xlsx(ctx, period_id):
+    cid = ensure_company(ctx.user)
+    period = allowance.get_period(ctx.conn, cid, int(period_id))
+    with_grid = (ctx.qs.get("grid") or "1") not in ("0", "false")
+    matrix = allowance.export_matrix(period, with_grid=with_grid)
+    title = f"إعاشة {period['department']} {period['start_date']} — {period['end_date']}"
+    rows = matrix["rows"] + [["", "", "الإجمالي", "", "", "", "", "", "", "", "",
+                              str(period["totals"]["total_days"]), "",
+                              f"{period['totals']['total_cents'] / 100:.2f}"] + ([""] * period["days"] if with_grid else [])]
+    out = exporter.report_xlsx(title, matrix["head"], rows, rtl=True)
+    audit(ctx.conn, ctx.user, "allowance.xlsx", "allowance_period", int(period_id), {}, company_id=cid)
+    return {"__file__": True, "content": out,
+            "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "filename": f"allowance-{period_id}.xlsx"}
+
+
+@route("GET", r"/api/allowance/periods/([0-9]+)/pdf", "allowance.view")
+def allowance_period_pdf(ctx, period_id):
+    cid = ensure_company(ctx.user)
+    period = allowance.get_period(ctx.conn, cid, int(period_id))
+    lang = _lang(ctx)
+    ar = lang != "en"
+    with_grid = (ctx.qs.get("grid") or "1") not in ("0", "false")
+    matrix = allowance.export_matrix(period, with_grid=with_grid)
+    cols = [{"ar": h, "en": h, "w": 0.8 if i in (0, 1, 3, 4, 5, 6, 7, 8, 9, 10, 11) else (2.6 if i == 2 else 1.15),
+             "align": "start" if i == 2 else "center", "rtl": i == 2}
+            for i, h in enumerate(matrix["head"])]
+    rows = matrix["rows"] + [["", "", "الإجمالي" if ar else "Total", "", "", "", "", "", "", "", "",
+                              str(period["totals"]["total_days"]), "",
+                              f"{period['totals']['total_cents'] / 100:,.2f}"] + ([""] * period["days"] if with_grid else [])]
+    company = exporter.company_block(ctx.conn, cid)
+    out = exporter.report_pdf(
+        f"إعاشة {period['department']}", f"Subsistence — {period['department']}", cols, rows,
+        company=company, lang=lang,
+        subtitle_ar=f"الفترة من {exporter.fmt_date_ui(period['start_date'])} إلى {exporter.fmt_date_ui(period['end_date'])}",
+        subtitle_en=f"{period['start_date']} — {period['end_date']}")
+    audit(ctx.conn, ctx.user, "allowance.pdf", "allowance_period", int(period_id), {}, company_id=cid)
+    return {"__file__": True, "content": out, "content_type": "application/pdf",
+            "filename": f"allowance-{period_id}.pdf", "inline": True}
+
+
+@route("GET", r"/api/allowance/people", "allowance.view")
+def allowance_people(ctx):
+    cid = ensure_company(ctx.user)
+    return {"people": allowance.list_people(ctx.conn, cid, ctx.qs.get("department")),
+            "departments": allowance.departments(ctx.conn, cid)}
+
+
+@route("POST", r"/api/allowance/people", "allowance.manage")
+def allowance_person_upsert(ctx):
+    cid = ensure_company(ctx.user)
+    res = allowance.upsert_person(ctx.conn, cid, ctx.body or {})
+    audit(ctx.conn, ctx.user, "allowance.person", "allowance_person", res["id"], ctx.body or {}, company_id=cid)
+    return res
+
+
+@route("POST", r"/api/allowance/people/([0-9]+)/active", "allowance.manage")
+def allowance_person_active(ctx, person_id):
+    cid = ensure_company(ctx.user)
+    res = allowance.set_people_active(ctx.conn, cid, int(person_id), bool((ctx.body or {}).get("active", True)))
+    audit(ctx.conn, ctx.user, "allowance.person.active", "allowance_person", int(person_id),
+          res, company_id=cid)
+    return res
+
+
+@route("POST", r"/api/allowance/people/import", "allowance.manage")
+def allowance_people_import(ctx):
+    """Import the roster (names + daily rate) from the sample CSV / posted rows."""
+    cid = ensure_company(ctx.user)
+    rows = (ctx.body or {}).get("rows")
+    if not rows:
+        path = BASE_DIR / "samples" / "allowance_roster.csv"
+        if not path.exists():
+            raise ApiError("NOT_FOUND: ملف الكشف غير موجود / Roster file not found", 404)
+        import csv as _csv
+        with open(path, newline="", encoding="utf-8-sig") as fh:
+            rows = [{"department": r["department"], "name_ar": r["name_ar"],
+                     "daily_rate": float(r["daily_rate"] or 30)} for r in _csv.DictReader(fh)]
+    res = allowance.import_roster(ctx.conn, cid, rows)
+    audit(ctx.conn, ctx.user, "allowance.import", "allowance_people", None, res, company_id=cid)
+    return res
+
+
 # ------------------------------- budgets ----------------------------------
 @route("GET", r"/api/budgets", "budgets.view")
 def budgets_list(ctx):
@@ -2174,6 +2340,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._error(exc.status, exc.message, exc.details)
             except accounting.ValidationError as exc:
                 self._error(exc.status, exc.message, exc.details)
+            except allowance.AllowanceError as exc:
+                self._error(exc.status, exc.message)
             except PermissionError_ as exc:
                 self._error(403, exc.message)
             except AuthError as exc:

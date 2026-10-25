@@ -190,6 +190,9 @@ PERMISSIONS = {
     "debt.edit": "تعديل المستحقات والسدادات / Edit debt items & payments",
     "debt.delete": "حذف المستحقات والسدادات / Delete debt items & payments",
     "debt.post": "ترحيل المديونية على الحسابات / Post debt to the ledger",
+    "allowance.view": "عرض إعاشة العاملين / View staff subsistence allowance",
+    "allowance.manage": "إدارة كشوف الإعاشة وكشف العمال / Manage subsistence sheets & roster",
+    "allowance.post": "ترحيل الإعاشة على الحسابات / Post subsistence allowance",
 }
 
 # Editing is a strictly narrower right than creating/managing the same module:
@@ -216,6 +219,7 @@ FINANCIAL_READ = [
     "dashboard.view", "accounts.view", "journal.view", "customers.view", "vendors.view",
     "sales.view", "purchases.view", "payments.view", "payables.view", "banks.view",
     "inventory.view", "assets.view", "reports.view", "budgets.view", "debt.view",
+    "allowance.view",
 ]
 
 ROLE_DEFINITIONS = [
@@ -243,6 +247,7 @@ ROLE_DEFINITIONS = [
             "customers.create", "vendors.create", "customers.delete", "vendors.delete",
             "sales.delete", "purchases.delete", "payments.delete", "journal.delete",
             "debt.create", "debt.edit", "debt.delete", "debt.post",
+            "allowance.manage", "allowance.post",
         ],
     },
     {
@@ -256,6 +261,7 @@ ROLE_DEFINITIONS = [
             "assets.manage", "reports.export", "ai.use",
             "sales.delete", "purchases.delete", "payments.delete", "journal.delete",
             "debt.create", "debt.edit", "debt.delete", "debt.post",
+            "allowance.manage", "allowance.post",
         ],
     },
     {
@@ -265,6 +271,7 @@ ROLE_DEFINITIONS = [
         "permissions": FINANCIAL_READ + [
             "journal.create", "sales.create", "purchases.create", "payments.create",
             "inventory.view", "reports.export", "ai.use", "debt.create", "debt.edit",
+            "allowance.manage",
         ],
     },
     {
@@ -291,13 +298,15 @@ ROLE_DEFINITIONS = [
         "code": "hr_user",
         "name_ar": "مسؤول موارد بشرية", "name_en": "HR User",
         "data_scope": "company",
-        "permissions": ["dashboard.view", "payroll.view", "payroll.manage"],
+        "permissions": ["dashboard.view", "payroll.view", "payroll.manage",
+                        "allowance.view", "allowance.manage"],
     },
     {
         "code": "auditor",
         "name_ar": "مراجع (اطلاع فقط)", "name_en": "Auditor (read-only)",
         "data_scope": "read_only",
-        "permissions": FINANCIAL_READ + ["payroll.view", "reports.export", "audit.view", "ai.use"],
+        "permissions": FINANCIAL_READ + ["payroll.view", "reports.export", "audit.view", "ai.use",
+                                         "allowance.view"],
     },
 ]
 
