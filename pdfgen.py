@@ -407,15 +407,24 @@ class PDF:
     """Multi-font PDF writer: Amiri for Arabic, DejaVu Sans for Latin/digits."""
 
     def __init__(self, font_path: str, latin_font_path: str | None = None,
-                 width=595.28, height=841.89, compress=True, ar_scale: float | None = None):
+                 width=595.28, height=841.89, compress=True, ar_scale: float | None = None,
+                 heading_font_path: str | None = None):
+        # index 0 = Arabic body face, 1 = Latin/digits, 2 = optional Arabic
+        # heading (display) face: a heavy display typeface is right for the title
+        # band but wrong for a 45-column table, so the two can differ.
         self.fonts = [TrueType(font_path)]
         if latin_font_path and os.path.exists(latin_font_path):
             self.fonts.append(TrueType(latin_font_path))
         self.ar_font = 0
         self.la_font = 1 if len(self.fonts) > 1 else 0
+        self.heading_font = None
+        if heading_font_path and os.path.exists(str(heading_font_path)):
+            self.fonts.append(TrueType(str(heading_font_path)))
+            self.heading_font = len(self.fonts) - 1
         # optical size correction: the typeface's glyphs sit high/low on the em
         # square, so a nominal 10pt would not *look* like 10pt.
         self.AR_SCALE = ar_scale if ar_scale else _optical_scale(font_path)
+        self.HEAD_SCALE = _optical_scale(heading_font_path) if heading_font_path else 1.0
         self.ar_scale = self.AR_SCALE
         self.W = width
         self.H = height
@@ -466,7 +475,7 @@ class PDF:
     def _is_arabic_char(ch: str) -> bool:
         return is_arabic(ch) or ch in TRANSPARENT
 
-    def _split_font(self, chunk: str):
+    def _split_font(self, chunk: str, ar_index: int | None = None):
         """[(substring, font_index)] - Arabic picks the Arabic face.
 
         A character the chosen face cannot draw (an emoji, a tick, a rare
@@ -474,8 +483,9 @@ class PDF:
         equivalent - never drawn as a blank "tofu" box.
         """
         out = []
+        ar_index = self.ar_font if ar_index is None else ar_index
         for ch in chunk:
-            fi = self.ar_font if self._is_arabic_char(ch) else self.la_font
+            fi = ar_index if self._is_arabic_char(ch) else self.la_font
             if self.fonts[fi].gid(ch) == 0:
                 other = self.la_font if fi == self.ar_font else self.ar_font
                 if other != fi and self.fonts[other].gid(ch) != 0:
@@ -490,7 +500,7 @@ class PDF:
                 out.append([ch, fi])
         return [(c, f) for c, f in out]
 
-    def _runs(self, text: str, rtl: bool):
+    def _runs(self, text: str, rtl: bool, heading: bool = False):
         """[(chunk, font_index)] in VISUAL (drawing) order."""
         text = text.strip()                  # outer padding is layout, not content
         shaped = shape_arabic(text)
@@ -503,13 +513,19 @@ class PDF:
                 # Arabic inside an English line keeps its own right-to-left
                 # order; only the runs themselves follow the paragraph base
                 chunk = "".join(MIRROR.get(c, c) for c in reversed(chunk))
-            runs.extend(self._split_font(chunk))
+            target = self.heading_font if (heading and self.heading_font is not None) else None
+            runs.extend(self._split_font(chunk, target))
         return runs
 
-    AR_SCALE = 1.0       # filled per font in __init__ (see OPTICAL_SCALE)
+    AR_SCALE = 1.0       # body face optical scale (see OPTICAL_SCALE)
+    HEAD_SCALE = 1.0     # heading face optical scale
 
     def _run_size(self, fi: int, size: float) -> float:
-        return size * (self.AR_SCALE if fi == self.ar_font else 1.0)
+        if fi == self.ar_font:
+            return size * self.AR_SCALE
+        if self.heading_font is not None and fi == self.heading_font:
+            return size * self.HEAD_SCALE
+        return size
 
     def _run_width(self, chunk: str, fi: int, size: float) -> float:
         font = self.fonts[fi]
@@ -521,21 +537,21 @@ class PDF:
             total += w
         return total * self._run_size(fi, size) / font.units_per_em
 
-    def measure(self, text: str, size: float, rtl: bool | None = None) -> float:
+    def measure(self, text: str, size: float, rtl: bool | None = None, heading: bool = False) -> float:
         if text is None:
             return 0.0
         text = str(text)
         if rtl is None:
             rtl = any(is_arabic(c) for c in text)
-        return sum(self._run_width(chunk, fi, size) for chunk, fi in self._runs(text, rtl))
+        return sum(self._run_width(chunk, fi, size) for chunk, fi in self._runs(text, rtl, heading))
 
-    def text(self, x, y, text, size=10, color=(17, 24, 39), align="left", rtl=None):
+    def text(self, x, y, text, size=10, color=(17, 24, 39), align="left", rtl=None, heading=False):
         if text is None or text == "":
             return 0.0
         text = str(text)
         if rtl is None:
             rtl = any(is_arabic(c) for c in text)
-        runs = self._runs(text, rtl)
+        runs = self._runs(text, rtl, heading)
         total = sum(self._run_width(chunk, fi, size) for chunk, fi in runs)
         if align == "right":
             x = x - total

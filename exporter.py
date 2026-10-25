@@ -36,9 +36,18 @@ if not _candidate.exists():                      # never break a report on confi
         _candidate = FONT_DIR / "Amiri-Regular.ttf"
 FONT_PATH = _candidate
 LATIN_FONT_PATH = FONT_DIR / "DejaVuSans.ttf"
+# «PT Bold Heading» is a display typeface: it belongs in the company/title band,
+# where a heading face looks like itself.  Table text keeps a real text face —
+# at 7pt a display face closes its joins and reads as blobs.
+BODY_FONT_NAME = os.environ.get("ERP_PDF_BODY_FONT") or "NotoSansArabic.ttf"
+_body = FONT_DIR / BODY_FONT_NAME
+if not _body.exists():
+    _body = FONT_DIR / "NotoSansArabic.ttf"
+BODY_FONT_PATH = _body
+HEADING_FONT_PATH = FONT_PATH
 # Spreadsheet face: Excel can only name one font per cell, so this must be a face
 # the client actually has installed (the same «PT Bold Heading» as the PDFs).
-XLSX_FONT = os.environ.get("ERP_XLSX_FONT") or "PT Bold Heading"
+XLSX_FONT = os.environ.get("ERP_XLSX_FONT") or "Arial"
 
 # palette
 INK = (11, 47, 107)            # logo ink
@@ -680,9 +689,11 @@ def report_pdf(title_ar: str, title_en: str, columns, rows, company=None, lang="
     ar = lang != "en"
     T = (lambda a, e: a) if ar else (lambda a, e: e)
     if landscape:
-        pdf = pdfgen.PDF(str(FONT_PATH), str(LATIN_FONT_PATH), width=841.89, height=595.28)
+        pdf = pdfgen.PDF(str(BODY_FONT_PATH), str(LATIN_FONT_PATH), width=841.89, height=595.28,
+                         heading_font_path=str(HEADING_FONT_PATH))
     else:
-        pdf = pdfgen.PDF(str(FONT_PATH), str(LATIN_FONT_PATH))
+        pdf = pdfgen.PDF(str(BODY_FONT_PATH), str(LATIN_FONT_PATH),
+                         heading_font_path=str(HEADING_FONT_PATH))
     W, H = pdf.W, pdf.H
     M = margin
     pdf.new_page()
@@ -697,22 +708,22 @@ def report_pdf(title_ar: str, title_en: str, columns, rows, company=None, lang="
     ny = H - 38
     for line in lines:
         pdf.text(right_x if ar else left_x, ny, line, name_size, WHITE,
-                 align="right" if ar else "left", rtl=ar)
+                 align="right" if ar else "left", rtl=ar, heading=True)
         ny -= 11.5
     title_y = H - 56 if not two_lines else H - 62
     title_txt = (title_ar if ar else title_en)
     title_size = 11.5
-    while title_size > 7.5 and pdf.measure(title_txt, title_size, ar) > (right_x - left_x):
+    while title_size > 7.5 and pdf.measure(title_txt, title_size, ar, heading=True) > (right_x - left_x):
         title_size -= 0.3
     pdf.text(right_x if ar else left_x, title_y, title_txt, title_size, (226, 222, 250),
-             align="right" if ar else "left", rtl=ar)
+             align="right" if ar else "left", rtl=ar, heading=True)
     sub = subtitle_ar if ar else subtitle_en
     if sub:
         sub_size = 8.4
-        while sub_size > 6.4 and pdf.measure(sub, sub_size, ar) > (right_x - left_x):
+        while sub_size > 6.4 and pdf.measure(sub, sub_size, ar, heading=True) > (right_x - left_x):
             sub_size -= 0.25
         pdf.text(right_x if ar else left_x, title_y - 15, sub, sub_size, (198, 193, 238),
-                 align="right" if ar else "left", rtl=ar)
+                 align="right" if ar else "left", rtl=ar, heading=True)
     brand_mark(pdf, M, H - 74, 24)
     pdf.text(M + 30, H - 40, "ELTARANISI ERP", 8.8, WHITE, align="left", rtl=False)
     pdf.text(M + 30, H - 56, datetime.now().strftime("%Y-%m-%d %H:%M"), 8.0, (198, 193, 238), align="left", rtl=False)
