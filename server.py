@@ -1346,7 +1346,8 @@ def allowance_period_create(ctx):
                                   b.get("start_date") or date.today().replace(day=1).isoformat(),
                                   b.get("end_date") or date.today().isoformat(),
                                   branch_id=b.get("branch_id"),
-                                  copy_roster=b.get("copy_roster", True))
+                                  copy_roster=b.get("copy_roster", True),
+                                  att_from=b.get("att_from"), att_to=b.get("att_to"))
     audit(ctx.conn, ctx.user, "allowance.create", "allowance_period", res["id"],
           {"department": b.get("department"), "from": b.get("start_date"), "to": b.get("end_date")},
           company_id=cid)
@@ -1367,6 +1368,19 @@ def allowance_period_save(ctx, period_id):
     stats = allowance.save_period(ctx.conn, ctx.user, cid, int(period_id), ctx.body or {})
     audit(ctx.conn, ctx.user, "allowance.save", "allowance_period", int(period_id), stats, company_id=cid)
     return {"ok": True, **stats}
+
+
+@route("POST", r"/api/allowance/periods/([0-9]+)/window", "allowance.manage")
+def allowance_period_window(ctx, period_id):
+    """نطاق الحضور: احسب أيام الحضور ديناميكيًا من تاريخ إلى تاريخ."""
+    cid = ensure_company(ctx.user)
+    b = ctx.body or {}
+    res = allowance.set_window(ctx.conn, ctx.user, cid, int(period_id),
+                               b.get("att_from"), b.get("att_to"), b.get("line_ids"))
+    audit(ctx.conn, ctx.user, "allowance.window", "allowance_period", int(period_id),
+          {"from": b.get("att_from"), "to": b.get("att_to"), "rows": res.get("updated")},
+          company_id=cid)
+    return res
 
 
 @route("DELETE", r"/api/allowance/periods/([0-9]+)", "allowance.manage")

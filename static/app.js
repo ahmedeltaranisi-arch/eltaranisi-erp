@@ -24,6 +24,12 @@ function fmtMoney(cents, opts = {}) {
   if (opts.plain) return s;
   return `<span class="money"><span class="num">${s}</span><span class="cur">${APP.lang === "ar" ? "ج.م" : "EGP"}</span></span>`;
 }
+/** Money as PLAIN TEXT ("1,080.00 ج.م") — for toast(), textContent, titles and
+ *  option labels. Never put fmtMoney() output in a text context: it is HTML. */
+function moneyLabel(cents) {
+  return `${fmtMoney(cents, { plain: true })} ${APP.lang === "ar" ? "ج.م" : "EGP"}`;
+}
+window.moneyLabel = moneyLabel;
 function moneyText(cents) {
   // chart labels / donut totals: values are stored in cents, shown in currency units
   const v = (Number(cents) || 0) / 100;

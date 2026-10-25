@@ -113,9 +113,55 @@ def normalize_codes(raw, days: int) -> dict:
     return out
 
 
-def compute_line(line: dict, days: int) -> dict:
+def _iso(value):
+    """Accept ISO (2026-10-01) or the UI day/month/year form (01/10/2026)."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if len(text) >= 10 and text[4] == "-":
+        try:
+            return date.fromisoformat(text[:10]).isoformat()
+        except ValueError:
+            return None
+    parts = text.replace(".", "/").replace("-", "/").split("/")
+    if len(parts) == 3:
+        try:
+            d, m, y = (int(p) for p in parts)
+            return date(y, m, d).isoformat()
+        except ValueError:
+            return None
+    return None
+
+
+def attendance_window(line: dict, start_date: str, days: int) -> tuple:
+    """Day numbers (1-based inside the period) covered by the line's range.
+
+    ``att_from``/``att_to`` let one worker be paid for part of the period
+    (someone who joined or left mid-month) without splitting the sheet:
+         01/10/2026 → 15/10/2026  ⇒  15 counted days instead of 30.
+    Empty range = the whole sheet period.
+    """
+    period_start = date.fromisoformat(str(start_date)[:10])
+    period_end = period_start + timedelta(days=days - 1)
+    start = _iso(line.get("att_from")) or period_start.isoformat()
+    end = _iso(line.get("att_to")) or period_end.isoformat()
+    start = max(date.fromisoformat(start), period_start)
+    end = min(date.fromisoformat(end), period_end)
+    if end < start:
+        raise AllowanceError(
+            "INVALID_RANGE: نطاق الحضور خارج فترة الكشف أو نهايته قبل بدايته / "
+            "Attendance range is outside the period or ends before it starts")
+    return (start - period_start).days + 1, (end - period_start).days + 1, start.isoformat(), end.isoformat()
+
+
+def compute_line(line: dict, days: int, start_date: str = None) -> dict:
     """Return a line with every count and amount recomputed (never trusts input)."""
-    codes = normalize_codes(line.get("day_codes"), days)
+    first_day, last_day, win_from, win_to = (1, days, None, None)
+    if start_date:
+        first_day, last_day, win_from, win_to = attendance_window(line, start_date, days)
+    window = last_day - first_day + 1
+    codes = {k: v for k, v in normalize_codes(line.get("day_codes"), days).items()
+             if first_day <= int(k) <= last_day}
     counts = {field: 0 for field in DERIVED_FIELDS}
     if codes:
         for code in codes.values():
@@ -134,15 +180,17 @@ def compute_line(line: dict, days: int) -> dict:
                                  else _int(line.get("adjustments_cents")))
     line["daily_rate_cents"] = (_cents(line["daily_rate"]) if "daily_rate" in line
                                 else _int(line.get("daily_rate_cents")))
-    line["days_in_period"] = days
+    line["days_in_period"] = window
+    line["att_from"] = win_from
+    line["att_to"] = win_to
 
     away = (line["leave_annual"] + line["leave_sick"] + line["leave_unpaid"]
             + line["absence_days"] + line["mission_days"])
-    if away > days:
+    if away > window:
         raise AllowanceError(
-            "DAYS_OVERFLOW: مجموع أيام الغياب والاجازات أكبر من أيام الفترة "
-            f"({away} > {days}) / leave days exceed the period length")
-    present = days - away
+            "DAYS_OVERFLOW: مجموع أيام الغياب والاجازات أكبر من أيام الحضور "
+            f"({away} > {window}) / leave days exceed the attendance window")
+    present = window - away
     net = present - line["ded_allowance_days"] - line["ded_salary_days"]
     if net < 0:
         raise AllowanceError("DAYS_OVERFLOW: صافي الأيام بالسالب / Net days below zero")
@@ -212,7 +260,7 @@ def departments(conn, company_id: int) -> list:
 
 
 def create_period(conn, user, company_id: int, department: str, start: str, end: str,
-                  branch_id=None, copy_roster: bool = True) -> dict:
+                  branch_id=None, copy_roster: bool = True, att_from=None, att_to=None) -> dict:
     days = period_days(start, end)
     if not department:
         raise AllowanceError("MISSING_FIELD: القسم مطلوب / Department required")
@@ -231,18 +279,20 @@ def create_period(conn, user, company_id: int, department: str, start: str, end:
         people = list_people(conn, company_id, department)
         for i, p in enumerate(people):
             line = compute_line({"name_ar": p["name_ar"], "person_id": p["id"],
-                                 "daily_rate_cents": p["daily_rate_cents"], "day_codes": {}}, days)
+                                 "daily_rate_cents": p["daily_rate_cents"], "day_codes": {},
+                                 "att_from": att_from, "att_to": att_to},
+                                days, start)
             conn.execute(
                 """INSERT INTO allowance_lines (period_id, person_id, name_ar, daily_rate_cents,
                       days_in_period, leave_annual, leave_sick, leave_unpaid, absence_days, mission_days,
                       ded_allowance_days, ded_salary_days, present_days, net_days, adjustments_cents,
-                      total_cents, day_codes, sort_order)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (period_id, p["id"], line["name_ar"], line["daily_rate_cents"], days,
+                      total_cents, day_codes, att_from, att_to, notes, sort_order)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (period_id, p["id"], line["name_ar"], line["daily_rate_cents"], line["days_in_period"],
                  line["leave_annual"], line["leave_sick"], line["leave_unpaid"], line["absence_days"],
                  line["mission_days"], line["ded_allowance_days"], line["ded_salary_days"],
                  line["present_days"], line["net_days"], line["adjustments_cents"],
-                 line["total_cents"], None, i))
+                 line["total_cents"], None, line["att_from"], line["att_to"], None, i))
     recalc_period(conn, period_id)
     return {"id": period_id}
 
@@ -294,32 +344,34 @@ def save_period(conn, user, company_id: int, period_id: int, payload: dict) -> d
         if not name:
             continue
         merged["name_ar"] = name
-        line = compute_line(merged, days)
+        line = compute_line(merged, days, period["start_date"])
         if line_id and line_id in existing:
             seen.add(line_id)
             conn.execute(
                 """UPDATE allowance_lines SET name_ar=?, daily_rate_cents=?, days_in_period=?,
                      leave_annual=?, leave_sick=?, leave_unpaid=?, absence_days=?, mission_days=?,
                      ded_allowance_days=?, ded_salary_days=?, present_days=?, net_days=?,
-                     adjustments_cents=?, total_cents=?, day_codes=?, notes=?, sort_order=?
-                   WHERE id=? AND period_id=?""",
-                (line["name_ar"], line["daily_rate_cents"], days, line["leave_annual"],
+                     adjustments_cents=?, total_cents=?, day_codes=?, att_from=?, att_to=?,
+                     notes=?, sort_order=? WHERE id=? AND period_id=?""",
+                (line["name_ar"], line["daily_rate_cents"], line["days_in_period"], line["leave_annual"],
                  line["leave_sick"], line["leave_unpaid"], line["absence_days"], line["mission_days"],
                  line["ded_allowance_days"], line["ded_salary_days"], line["present_days"],
                  line["net_days"], line["adjustments_cents"], line["total_cents"], line["day_codes"],
-                 merged.get("notes"), i, line_id, period_id))
+                 line["att_from"], line["att_to"], merged.get("notes"), i, line_id, period_id))
         else:
             cur = conn.execute(
                 """INSERT INTO allowance_lines (period_id, person_id, name_ar, daily_rate_cents,
                      days_in_period, leave_annual, leave_sick, leave_unpaid, absence_days, mission_days,
                      ded_allowance_days, ded_salary_days, present_days, net_days, adjustments_cents,
-                     total_cents, day_codes, notes, sort_order)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (period_id, merged.get("person_id"), line["name_ar"], line["daily_rate_cents"], days,
+                     total_cents, day_codes, att_from, att_to, notes, sort_order)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (period_id, merged.get("person_id"), line["name_ar"], line["daily_rate_cents"],
+                 line["days_in_period"],
                  line["leave_annual"], line["leave_sick"], line["leave_unpaid"], line["absence_days"],
                  line["mission_days"], line["ded_allowance_days"], line["ded_salary_days"],
                  line["present_days"], line["net_days"], line["adjustments_cents"],
-                 line["total_cents"], line["day_codes"], merged.get("notes"), i))
+                 line["total_cents"], line["day_codes"], line["att_from"], line["att_to"],
+                 merged.get("notes"), i))
             seen.add(cur.lastrowid)
     for line_id in existing:
         if line_id not in seen:
@@ -334,6 +386,42 @@ def save_period(conn, user, company_id: int, period_id: int, payload: dict) -> d
     conn.execute("UPDATE allowance_periods SET updated_at=? WHERE id=?",
                  (datetime.utcnow().isoformat(timespec="seconds"), period_id))
     return recalc_period(conn, period_id)
+
+
+def set_window(conn, user, company_id: int, period_id: int, att_from, att_to, line_ids=None) -> dict:
+    """Apply an attendance range (from → to) to some or all rows of a sheet.
+
+    The paid days of every affected row become the number of days inside that
+    range — e.g. 01/10/2026 → 15/10/2026 counts 15 days, not the whole month.
+    """
+    period = get_period(conn, company_id, period_id)
+    if period["status"] == "posted":
+        raise AllowanceError("INVALID_STATE: الكشف مُرحَّل ولا يمكن تعديله / Sheet is posted", 409)
+    start, end = _iso(att_from), _iso(att_to)
+    if start and end and end < start:
+        raise AllowanceError("INVALID_RANGE: تاريخ النهاية قبل البداية / End date is before start date")
+    targets = [line for line in period["lines"]
+               if not line_ids or line["id"] in {int(x) for x in line_ids}]
+    if not targets:
+        raise AllowanceError("NOT_FOUND: لا توجد صفوف محددة / No matching rows")
+    updated = 0
+    for line in targets:
+        payload = dict(line)
+        payload["att_from"] = start
+        payload["att_to"] = end
+        payload["day_codes"] = line.get("day_codes") or {}
+        computed = compute_line(payload, period["days"], period["start_date"])
+        conn.execute(
+            """UPDATE allowance_lines SET att_from=?, att_to=?, days_in_period=?, present_days=?,
+                 net_days=?, total_cents=? WHERE id=? AND period_id=?""",
+            (computed["att_from"], computed["att_to"], computed["days_in_period"],
+             computed["present_days"], computed["net_days"], computed["total_cents"],
+             line["id"], period_id))
+        updated += 1
+    conn.execute("UPDATE allowance_periods SET updated_at=? WHERE id=?",
+                 (datetime.utcnow().isoformat(timespec="seconds"), period_id))
+    stats = recalc_period(conn, period_id)
+    return {"updated": updated, **stats}
 
 
 def delete_period(conn, company_id: int, period_id: int) -> dict:
@@ -433,12 +521,25 @@ def post_period(conn, user, company_id: int, period_id: int, entry_date: str | N
     return {"journal_entry_id": entry_id, "total_cents": total}
 
 
+def fmt_iso(value) -> str:
+    """ISO date → day/month/year for the printed sheet."""
+    if not value:
+        return ""
+    try:
+        d = date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return str(value)
+    return d.strftime("%d/%m/%Y")
+
+
 def export_matrix(period: dict, with_grid: bool = True) -> dict:
     """Rows for Excel/PDF export, mirroring the paper sheet."""
     days = period["days"]
     start_day = period["start_day"]
     head = ["م", "الفئة", "الاسم", "الحضور", "اعتيادى", "مرضي", "بدون مرتب", "غياب", "ماموريات",
             "خصم إعاشة", "خصم مرتب", "الصافى", "تطبيقات", "إجمالى المستحق"]
+    if any(line.get("att_from") for line in period["lines"]):
+        head += ["من تاريخ", "إلى تاريخ"]
     if with_grid:
         head += [str(d) for d in range(start_day, start_day + days)]
     rows = []
@@ -450,6 +551,8 @@ def export_matrix(period: dict, with_grid: bool = True) -> dict:
                str(line["ded_allowance_days"]), str(line["ded_salary_days"]), str(line["net_days"]),
                f"{line['adjustments_cents'] / 100:.2f}" if line["adjustments_cents"] else "",
                f"{line['total_cents'] / 100:.2f}"]
+        if any(line.get("att_from") for line in period["lines"]):
+            row += [fmt_iso(line.get("att_from")), fmt_iso(line.get("att_to"))]
         if with_grid:
             row += [codes.get(str(d), "") for d in range(1, days + 1)]
         rows.append(row)

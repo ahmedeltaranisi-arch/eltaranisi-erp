@@ -219,6 +219,8 @@ def init_db(force: bool = False) -> None:
 # `schema.sql` is re-applied to existing databases, but CREATE TABLE IF NOT EXISTS
 # never adds a column to a table that already exists — these do.
 COLUMN_MIGRATIONS = [
+    ("allowance_lines", "att_from", "TEXT"),
+    ("allowance_lines", "att_to", "TEXT"),
     ("debt_payments", "description", "TEXT"),
     ("debt_payments", "advance_cents", "INTEGER NOT NULL DEFAULT 0"),
 ]

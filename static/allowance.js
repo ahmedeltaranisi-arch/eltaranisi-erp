@@ -37,9 +37,29 @@
   function num(v) { const n = Number(v); return Number.isFinite(n) ? n : 0; }
   function rateOf(line) { return line.daily_rate_cents / 100; }
 
+  /** day number (1-based) of an ISO date inside the sheet period */
+  function dayIndex(iso, periodStart) {
+    return Math.round((new Date(iso + "T00:00:00") - new Date(periodStart + "T00:00:00")) / 86400000) + 1;
+  }
+  /** the paid window of one line: [firstDay, lastDay] inside the period */
+  function windowOf(line, period) {
+    const first = line.att_from ? Math.max(1, dayIndex(String(line.att_from).slice(0, 10), period.start_date)) : 1;
+    const last = line.att_to
+      ? Math.min(period.days, dayIndex(String(line.att_to).slice(0, 10), period.start_date))
+      : period.days;
+    return [Math.min(first, last), Math.max(first, last)];
+  }
+
   /** client-side preview of the server maths (server always wins on save) */
-  function computePreview(line, days) {
-    const codes = line.day_codes || {};
+  function computePreview(line, days, period) {
+    const p = period || S.period || { days, start_date: line.att_from || "" };
+    const [first, last] = windowOf(line, p);
+    const winDays = Math.max(0, last - first + 1);
+    const codes = {};
+    Object.entries(line.day_codes || {}).forEach(([k, v]) => {
+      const d = Number(k);
+      if (d >= first && d <= last) codes[k] = v;
+    });
     const derived = { ام: "leave_sick", بم: "leave_unpaid", غ: "absence_days", م: "mission_days", خ: "ded_allowance_days" };
     const counts = { leave_sick: 0, leave_unpaid: 0, absence_days: 0, mission_days: 0, ded_allowance_days: 0 };
     const keys = Object.keys(codes);
@@ -49,10 +69,11 @@
     }
     const away = num(line.leave_annual) + num(line.leave_sick) + num(line.leave_unpaid)
       + num(line.absence_days) + num(line.mission_days);
-    const present = Math.max(0, days - away);
+    const present = Math.max(0, winDays - away);
     const net = Math.max(0, present - num(line.ded_allowance_days) - num(line.ded_salary_days));
     line.present_days = present;
     line.net_days = net;
+    line.days_in_period = winDays;
     line.total_cents = Math.round(net * num(rateOf(line)) * 100 + num(line.adjustments) * 100);
     return line;
   }
@@ -72,7 +93,7 @@
   function recalcFooter() {
     const tot = totals();
     const el = $("#al-total");
-    if (el) el.textContent = fmtMoney(tot.cents);
+    if (el) el.textContent = moneyLabel(tot.cents);
     const d = $("#al-days");
     if (d) d.textContent = tot.days;
     const p = $("#al-people");
@@ -154,8 +175,12 @@
       fields: [
         { name: "department", label: L("القسم", "Department"), type: "select",
           options: departments.map(d => ({ value: d, label: d })) },
-        { name: "start_date", label: L("من تاريخ", "From date"), type: "date", value: `${month}-01` },
-        { name: "end_date", label: L("إلى تاريخ", "To date"), type: "date", value: monthRange(month).end },
+        { name: "start_date", label: L("بداية الفترة", "Period start"), type: "date", value: `${month}-01` },
+        { name: "end_date", label: L("نهاية الفترة", "Period end"), type: "date", value: monthRange(month).end },
+        { name: "att_from", label: L("أيام الحضور من (اختياري)", "Attendance from (optional)"), type: "date",
+          hint: L("اتركه فارغًا = حضور كل أيام الفترة. مثال: من 01/10/2026 إلى 15/10/2026 ⇒ 15 يومًا.",
+                  "Leave empty to count the whole period, e.g. 01/10 → 15/10 counts 15 days.") },
+        { name: "att_to", label: L("أيام الحضور إلى (اختياري)", "Attendance to (optional)"), type: "date" },
         { name: "copy_roster", label: L("نسخ كشف العمال إلى الكشف", "Copy the roster into the sheet"),
           type: "select", value: "1", options: [{ value: "1", label: L("نعم", "Yes") }, { value: "0", label: L("لا (كشف فارغ)", "No (empty)") }] },
       ],
@@ -165,6 +190,7 @@
           body: {
             department: data.department, start_date: data.start_date, end_date: data.end_date,
             copy_roster: data.copy_roster !== "0",
+            att_from: data.att_from || null, att_to: data.att_to || null,
           },
         });
         location.hash = `#/allowance/${res.id}`;
@@ -238,12 +264,13 @@
       <div class="page-head">
         <div>
           <h1>${ESC(L("إعاشة العاملين", "Staff subsistence allowance"))}</h1>
-          <p>${ESC(L(`بيان بإعاشة العاملين بـ${period.department} عن الفترة من ${dmy(period.start_date)} إلى ${dmy(period.end_date)}`,
-                     `Subsistence for ${period.department} from ${dmy(period.start_date)} to ${dmy(period.end_date)}`))}</p>
+          <p>${ESC(L(`بيان بإعاشة العاملين بـ${period.department} — الفترة ${dmy(period.start_date)} إلى ${dmy(period.end_date)} (${period.days} يومًا)`,
+                     `Subsistence for ${period.department} — ${dmy(period.start_date)} to ${dmy(period.end_date)} (${period.days} days)`))}</p>
         </div>
         <div class="actions">
           <a class="btn btn-sm" href="#/allowance">${icon("chevron")} ${ESC(L("كل الكشوف", "All sheets"))}</a>
           <button class="btn btn-sm" id="al-grid">${icon("periods")} ${ESC(L("شبكة الأيام", "Day grid"))}</button>
+          ${editable ? `<button class="btn btn-sm" id="al-window">${icon("calendar")} ${ESC(L("نطاق الحضور", "Attendance range"))}</button>` : ""}
           <button class="btn btn-sm" data-export="/api/allowance/periods/${id}/xlsx" data-name="allowance.xlsx">${icon("chart")} Excel</button>
           <button class="btn btn-sm" data-preview="/api/allowance/periods/${id}/pdf?lang=${APP.lang}">${icon("printer")} PDF</button>
           ${editable ? `<button class="btn btn-primary" id="al-save">${icon("check")} ${ESC(L("حفظ", "Save"))}</button>
@@ -294,7 +321,7 @@
               </tr>
             </thead>
             <tbody>
-              ${period.lines.map((line, idx) => lineRow(line, idx, days, editable, startDay)).join("")}
+              ${period.lines.map((line, idx) => lineRow(line, idx, days, editable, startDay, period)).join("")}
             </tbody>
             <tfoot>
               <tr class="sheet-total">
@@ -323,8 +350,10 @@
     wireSheet(view, period, editable, days);
   }
 
-  function lineRow(line, idx, days, editable, startDay) {
+  function lineRow(line, idx, days, editable, startDay, period) {
     const codes = line.day_codes || {};
+    const [winFrom, winTo] = windowOf(line, period);
+    const custom = !!line.att_from;
     const cell = (field, extra = "") => editable
       ? `<input class="cell-input ${extra}" type="number" min="0" step="1" data-id="${line.id}" data-field="${field}" value="${line[field] ?? 0}" />`
       : `<span class="num">${line[field] ?? 0}</span>`;
@@ -339,7 +368,9 @@
       <td class="num">${rateCell}</td>
       <td class="name-col">${editable
         ? `<input class="cell-input name-input" data-id="${line.id}" data-field="name_ar" value="${ESC(line.name_ar)}" />`
-        : ESC(line.name_ar)}</td>
+        : ESC(line.name_ar)}
+        ${custom ? `<div class="range-chip" data-range="${line.id}" title="${ESC(L("نطاق الحضور", "Attendance range"))}">
+            ${icon("calendar")} ${ESC(dmy(line.att_from))} — ${ESC(dmy(line.att_to))}</div>` : ""}</td>
       <td class="num"><span class="calc" data-calc="present_days" data-id="${line.id}">${line.present_days}</span></td>
       <td class="num">${cell("leave_annual")}</td>
       <td class="num"><span class="calc" data-calc="leave_sick" data-id="${line.id}">${line.leave_sick}</span></td>
@@ -355,8 +386,10 @@
       ${Array.from({ length: days }, (_, i) => {
         const day = i + 1;
         const code = codes[String(day)] || "";
-        return `<td class="day ${S.grid ? "" : "hidden"}" data-day="${day}" data-id="${line.id}"
-          data-code="${code}" title="${ESC(CODE_LABEL[code] || "")}"><span class="code ${CODE_CLS[code] || ""}">${code}</span></td>`;
+        const off = day < winFrom || day > winTo;
+        return `<td class="day ${S.grid ? "" : "hidden"} ${off ? "off" : ""}" data-day="${day}" data-id="${line.id}"
+          data-code="${code}" data-off="${off ? 1 : 0}"
+          title="${ESC(off ? L("خارج نطاق الحضور", "Outside the attendance range") : (CODE_LABEL[code] || ""))}"><span class="code ${CODE_CLS[code] || ""}">${code}</span></td>`;
       }).join("")}
     </tr>`;
   }
@@ -376,14 +409,14 @@
     const refresh = (id) => {
       const line = lineOf(id);
       if (!line) return;
-      computePreview(line, days);
+      computePreview(line, days, period);
       $$(`[data-calc][data-id="${id}"]`, view).forEach(el => {
         const key = el.dataset.calc;
-        el.textContent = key === "total" ? fmtMoney(line.total_cents) : line[key];
+        el.textContent = key === "total" ? moneyLabel(line.total_cents) : line[key];
       });
       const tot = totals();
       const td = $("#al-total-days", view); if (td) td.textContent = tot.days;
-      const tm = $("#al-total-money", view); if (tm) tm.textContent = fmtMoney(tot.cents);
+      const tm = $("#al-total-money", view); if (tm) tm.textContent = moneyLabel(tot.cents);
       recalcFooter();
       markDirty();
     };
@@ -402,6 +435,10 @@
         td.onclick = () => {
           const line = lineOf(td.dataset.id);
           if (!line) return;
+          if (td.dataset.off === "1") {
+            toast(L("هذا اليوم خارج نطاق حضور العامل", "This day is outside the worker's attendance range"), "warn");
+            return;
+          }
           line.day_codes = line.day_codes || {};
           const order = CODES.map(c => c.code);
           const cur = line.day_codes[String(td.dataset.day)] || "";
@@ -424,6 +461,9 @@
           recalcFooter();
         });
       });
+
+      const win = $("#al-window", view);
+      if (win) win.onclick = () => attendanceWindowDialog(period);
 
       const save = $("#al-save", view);
       if (save) save.onclick = () => savePeriod(period, save);
@@ -451,12 +491,44 @@
       }, { danger: false, title: L("ترحيل محاسبي", "Post to ledger") });
   }
 
+  /** «نطاق الحضور»: من تاريخ → إلى تاريخ، يتحسب ديناميكيًا لكل الصفوف أو لعامل واحد. */
+  function attendanceWindowDialog(period) {
+    const lines = period.lines || [];
+    openForm({
+      title: L("نطاق الحضور — من تاريخ إلى تاريخ", "Attendance range — from date to date"),
+      submitLabel: L("تطبيق على الكشف", "Apply to the sheet"),
+      fields: [
+        { name: "att_from", label: L("الحضور من", "Attending from"), type: "date",
+          value: period.start_date, hint: L("اترك الحقلين فارغين لإلغاء النطاق واحتساب كل أيام الفترة.",
+                                            "Leave both empty to clear the range and count the whole period.") },
+        { name: "att_to", label: L("الحضور إلى", "Attending to"), type: "date",
+          value: period.end_date },
+        { name: "target", label: L("تطبيق على", "Apply to"), type: "select", value: "all",
+          options: [{ value: "all", label: L(`كل العمال (${lines.length})`, `All workers (${lines.length})`) },
+                    ...lines.map(l => ({ value: String(l.id), label: l.name_ar }))] },
+      ],
+      onSubmit: async (data) => {
+        const clearing = !data.att_from && !data.att_to;
+        const body = { att_from: data.att_from || null, att_to: data.att_to || null };
+        if (data.target !== "all") body.line_ids = [Number(data.target)];
+        const res = await api(`/api/allowance/periods/${period.id}/window`, { method: "POST", body });
+        toast(clearing
+          ? L(`تم إلغاء النطاق — ${res.total_days} يومًا، ${moneyLabel(res.total_cents)}`,
+              `Range cleared — ${res.total_days} days, ${moneyLabel(res.total_cents)}`)
+          : L(`تم ضبط نطاق الحضور — ${res.updated} صف، ${res.total_days} يومًا، ${moneyLabel(res.total_cents)}`,
+              `Attendance range applied — ${res.updated} rows, ${res.total_days} days, ${moneyLabel(res.total_cents)}`));
+        render();
+      },
+    });
+  }
+
   async function savePeriod(period, btn, silent) {
     if (btn) { btn.disabled = true; }
     try {
       const body = {
         lines: period.lines.map(l => ({
           id: l.id, name_ar: l.name_ar, daily_rate: rateOf(l),
+          att_from: l.att_from || null, att_to: l.att_to || null,
           leave_annual: l.leave_annual, ded_salary_days: l.ded_salary_days,
           adjustments: (l.adjustments_cents / 100).toFixed(2),
           leave_sick: l.leave_sick, leave_unpaid: l.leave_unpaid, absence_days: l.absence_days,
@@ -466,7 +538,7 @@
       };
       const res = await api(`/api/allowance/periods/${period.id}`, { method: "PUT", body });
       S.dirty = false;
-      const money = (typeof moneyText === "function") ? moneyText(res.total_cents) : (res.total_cents / 100).toFixed(2);
+      const money = moneyLabel(res.total_cents);
       if (!silent) toast(L(`تم الحفظ — ${res.people_count} عامل، ${money}`,
         `Saved — ${res.people_count} workers, ${money}`));
       // pick up server-side recomputation (authoritative)

@@ -82,6 +82,42 @@ class AllowanceMathTest(unittest.TestCase):
         with self.assertRaises(allowance.AllowanceError):
             allowance.compute_line({"daily_rate": 30, "leave_annual": 25, "absence_days": 10}, 30)
 
+    def test_attendance_window_partial_month(self):
+        """01/10 → 15/10 counts 15 paid days, not the whole 31-day sheet."""
+        line = allowance.compute_line({"daily_rate": 30, "att_from": "2026-10-01", "att_to": "2026-10-15"},
+                                      31, "2026-10-01")
+        self.assertEqual(line["days_in_period"], 15)
+        self.assertEqual(line["net_days"], 15)
+        self.assertEqual(line["total_cents"], 15 * 3000)
+
+    def test_attendance_window_accepts_the_ui_date_format(self):
+        line = allowance.compute_line({"daily_rate": 35, "att_from": "01/10/2026", "att_to": "10/10/2026"},
+                                      31, "2026-10-01")
+        self.assertEqual(line["net_days"], 10)
+        self.assertEqual(line["total_cents"], 10 * 3500)
+
+    def test_codes_outside_the_window_are_ignored(self):
+        """An absence on a day the worker was not even in the window must not count."""
+        line = allowance.compute_line({
+            "daily_rate": 30, "att_from": "2026-10-01", "att_to": "2026-10-15",
+            "day_codes": {"2": "غ", "20": "غ", "30": "غ"}}, 31, "2026-10-01")
+        self.assertEqual(line["absence_days"], 1)      # only day 2 is inside 1..15
+        self.assertEqual(line["net_days"], 14)
+
+    def test_window_is_clipped_to_the_sheet_period(self):
+        line = allowance.compute_line({"daily_rate": 30, "att_from": "2026-09-20", "att_to": "2026-10-05"},
+                                      31, "2026-10-01")
+        self.assertEqual(line["days_in_period"], 5)    # 01/10 → 05/10
+        self.assertEqual(line["att_from"], "2026-10-01")
+
+    def test_window_outside_the_period_is_rejected(self):
+        with self.assertRaises(allowance.AllowanceError):
+            allowance.compute_line({"daily_rate": 30, "att_from": "2026-11-01", "att_to": "2026-11-10"},
+                                   31, "2026-10-01")
+        with self.assertRaises(allowance.AllowanceError):
+            allowance.compute_line({"daily_rate": 30, "att_from": "2026-10-10", "att_to": "2026-10-02"},
+                                   31, "2026-10-01")
+
     def test_summarize(self):
         lines = [
             allowance.compute_line({"daily_rate": 30, "day_codes": {"1": "غ"}}, 30),
@@ -176,6 +212,29 @@ class AllowanceApiTest(unittest.TestCase):
         self.assertEqual(first["present_days"], expected_net)
         self.assertEqual(first["net_days"], expected_net)
         self.assertEqual(first["total_cents"], expected_net * first["daily_rate_cents"])
+
+    def test_02b_attendance_window_endpoint(self):
+        """POST /window: 01/02 → 15/02 must turn a 28-day sheet into 15 paid days."""
+        if not self.period_id:
+            self.skipTest("no sheet created")
+        status, res = self.call("POST", f"/api/allowance/periods/{self.period_id}/window",
+                                {"att_from": "01/02/2026", "att_to": "15/02/2026"})
+        self.assertEqual(status, 200, res)
+        _, sheet = self.call("GET", f"/api/allowance/periods/{self.period_id}")
+        self.assertTrue(all(line["att_from"] == "2026-02-01" for line in sheet["lines"]))
+        # the first line had 2 days away inside 1..15 ⇒ 13 paid days
+        first = sheet["lines"][0]
+        self.assertEqual(first["days_in_period"], 15)
+        self.assertEqual(first["net_days"], 13)
+        self.assertEqual(first["total_cents"], 13 * first["daily_rate_cents"])
+        # clearing the range restores the whole period
+        status, res = self.call("POST", f"/api/allowance/periods/{self.period_id}/window",
+                                {"att_from": None, "att_to": None})
+        self.assertEqual(status, 200, res)
+        _, sheet = self.call("GET", f"/api/allowance/periods/{self.period_id}")
+        first = sheet["lines"][0]
+        self.assertEqual(first["days_in_period"], sheet["days"])
+        self.assertEqual(first["net_days"], sheet["days"] - 2)
 
     def test_03_post_creates_balanced_entry_and_locks(self):
         if not self.period_id:
