@@ -648,7 +648,7 @@ def _fit_cell(pdf, text, width, size=8.4, rtl=True, floor=6.2):
     text = "" if text is None else str(text)
     if not text:
         return text, size
-    avail = max(10.0, width - 10)
+    avail = max(5.0, width - max(4.0, min(10.0, width * 0.22)))
     while size > floor and pdf.measure(text, size, rtl) > avail:
         size -= 0.2
     if pdf.measure(text, size, rtl) > avail:
@@ -660,13 +660,24 @@ def _fit_cell(pdf, text, width, size=8.4, rtl=True, floor=6.2):
 
 
 def report_pdf(title_ar: str, title_en: str, columns, rows, company=None, lang="ar",
-               subtitle_ar: str = "", subtitle_en: str = "", footnotes=()) -> bytes:
-    """Generic landscape-free A4 report (auto page breaks, Arabic-first)."""
+               subtitle_ar: str = "", subtitle_en: str = "", footnotes=(),
+               landscape: bool = False, col_widths=None, cell_size: float = 8.4,
+               header_size: float = 8.4, row_h: float = 19.0, margin: float = 34.0,
+               band_rows: bool = False, cell_floor: float = 6.2) -> bytes:
+    """Generic A4 report (auto page breaks, Arabic-first).
+
+    ``landscape`` / ``col_widths`` / ``cell_size`` exist for dense sheets (the
+    subsistence statement has 45+ columns) so the name column can be wide while
+    every other column stays tight and the print still fits on the paper.
+    """
     ar = lang != "en"
     T = (lambda a, e: a) if ar else (lambda a, e: e)
-    pdf = pdfgen.PDF(str(FONT_PATH), str(LATIN_FONT_PATH))
+    if landscape:
+        pdf = pdfgen.PDF(str(FONT_PATH), str(LATIN_FONT_PATH), width=841.89, height=595.28)
+    else:
+        pdf = pdfgen.PDF(str(FONT_PATH), str(LATIN_FONT_PATH))
     W, H = pdf.W, pdf.H
-    M = 34.0
+    M = margin
     pdf.new_page()
     pdf.rect(0, H - 92, W, 92, fill=(11, 47, 107))
     pdf.rect(0, H - 95, W, 3, fill=BRAND)
@@ -700,8 +711,13 @@ def report_pdf(title_ar: str, title_en: str, columns, rows, company=None, lang="
     pdf.text(M + 30, H - 56, datetime.now().strftime("%Y-%m-%d %H:%M"), 8.0, (198, 193, 238), align="left", rtl=False)
 
     # distribute columns
-    total_cfg = sum(c.get("w", 1) for c in columns)
-    widths = [max(38.0, (W - 2 * M) * c.get("w", 1) / total_cfg) for c in columns]
+    if col_widths:
+        widths = list(col_widths)
+        scale = (W - 2 * M) / sum(widths)
+        widths = [w * scale for w in widths]
+    else:
+        total_cfg = sum(c.get("w", 1) for c in columns)
+        widths = [max(38.0, (W - 2 * M) * c.get("w", 1) / total_cfg) for c in columns]
     rows_h = []
     y = H - 120
 
@@ -710,11 +726,15 @@ def report_pdf(title_ar: str, title_en: str, columns, rows, company=None, lang="
         x = W - M if ar else M
         for c, w in zip(columns, widths):
             label = c.get("ar") if ar else c.get("en")
-            label, lsize = _fit_cell(pdf, label, w, 8.4, rtl=ar)
+            numeric = str(label).strip().isdigit()
+            size_h = min(header_size, 5.8) if numeric else header_size
+            label, lsize = _fit_cell(pdf, label, w, size_h, rtl=(ar and not numeric),
+                                     floor=min(cell_floor, size_h))
             if ar:
-                cx = x - w / 2 if c.get("align") == "center" else x - 6
+                cx = x - w / 2 if (c.get("align") == "center" or numeric) else x - 6
                 pdf.text(cx, yy - 15, label, lsize, WHITE,
-                         align="center" if c.get("align") == "center" else "right", rtl=True)
+                         align="center" if (c.get("align") == "center" or numeric) else "right",
+                         rtl=(ar and not numeric))
                 x -= w
             else:
                 cx = x + w / 2 if c.get("align") == "center" else x + 6
@@ -726,27 +746,40 @@ def report_pdf(title_ar: str, title_en: str, columns, rows, company=None, lang="
     y -= 22
     page_no = 1
     for i, row in enumerate(rows):
-        h = 19
+        # a "band" row carries one value only (section titles, group headers)
+        filled = [v for v in row if str(v or "").strip()]
+        band = band_rows and len(filled) == 1
+        h = row_h * (0.95 if band else 1.0)
         if y - h < 90:
             pdf.new_page()
             page_no += 1
             y = H - 60
             draw_header(y)
             y -= 22
+        if band:
+            pdf.rect(M, y - h, W - 2 * M, h, fill=(232, 229, 250))
+            label, lsize = _fit_cell(pdf, filled[0], W - 2 * M - 12, cell_size + 0.6, rtl=ar)
+            pdf.text(W - M - 6, y - h + 3.2, label, lsize, (28, 27, 84),
+                     align="right" if ar else "left", rtl=ar)
+            y -= h
+            rows_h.append(h)
+            continue
         if i % 2 == 0:
             pdf.rect(M, y - h, W - 2 * M, h, fill=(249, 249, 253))
         x = W - M if ar else M
         for c, w, value in zip(columns, widths, row):
-            text, size_c = _fit_cell(pdf, value, w, 8.4, rtl=c.get("rtl", ar))
-            bold = False
+            numeric = str(value).strip().isdigit()
+            rtl_cell = (c.get("rtl", ar) and not numeric)
+            text, size_c = _fit_cell(pdf, value, w, cell_size, rtl=rtl_cell, floor=cell_floor)
             if ar:
-                cx = x - w / 2 if c.get("align") == "center" else x - 6
-                pdf.text(cx, y - 13, text, size_c, INK,
-                         align="center" if c.get("align") == "center" else "right", rtl=c.get("rtl", True))
+                cx = x - w / 2 if (c.get("align") == "center" or numeric) else x - 6
+                pdf.text(cx, y - h + 4.2, text, size_c, INK,
+                         align="center" if (c.get("align") == "center" or numeric) else "right",
+                         rtl=rtl_cell)
                 x -= w
             else:
                 cx = x + w / 2 if c.get("align") == "center" else x + 6
-                pdf.text(cx, y - 13, text, size_c, INK,
+                pdf.text(cx, y - h + 4.2, text, size_c, INK,
                          align="center" if c.get("align") == "center" else "left", rtl=c.get("rtl", False))
                 x += w
         y -= h
@@ -770,12 +803,19 @@ def report_pdf(title_ar: str, title_en: str, columns, rows, company=None, lang="
     return pdf.to_bytes()
 
 
-def report_xlsx(title: str, columns, rows, rtl=True, money_cols=()) -> bytes:
-    wb = xlsxgen.Workbook(rtl=rtl, title=title)
+def report_xlsx(title: str, columns, rows, rtl=True, money_cols=(), widths=None,
+                font_size: float | None = None, wrap_cols=(), row_height: float | None = None) -> bytes:
+    """Generic report workbook.
+
+    ``widths`` / ``font_size`` / ``wrap_cols`` let a wide sheet (the allowance
+    statement) keep one generous, wrapped name column while every other column
+    stays narrow and the text small enough to print on one page width.
+    """
+    wb = xlsxgen.Workbook(rtl=rtl, title=title, font_size=font_size or 11.0)
     data = [list(columns)] + [list(r) for r in rows]
     wb.add_sheet(title[:31] or "Report", data,
-                 widths=[max(12, min(38, len(str(c)) + 6)) for c in columns],
-                 money_cols=money_cols)
+                 widths=widths or [max(12, min(38, len(str(c)) + 6)) for c in columns],
+                 money_cols=money_cols, wrap_cols=wrap_cols, row_height=row_height)
     return wb.to_bytes()
 
 

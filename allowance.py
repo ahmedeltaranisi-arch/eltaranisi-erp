@@ -581,12 +581,51 @@ def fmt_iso(value) -> str:
     return d.strftime("%d/%m/%Y")
 
 
+# Column geometry for the printed/exported sheet: the name gets room to breathe,
+# every other column is tight, and the day grid only needs a digit or a letter.
+COLUMN_WIDTHS = {
+    "م": 4.5, "القسم": 19, "الفئة": 6.5, "الاسم": 40, "الحضور": 7.5,
+    "اعتيادى": 8, "مرضي": 7, "بدون مرتب": 8.5, "غياب": 6.5, "ماموريات": 8,
+    "خصم إعاشة": 8.5, "خصم مرتب": 8, "الصافى": 7, "تطبيقات": 8.5, "إجمالى المستحق": 11,
+    "من تاريخ": 10.5, "إلى تاريخ": 10.5,
+}
+
+
+def column_widths(head) -> list:
+    """Excel column widths (character units) for a given header row."""
+    return [COLUMN_WIDTHS.get(str(h), 4.2 if str(h).isdigit() else 9) for h in head]
+
+
+# The printed sheet is landscape A4: named columns take a fixed slice and the day
+# grid shares whatever is left, so a two-digit day still fits in its cell.
+COLUMN_POINTS = {
+    "م": 15, "القسم": 44, "الفئة": 22, "الاسم": 126, "الحضور": 26, "اعتيادى": 26,
+    "مرضي": 23, "بدون مرتب": 28, "غياب": 23, "ماموريات": 26, "خصم إعاشة": 26,
+    "خصم مرتب": 26, "الصافى": 23, "تطبيقات": 26, "إجمالى المستحق": 46,
+    "من تاريخ": 32, "إلى تاريخ": 32,
+}
+
+
+def column_points(head, total: float) -> list:
+    """Widths in PDF points that always add up to the printable width."""
+    fixed = [COLUMN_POINTS.get(str(h)) for h in head]
+    day_idx = [i for i, h in enumerate(head) if str(h).isdigit()]
+    fixed_sum = sum(w for w in fixed if w is not None)
+    remaining = total - fixed_sum
+    day_w = (remaining / len(day_idx)) if day_idx and remaining > 0 else 0
+    if not day_idx or day_w <= 0:                  # no grid / too many columns: share
+        scale = total / float(fixed_sum or 1)
+        return [((w or 6) * scale) for w in fixed]
+    return [(w if w is not None else day_w) for w in fixed]
+
+
 def export_matrix(period: dict, with_grid: bool = True) -> dict:
     """Rows for Excel/PDF export, mirroring the paper sheet.
 
     A sheet that holds both departments is exported as two blocks — a section
     header, the workers (numbering restarts), then the section subtotal — exactly
-    like the customer's Excel file.
+    like the customer's Excel file. Every row keeps the same length as ``head``
+    so the printed table can never shift by a column.
     """
     days = period["days"]
     start_day = period["start_day"]
@@ -597,36 +636,51 @@ def export_matrix(period: dict, with_grid: bool = True) -> dict:
         head += ["من تاريخ", "إلى تاريخ"]
     if with_grid:
         head += [str(d) for d in range(start_day, start_day + days)]
-    width = len(head)
-    pad = lambda cells: cells + [""] * (width - len(cells))
-    sections = period["totals"].get("sections") or [{"department": "", "people_count": len(period["lines"]),
-                                                     "total_days": period["totals"]["total_days"],
-                                                     "total_cents": period["totals"]["total_cents"]}]
+    def blank_row(filled=None):
+        """Place values by column name so an added column can never shift a row."""
+        out = [""] * (15 + (2 if has_range else 0))
+        for name, value in (filled or {}).items():
+            if name in head[:15 + (2 if has_range else 0)]:
+                out[head.index(name)] = value
+        if with_grid:
+            out += [""] * days
+        return out
+
+    sections = period["totals"].get("sections") or [
+        {"department": "", "people_count": len(period["lines"]),
+         "total_days": period["totals"]["total_days"], "total_cents": period["totals"]["total_cents"]}]
     rows = []
     for section in sections:
         dept = section.get("department") or ""
-        rows.append(pad(["", f"القسم: {dept}" if dept else "", "", ""]))
+        if len(sections) > 1 or dept:
+            rows.append(blank_row({"القسم": (f"القسم: {dept}" if dept else "القسم: بدون")}))
         group = [ln for ln in period["lines"] if (ln.get("department") or "") == dept]
         for i, line in enumerate(group, start=1):
             codes = line.get("day_codes") or {}
-            row = ["", dept, str(i), f"{line['daily_rate_cents'] / 100:.0f}", line["name_ar"],
-                   str(line["present_days"]), str(line["leave_annual"]), str(line["leave_sick"]),
-                   str(line["leave_unpaid"]), str(line["absence_days"]), str(line["mission_days"]),
-                   str(line["ded_allowance_days"]), str(line["ded_salary_days"]), str(line["net_days"]),
-                   f"{line['adjustments_cents'] / 100:.2f}" if line["adjustments_cents"] else "",
-                   f"{line['total_cents'] / 100:.2f}"]
+            out = [""] * (15 + (2 if has_range else 0))
+            values = {
+                "م": str(i), "القسم": dept, "الفئة": f"{line['daily_rate_cents'] / 100:.0f}",
+                "الاسم": line["name_ar"], "الحضور": str(line["present_days"]),
+                "اعتيادى": str(line["leave_annual"]), "مرضي": str(line["leave_sick"]),
+                "بدون مرتب": str(line["leave_unpaid"]), "غياب": str(line["absence_days"]),
+                "ماموريات": str(line["mission_days"]), "خصم إعاشة": str(line["ded_allowance_days"]),
+                "خصم مرتب": str(line["ded_salary_days"]), "الصافى": str(line["net_days"]),
+                "تطبيقات": f"{line['adjustments_cents'] / 100:.2f}" if line["adjustments_cents"] else "",
+                "إجمالى المستحق": f"{line['total_cents'] / 100:.2f}",
+            }
             if has_range:
-                row += [fmt_iso(line.get("att_from")), fmt_iso(line.get("att_to"))]
+                values["من تاريخ"] = fmt_iso(line.get("att_from"))
+                values["إلى تاريخ"] = fmt_iso(line.get("att_to"))
+            for name, value in values.items():
+                if name in head:
+                    out[head.index(name)] = value
             if with_grid:
-                row += [codes.get(str(d), "") for d in range(1, days + 1)]
-            rows.append(row)
-        total = ["", f"إجمالي {dept}" if dept else "الإجمالي", "", "", "", "", "", "", "", "", "", "",
-                 str(section["total_days"]), "", f"{section['total_cents'] / 100:.2f}"]
-        if has_range:
-            total += ["", ""]
-        rows.append(pad(total))
-    grand = ["", "الإجمالي العام", "", "", "", "", "", "", "", "", "", "",
-             str(period["totals"]["total_days"]), "", f"{period['totals']['total_cents'] / 100:.2f}"]
-    if has_range:
-        grand += ["", ""]
-    return {"head": head, "rows": rows, "total_row": pad(grand)}
+                out += [codes.get(str(d), "") for d in range(1, days + 1)]
+            rows.append(out)
+        rows.append(blank_row({"القسم": "إجمالي القسم" if dept else "الإجمالي",
+                               "الصافى": str(section["total_days"]),
+                               "إجمالى المستحق": f"{section['total_cents'] / 100:.2f}"}))
+    total_row = blank_row({"القسم": "الإجمالي العام",
+                           "الصافى": str(period["totals"]["total_days"]),
+                           "إجمالى المستحق": f"{period['totals']['total_cents'] / 100:.2f}"})
+    return {"head": head, "rows": rows, "total_row": total_row}

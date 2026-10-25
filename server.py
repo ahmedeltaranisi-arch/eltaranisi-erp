@@ -1410,7 +1410,11 @@ def allowance_period_xlsx(ctx, period_id):
     matrix = allowance.export_matrix(period, with_grid=with_grid)
     title = f"إعاشة {period['department']} {period['start_date']} — {period['end_date']}"
     rows = matrix["rows"] + [matrix["total_row"]]
-    out = exporter.report_xlsx(title, matrix["head"], rows, rtl=True)
+    head = matrix["head"]
+    money_cols = [i for i, h in enumerate(head) if h in ("إجمالى المستحق", "تطبيقات", "الصافى")]
+    out = exporter.report_xlsx(title, head, rows, rtl=True, widths=allowance.column_widths(head),
+                               font_size=9, wrap_cols=(head.index("الاسم"),),
+                               row_height=24, money_cols=money_cols)
     audit(ctx.conn, ctx.user, "allowance.xlsx", "allowance_period", int(period_id), {}, company_id=cid)
     return {"__file__": True, "content": out,
             "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1425,17 +1429,18 @@ def allowance_period_pdf(ctx, period_id):
     ar = lang != "en"
     with_grid = (ctx.qs.get("grid") or "1") not in ("0", "false")
     matrix = allowance.export_matrix(period, with_grid=with_grid)
-    cols = [{"ar": h, "en": h,
-             "w": 2.4 if h in ("الاسم", "القسم") else (0.8 if i < 15 else 1.15),
-             "align": "start" if h in ("الاسم", "القسم") else "center", "rtl": h in ("الاسم", "القسم")}
-            for i, h in enumerate(matrix["head"])]
+    head = matrix["head"]
+    cols = [{"ar": h, "en": h, "align": "start" if h in ("الاسم", "القسم") else "center",
+             "rtl": h in ("الاسم", "القسم")} for h in head]
     rows = matrix["rows"] + [matrix["total_row"]]
     company = exporter.company_block(ctx.conn, cid)
     out = exporter.report_pdf(
         f"إعاشة {period['department']}", f"Subsistence — {period['department']}", cols, rows,
         company=company, lang=lang,
         subtitle_ar=f"الفترة من {exporter.fmt_date_ui(period['start_date'])} إلى {exporter.fmt_date_ui(period['end_date'])}",
-        subtitle_en=f"{period['start_date']} — {period['end_date']}")
+        subtitle_en=f"{period['start_date']} — {period['end_date']}",
+        landscape=True, margin=18, col_widths=allowance.column_points(head, 806),
+        cell_size=6.6, header_size=6.8, row_h=13.6, cell_floor=4.6, band_rows=True)
     audit(ctx.conn, ctx.user, "allowance.pdf", "allowance_period", int(period_id), {}, company_id=cid)
     return {"__file__": True, "content": out, "content_type": "application/pdf",
             "filename": f"allowance-{period_id}.pdf", "inline": True}

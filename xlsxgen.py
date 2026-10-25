@@ -52,15 +52,17 @@ def _cell(ref: str, value, style: int = 0, fmt=None) -> str:
 
 
 class Workbook:
-    def __init__(self, rtl: bool = True, title: str = "", creator: str = "ELTARANISI ERP"):
+    def __init__(self, rtl: bool = True, title: str = "", creator: str = "ELTARANISI ERP",
+                 font_size: float = 11.0):
         self.sheets = []          # (name, rows, options)
         self.rtl = rtl
         self.title = title
         self.creator = creator
+        self.font_size = float(font_size or 11.0)
 
     def add_sheet(self, name: str, rows, widths=None, freeze: int = 1,
                   header_rows: int = 1, money_cols=(), date_cols=(), pct_cols=(),
-                  merged_title: str | None = None):
+                  merged_title: str | None = None, wrap_cols=(), row_height: float | None = None):
         self.sheets.append({
             "name": (name or "Sheet")[:31],
             "rows": rows,
@@ -71,6 +73,8 @@ class Workbook:
             "date": set(date_cols),
             "pct": set(pct_cols),
             "merged_title": merged_title,
+            "wrap": set(wrap_cols),
+            "row_height": row_height,
         })
 
     # ------------------------------------------------------------------
@@ -161,12 +165,13 @@ class Workbook:
                 f'<sst {_NS} count="0" uniqueCount="0"/>')
 
     def _styles(self):
+        fs = self.font_size
         fonts = ('<fonts count="5">'
-                 '<font><sz val="11"/><name val="Calibri"/></font>'
-                 '<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>'
-                 '<font><b/><sz val="16"/><color rgb="FF1E1B4B"/><name val="Calibri"/></font>'
-                 '<font><b/><sz val="11"/><color rgb="FF111827"/><name val="Calibri"/></font>'
-                 '<font><i/><sz val="10"/><color rgb="FF6B7280"/><name val="Calibri"/></font>'
+                 f'<font><sz val="{fs:g}"/><name val="Calibri"/></font>'
+                 f'<font><b/><sz val="{fs:g}"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>'
+                 f'<font><b/><sz val="{max(12, fs + 4):g}"/><color rgb="FF1E1B4B"/><name val="Calibri"/></font>'
+                 f'<font><b/><sz val="{fs:g}"/><color rgb="FF111827"/><name val="Calibri"/></font>'
+                 f'<font><i/><sz val="{max(7, fs - 1):g}"/><color rgb="FF6B7280"/><name val="Calibri"/></font>'
                  '</fonts>')
         fills = ('<fills count="4">'
                  '<fill><patternFill patternType="none"/></fill>'
@@ -178,13 +183,16 @@ class Workbook:
                    '<border><left/><right/><top/><bottom style="thin"><color rgb="FFE5E7EB"/></bottom><diagonal/></border>'
                    '</borders>')
         numfmts = ('<numFmts count="1"><numFmt numFmtId="164" formatCode="#,##0.00;[Red]-#,##0.00"/></numFmts>')
-        cellxfs = ('<cellXfs count="6">'
+        cellxfs = ('<cellXfs count="7">'
                    '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
                    '<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>'
                    '<xf numFmtId="164" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1"/>'
                    '<xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1"/>'
                    '<xf numFmtId="164" fontId="0" fillId="3" borderId="1" xfId="0" applyNumberFormat="1" applyFill="1" applyBorder="1"/>'
                    '<xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"/>'
+                   '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" '
+                   'applyAlignment="1"><alignment horizontal="right" vertical="center" wrapText="1"/>'
+                   '</xf>'
                    '</cellXfs>')
         return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
                 f'<styleSheet {_NS}>' + numfmts + fonts + fills + borders +
@@ -210,9 +218,10 @@ class Workbook:
             f'<col min="{i+1}" max="{i+1}" width="{w}" customWidth="1"/>'
             for i, w in enumerate(widths)) + "</cols>")
         out.append("<sheetData>")
+        base_h = sheet.get("row_height") or max(15.0, self.font_size + 9)
         for r_idx, row in enumerate(rows, start=1):
             style_row = 1 if r_idx <= sheet["header_rows"] else 0
-            height = 30 if style_row else 20
+            height = max(base_h + 8, 22) if style_row else base_h
             out.append(f'<row r="{r_idx}" ht="{height}" customHeight="1">')
             for c_idx, value in enumerate(row):
                 ref = f"{_col(c_idx)}{r_idx}"
@@ -220,7 +229,9 @@ class Workbook:
                     out.append(_cell(ref, value, style=1))
                     continue
                 style = 0
-                if c_idx in sheet["money"]:
+                if c_idx in sheet["wrap"]:
+                    style = 6
+                elif c_idx in sheet["money"]:
                     style = 2
                 elif c_idx in sheet["date"]:
                     style = 2
