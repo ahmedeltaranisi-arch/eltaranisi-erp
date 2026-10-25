@@ -599,11 +599,20 @@ def column_widths(head) -> list:
 # The printed sheet is landscape A4: named columns take a fixed slice and the day
 # grid shares whatever is left, so a two-digit day still fits in its cell.
 COLUMN_POINTS = {
-    "م": 14, "القسم": 36, "الفئة": 21, "الاسم": 112, "الحضور": 24, "اعتيادى": 24,
+    "م": 14, "القسم": 40, "الفئة": 21, "الاسم": 108, "الحضور": 24, "اعتيادى": 24,
     "مرضي": 22, "بدون مرتب": 26, "غياب": 22, "ماموريات": 24, "خصم إعاشة": 24,
-    "خصم مرتب": 24, "الصافى": 22, "تطبيقات": 24, "إجمالى المستحق": 40,
+    "خصم مرتب": 24, "الصافى": 22, "تطبيقات": 24, "إجمالى المستحق": 46,
     "من تاريخ": 36, "إلى تاريخ": 36,
 }
+
+
+# The printed sheet has less room than the workbook: two long headers get a short
+# form so they can never bleed into the day grid.
+PRINT_LABELS = {"إجمالى المستحق": "الإجمالى"}
+
+
+def print_labels(head) -> list:
+    return [PRINT_LABELS.get(str(h), str(h)) for h in head]
 
 
 def column_points(head, total: float) -> list:

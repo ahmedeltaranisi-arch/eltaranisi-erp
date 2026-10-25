@@ -1430,8 +1430,9 @@ def allowance_period_pdf(ctx, period_id):
     with_grid = (ctx.qs.get("grid") or "1") not in ("0", "false")
     matrix = allowance.export_matrix(period, with_grid=with_grid)
     head = matrix["head"]
-    cols = [{"ar": h, "en": h, "align": "start" if h in ("الاسم", "القسم") else "center",
-             "rtl": h in ("الاسم", "القسم")} for h in head]
+    labels = allowance.print_labels(head)
+    cols = [{"ar": lbl, "en": lbl, "align": "start" if h in ("الاسم", "القسم") else "center",
+             "rtl": h in ("الاسم", "القسم")} for h, lbl in zip(head, labels)]
     rows = matrix["rows"] + [matrix["total_row"]]
     company = exporter.company_block(ctx.conn, cid)
     out = exporter.report_pdf(
