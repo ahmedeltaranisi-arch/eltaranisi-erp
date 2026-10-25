@@ -901,3 +901,7 @@ box and edit/delete buttons on every payment row; the voucher form exposes
 * ملفات فعلية: `get_fonts()` داخل PDF الإعاشة يكشف **NotoSansArabic + DejaVuSans + PTBoldHeading** (ثلاثة خطوط مضمّنة: نص/أرقام/عنوان).
 * ميزان المراجعة والفواتير بنفس الترتيب، والجدول كله مقروء بلا تشابك.
 * `test_erp.py` **71/71** · `test_allowance.py` **22/22** · `test_wsgi_bridge.py` **21/21**.
+
+**الصورة التوضيحية:** `docs/round-w-before-after.png` (قبل/بعد)، والخطوط داخل PDF الإنتاج:
+`NotoSansArabic` (نص) + `DejaVuSans` (أرقام) + `PTBoldHeading` (عنوان). نشر الإنتاج: `eltaranisi-72uhlcx5i` READY.
+للعودة لخط العنوان على الجسم كله عند الرغبة: `ERP_PDF_BODY_FONT=PTBoldHeading.ttf`.
