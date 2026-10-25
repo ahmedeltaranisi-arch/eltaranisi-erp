@@ -1,7 +1,7 @@
 """إعاشة العاملين — staff subsistence (meals) allowance.
 
 The paper sheet this module replaces works like this (see
-``samples/allowance_roster.csv`` and the customer's Excel file):
+``seed_data/allowance_roster.csv`` and the customer's Excel file):
 
     م | الفئة | الاسم | الحضور | اعتيادى | مرضى | بدون مرتب | غياب | ماموريات
       | خصم إعاشة | خصم مرتب | الصافى | تطبيقات | إجمالى المستحق

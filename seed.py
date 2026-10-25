@@ -261,7 +261,7 @@ def seed():
             creds.append((username, name_ar, role, pwd))
 
         # ---------------- إعاشة: كشف العاملين (roster from the customer's sheet) --
-        roster = BASE_DIR / "samples" / "allowance_roster.csv"
+        roster = BASE_DIR / "seed_data" / "allowance_roster.csv"
         if roster.exists():
             import csv as _csv
             with open(roster, newline="", encoding="utf-8-sig") as fh:

@@ -1458,7 +1458,9 @@ def allowance_people_import(ctx):
     cid = ensure_company(ctx.user)
     rows = (ctx.body or {}).get("rows")
     if not rows:
-        path = BASE_DIR / "samples" / "allowance_roster.csv"
+        path = BASE_DIR / "seed_data" / "allowance_roster.csv"
+        if not path.exists():
+            path = BASE_DIR / "samples" / "allowance_roster.csv"
         if not path.exists():
             raise ApiError("NOT_FOUND: ملف الكشف غير موجود / Roster file not found", 404)
         import csv as _csv
