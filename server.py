@@ -1440,7 +1440,7 @@ def allowance_period_pdf(ctx, period_id):
         subtitle_ar=f"الفترة من {exporter.fmt_date_ui(period['start_date'])} إلى {exporter.fmt_date_ui(period['end_date'])}",
         subtitle_en=f"{period['start_date']} — {period['end_date']}",
         landscape=True, margin=18, col_widths=allowance.column_points(head, 806),
-        cell_size=6.6, header_size=6.8, row_h=13.6, cell_floor=4.6, band_rows=True)
+        cell_size=6.6, header_size=6.8, row_h=13.6, cell_floor=4.0, band_rows=True)
     audit(ctx.conn, ctx.user, "allowance.pdf", "allowance_period", int(period_id), {}, company_id=cid)
     return {"__file__": True, "content": out, "content_type": "application/pdf",
             "filename": f"allowance-{period_id}.pdf", "inline": True}

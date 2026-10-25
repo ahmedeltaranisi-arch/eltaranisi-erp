@@ -599,10 +599,10 @@ def column_widths(head) -> list:
 # The printed sheet is landscape A4: named columns take a fixed slice and the day
 # grid shares whatever is left, so a two-digit day still fits in its cell.
 COLUMN_POINTS = {
-    "م": 15, "القسم": 44, "الفئة": 22, "الاسم": 126, "الحضور": 26, "اعتيادى": 26,
-    "مرضي": 23, "بدون مرتب": 28, "غياب": 23, "ماموريات": 26, "خصم إعاشة": 26,
-    "خصم مرتب": 26, "الصافى": 23, "تطبيقات": 26, "إجمالى المستحق": 46,
-    "من تاريخ": 32, "إلى تاريخ": 32,
+    "م": 14, "القسم": 36, "الفئة": 21, "الاسم": 112, "الحضور": 24, "اعتيادى": 24,
+    "مرضي": 22, "بدون مرتب": 26, "غياب": 22, "ماموريات": 24, "خصم إعاشة": 24,
+    "خصم مرتب": 24, "الصافى": 22, "تطبيقات": 24, "إجمالى المستحق": 40,
+    "من تاريخ": 36, "إلى تاريخ": 36,
 }
 
 
@@ -616,7 +616,13 @@ def column_points(head, total: float) -> list:
     if not day_idx or day_w <= 0:                  # no grid / too many columns: share
         scale = total / float(fixed_sum or 1)
         return [((w or 6) * scale) for w in fixed]
-    return [(w if w is not None else day_w) for w in fixed]
+    day_w = min(day_w, 15.0)                        # a day cell never needs more
+    widths = [(w if w is not None else day_w) for w in fixed]
+    total_w = sum(widths)
+    if total_w < total:                             # short month: share the slack
+        scale = total / total_w
+        widths = [w * scale for w in widths]
+    return widths
 
 
 def export_matrix(period: dict, with_grid: bool = True) -> dict:

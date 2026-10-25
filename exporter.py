@@ -648,7 +648,7 @@ def _fit_cell(pdf, text, width, size=8.4, rtl=True, floor=6.2):
     text = "" if text is None else str(text)
     if not text:
         return text, size
-    avail = max(5.0, width - max(4.0, min(10.0, width * 0.22)))
+    avail = max(4.0, width - max(3.0, min(10.0, width * 0.2)))
     while size > floor and pdf.measure(text, size, rtl) > avail:
         size -= 0.2
     if pdf.measure(text, size, rtl) > avail:
@@ -727,7 +727,7 @@ def report_pdf(title_ar: str, title_en: str, columns, rows, company=None, lang="
         for c, w in zip(columns, widths):
             label = c.get("ar") if ar else c.get("en")
             numeric = str(label).strip().isdigit()
-            size_h = min(header_size, 5.8) if numeric else header_size
+            size_h = min(header_size, 5.6) if numeric else header_size
             label, lsize = _fit_cell(pdf, label, w, size_h, rtl=(ar and not numeric),
                                      floor=min(cell_floor, size_h))
             if ar:
