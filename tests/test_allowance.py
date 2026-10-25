@@ -65,6 +65,22 @@ class AllowanceMathTest(unittest.TestCase):
         self.assertEqual(line["net_days"], 24)
         self.assertEqual(line["total_cents"], 24 * 3000)
 
+    def test_clearing_the_last_code_clears_the_derived_counts(self):
+        """A present-but-empty grid must reset every counter (no phantom «خ»)."""
+        with_code = allowance.compute_line({"daily_rate": 30, "day_codes": {"3": "خ", "4": "غ"}}, 30)
+        self.assertEqual(with_code["ded_allowance_days"], 1)
+        self.assertEqual(with_code["net_days"], 30 - 1 - 1)   # one absence + one deduction
+        cleared = dict(with_code)
+        cleared["day_codes"] = {}                     # user cycled back to empty
+        after = allowance.compute_line(cleared, 30)
+        self.assertEqual(after["ded_allowance_days"], 0)
+        self.assertEqual(after["absence_days"], 0)
+        self.assertEqual(after["net_days"], 30)
+        self.assertEqual(after["total_cents"], 30 * 3000)
+        # a row that never had a grid still honours the manual counters
+        manual = allowance.compute_line({"daily_rate": 30, "day_codes": None, "ded_allowance_days": 2}, 30)
+        self.assertEqual(manual["ded_allowance_days"], 2)
+
     def test_manual_counts_and_adjustments(self):
         line = allowance.compute_line({
             "daily_rate": 35, "leave_annual": 6, "ded_salary_days": 1, "adjustments": "12.50",

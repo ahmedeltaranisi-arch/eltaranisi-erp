@@ -183,11 +183,15 @@ def compute_line(line: dict, days: int, start_date: str = None) -> dict:
     window = last_day - first_day + 1
     codes = {k: v for k, v in normalize_codes(line.get("day_codes"), days).items()
              if first_day <= int(k) <= last_day}
+    raw_codes = line.get("day_codes")
+    # A grid that exists (even when the user cleared every cell) is the source of
+    # truth; manual counters only apply to rows that never had a grid. Without
+    # this, clearing the last «خ» cell left a phantom "خصم إعاشة" day behind.
+    has_grid = isinstance(raw_codes, dict) or (isinstance(raw_codes, str) and raw_codes.strip() not in ("", "null"))
     counts = {field: 0 for field in DERIVED_FIELDS}
-    if codes:
+    if has_grid:
         for code in codes.values():
             counts[DAY_CODES[code]] += 1
-        # the grid is the source of truth once it has any code in it
         for field in DERIVED_FIELDS:
             line[field] = counts[field]
     else:

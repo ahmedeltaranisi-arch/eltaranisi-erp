@@ -62,11 +62,10 @@
     });
     const derived = { ام: "leave_sick", بم: "leave_unpaid", غ: "absence_days", م: "mission_days", خ: "ded_allowance_days" };
     const counts = { leave_sick: 0, leave_unpaid: 0, absence_days: 0, mission_days: 0, ded_allowance_days: 0 };
-    const keys = Object.keys(codes);
-    if (keys.length) {
-      Object.values(codes).forEach(c => { if (derived[c]) counts[derived[c]] += 1; });
-      Object.assign(line, counts);
-    }
+    // the grid is authoritative even when it is empty — clearing every cell must
+    // also clear the derived counters (otherwise «خ» stuck around after undo)
+    Object.values(codes).forEach(c => { if (derived[c]) counts[derived[c]] += 1; });
+    Object.assign(line, counts);
     const away = num(line.leave_annual) + num(line.leave_sick) + num(line.leave_unpaid)
       + num(line.absence_days) + num(line.mission_days);
     const present = Math.max(0, winDays - away);
