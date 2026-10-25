@@ -133,6 +133,21 @@ def _iso(value):
     return None
 
 
+def _iso_checked(value, field="att_from"):
+    """Same as ``_iso`` but rejects a non-empty value it cannot parse.
+
+    Without this an obvious typo (``15/11`` or ``2026-13-01``) was silently read
+    as "no range" and wiped a configured attendance range on save.
+    """
+    text = str(value or "").strip()
+    iso = _iso(text)
+    if text and not iso:
+        raise AllowanceError(
+            "INVALID_RANGE: صيغة التاريخ غير صحيحة ({0}: {1}) — استخدم يوم/شهر/سنة / "
+            "Invalid date ({0}: {1}) — use dd/mm/yyyy".format(field, text))
+    return iso
+
+
 def attendance_window(line: dict, start_date: str, days: int) -> tuple:
     """Day numbers (1-based inside the period) covered by the line's range.
 
@@ -143,8 +158,8 @@ def attendance_window(line: dict, start_date: str, days: int) -> tuple:
     """
     period_start = date.fromisoformat(str(start_date)[:10])
     period_end = period_start + timedelta(days=days - 1)
-    start = _iso(line.get("att_from")) or period_start.isoformat()
-    end = _iso(line.get("att_to")) or period_end.isoformat()
+    start = _iso_checked(line.get("att_from"), "att_from") or period_start.isoformat()
+    end = _iso_checked(line.get("att_to"), "att_to") or period_end.isoformat()
     start = max(date.fromisoformat(start), period_start)
     end = min(date.fromisoformat(end), period_end)
     if end < start:
@@ -157,6 +172,9 @@ def attendance_window(line: dict, start_date: str, days: int) -> tuple:
 def compute_line(line: dict, days: int, start_date: str = None) -> dict:
     """Return a line with every count and amount recomputed (never trusts input)."""
     first_day, last_day, win_from, win_to = (1, days, None, None)
+    # a range the user actually asked for; empty means "the whole period"
+    ranged = bool(_iso_checked(line.get("att_from"), "att_from")
+                  or _iso_checked(line.get("att_to"), "att_to"))
     if start_date:
         first_day, last_day, win_from, win_to = attendance_window(line, start_date, days)
     window = last_day - first_day + 1
@@ -181,8 +199,10 @@ def compute_line(line: dict, days: int, start_date: str = None) -> dict:
     line["daily_rate_cents"] = (_cents(line["daily_rate"]) if "daily_rate" in line
                                 else _int(line.get("daily_rate_cents")))
     line["days_in_period"] = window
-    line["att_from"] = win_from
-    line["att_to"] = win_to
+    # keep the range NULL when the whole period is paid, otherwise every row would
+    # look "ranged" after a clear and the exports would grow two useless columns
+    line["att_from"] = win_from if ranged else None
+    line["att_to"] = win_to if ranged else None
 
     away = (line["leave_annual"] + line["leave_sick"] + line["leave_unpaid"]
             + line["absence_days"] + line["mission_days"])
@@ -397,7 +417,7 @@ def set_window(conn, user, company_id: int, period_id: int, att_from, att_to, li
     period = get_period(conn, company_id, period_id)
     if period["status"] == "posted":
         raise AllowanceError("INVALID_STATE: الكشف مُرحَّل ولا يمكن تعديله / Sheet is posted", 409)
-    start, end = _iso(att_from), _iso(att_to)
+    start, end = _iso_checked(att_from, "att_from"), _iso_checked(att_to, "att_to")
     if start and end and end < start:
         raise AllowanceError("INVALID_RANGE: تاريخ النهاية قبل البداية / End date is before start date")
     targets = [line for line in period["lines"]

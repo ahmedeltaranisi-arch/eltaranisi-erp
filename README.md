@@ -68,7 +68,7 @@ PORT=8000 python3 server.py
 ```bash
 python3 seed.py && PORT=8000 python3 server.py &
 python3 tests/test_erp.py -v
-python3 tests/test_wsgi_bridge.py   # 20 فحصًا لمسار النشر على Vercel (بدون خادم)
+python3 tests/test_wsgi_bridge.py   # 21 فحصًا لمسار النشر على Vercel (بدون خادم)
 ```
 
 **34 اختبار تكامل** (20 للنواة المحاسبية + 8 للتصدير والإعدادات + 6 لسلامة الحذف) تغطي: الحسابين المستقلين، سيناريو المبيعات الإلزامي (فاتورة → ترحيل → تحصيل جزئي →

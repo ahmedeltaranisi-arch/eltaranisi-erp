@@ -508,6 +508,20 @@
                     ...lines.map(l => ({ value: String(l.id), label: l.name_ar }))] },
       ],
       onSubmit: async (data) => {
+        // dates arrive as dd/mm/yyyy text — refuse a half-typed value instead of
+        // letting the server read it as "no range" and wipe the configured one.
+        // openForm hands dates over as ISO (yyyy-mm-dd); accept the typed dd/mm/yyyy form too
+        const isDate = (v) => {
+          const t = String(v || "").trim();
+          const p = t.includes("/") ? t.split("/") : t.split("-");
+          const year = p.length === 3 && (t.includes("/") ? p[2].length === 4 : p[0].length === 4);
+          return !!year && p.every(x => x !== "" && !isNaN(Number(x)));
+        };
+        const bad = [["att_from", data.att_from], ["att_to", data.att_to]].find(([, v]) => v && !isDate(v));
+        if (bad) {
+          throw new Error(L(`صيغة التاريخ غير صحيحة في «${bad[0] === "att_from" ? "الحضور من" : "الحضور إلى"}» — استخدم يوم/شهر/سنة`,
+                            `Invalid date in "${bad[0]}" — use dd/mm/yyyy`));
+        }
         const clearing = !data.att_from && !data.att_to;
         const body = { att_from: data.att_from || null, att_to: data.att_to || null };
         if (data.target !== "all") body.line_ids = [Number(data.target)];

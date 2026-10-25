@@ -118,6 +118,15 @@ class AllowanceMathTest(unittest.TestCase):
             allowance.compute_line({"daily_rate": 30, "att_from": "2026-10-10", "att_to": "2026-10-02"},
                                    31, "2026-10-01")
 
+    def test_unparsable_window_dates_are_rejected_not_silently_cleared(self):
+        """A typo like 15/11 must not be read as "no range" (that wiped the range)."""
+        for bad in ("15/11", "2026-13-01", "abc", "32/01/2026"):
+            with self.assertRaises(allowance.AllowanceError):
+                allowance.compute_line({"daily_rate": 30, "att_from": bad}, 31, "2026-10-01")
+        # an actually empty value still means "whole period"
+        self.assertEqual(allowance.compute_line({"daily_rate": 30, "att_from": "", "att_to": None},
+                                                31, "2026-10-01")["days_in_period"], 31)
+
     def test_summarize(self):
         lines = [
             allowance.compute_line({"daily_rate": 30, "day_codes": {"1": "غ"}}, 30),
@@ -235,6 +244,16 @@ class AllowanceApiTest(unittest.TestCase):
         first = sheet["lines"][0]
         self.assertEqual(first["days_in_period"], sheet["days"])
         self.assertEqual(first["net_days"], sheet["days"] - 2)
+
+    def test_02c_window_rejects_a_bad_date_with_422(self):
+        if not self.period_id:
+            self.skipTest("no sheet created")
+        status, res = self.call("POST", f"/api/allowance/periods/{self.period_id}/window",
+                                {"att_from": "15/11", "att_to": None})
+        self.assertEqual(status, 422, res)
+        self.assertIn("INVALID_RANGE", res.get("error", ""))
+        _, sheet = self.call("GET", f"/api/allowance/periods/{self.period_id}")
+        self.assertTrue(all(not line["att_from"] for line in sheet["lines"]))
 
     def test_03_post_creates_balanced_entry_and_locks(self):
         if not self.period_id:
