@@ -1359,7 +1359,8 @@ class ERPTestCase(unittest.TestCase):
         status, body, _ = self._raw_get(f"/api/debt/accounts/{acc}/statement/pdf")
         self.assertEqual(status, 200)
         self.assertTrue(body.startswith(b"%PDF"))
-        self.assertIn(b"NotoSansArabic", body, "the Arabic typeface must be embedded")
+        # the client picked «PT Bold Heading» as the printed face
+        self.assertIn(b"PTBoldHeading", body, "the Arabic typeface must be embedded")
         self.assertNotIn(b"/BaseFont /Amiri", body, "Amiri must no longer be the report face")
         # every report keeps its content inside the page
         for path in ("/api/debt/summary/pdf", "/api/debt/invoices/pdf",

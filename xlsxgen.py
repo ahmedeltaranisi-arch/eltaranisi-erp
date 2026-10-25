@@ -53,12 +53,13 @@ def _cell(ref: str, value, style: int = 0, fmt=None) -> str:
 
 class Workbook:
     def __init__(self, rtl: bool = True, title: str = "", creator: str = "ELTARANISI ERP",
-                 font_size: float = 11.0):
+                 font_size: float = 11.0, font_name: str = "Calibri"):
         self.sheets = []          # (name, rows, options)
         self.rtl = rtl
         self.title = title
         self.creator = creator
         self.font_size = float(font_size or 11.0)
+        self.font_name = font_name or "Calibri"
 
     def add_sheet(self, name: str, rows, widths=None, freeze: int = 1,
                   header_rows: int = 1, money_cols=(), date_cols=(), pct_cols=(),
@@ -166,12 +167,13 @@ class Workbook:
 
     def _styles(self):
         fs = self.font_size
+        name = (self.font_name or "Calibri").replace('"', "")
         fonts = ('<fonts count="5">'
-                 f'<font><sz val="{fs:g}"/><name val="Calibri"/></font>'
-                 f'<font><b/><sz val="{fs:g}"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>'
-                 f'<font><b/><sz val="{max(12, fs + 4):g}"/><color rgb="FF1E1B4B"/><name val="Calibri"/></font>'
-                 f'<font><b/><sz val="{fs:g}"/><color rgb="FF111827"/><name val="Calibri"/></font>'
-                 f'<font><i/><sz val="{max(7, fs - 1):g}"/><color rgb="FF6B7280"/><name val="Calibri"/></font>'
+                 f'<font><sz val="{fs:g}"/><name val="{name}"/></font>'
+                 f'<font><b/><sz val="{fs:g}"/><color rgb="FFFFFFFF"/><name val="{name}"/></font>'
+                 f'<font><b/><sz val="{max(12, fs + 4):g}"/><color rgb="FF1E1B4B"/><name val="{name}"/></font>'
+                 f'<font><b/><sz val="{fs:g}"/><color rgb="FF111827"/><name val="{name}"/></font>'
+                 f'<font><i/><sz val="{max(7, fs - 1):g}"/><color rgb="FF6B7280"/><name val="{name}"/></font>'
                  '</fonts>')
         fills = ('<fills count="4">'
                  '<fill><patternFill patternType="none"/></fill>'

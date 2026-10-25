@@ -23,15 +23,22 @@ BASE_DIR = Path(__file__).resolve().parent
 FONT_DIR = BASE_DIR / "assets" / "fonts"
 # Arabic typeface used in every PDF (statements, invoices, reports).  Swappable
 # without touching code:  ERP_PDF_FONT=NotoSansArabic.ttf
-ARABIC_FONT = os.environ.get("ERP_PDF_FONT") or "NotoSansArabic.ttf"
-FONT_DIR_FILES = ("NotoSansArabic.ttf", "Amiri-Regular.ttf", "DejaVuSans.ttf")
+# The client asked for «PT Bold Heading» — a heavy Arabic face that reads well on
+# printed statements.  Noto Sans Arabic stays bundled as the fallback.
+ARABIC_FONT = os.environ.get("ERP_PDF_FONT") or "PTBoldHeading.ttf"
+FONT_DIR_FILES = ("PTBoldHeading.ttf", "NotoSansArabic.ttf", "Amiri-Regular.ttf", "DejaVuSans.ttf")
 _candidate = FONT_DIR / ARABIC_FONT
 if not _candidate.exists():                      # never break a report on config
-    _candidate = FONT_DIR / "NotoSansArabic.ttf"
+    _candidate = FONT_DIR / "PTBoldHeading.ttf"
+    if not _candidate.exists():
+        _candidate = FONT_DIR / "NotoSansArabic.ttf"
     if not _candidate.exists():
         _candidate = FONT_DIR / "Amiri-Regular.ttf"
 FONT_PATH = _candidate
 LATIN_FONT_PATH = FONT_DIR / "DejaVuSans.ttf"
+# Spreadsheet face: Excel can only name one font per cell, so this must be a face
+# the client actually has installed (the same «PT Bold Heading» as the PDFs).
+XLSX_FONT = os.environ.get("ERP_XLSX_FONT") or "PT Bold Heading"
 
 # palette
 INK = (11, 47, 107)            # logo ink
@@ -804,14 +811,16 @@ def report_pdf(title_ar: str, title_en: str, columns, rows, company=None, lang="
 
 
 def report_xlsx(title: str, columns, rows, rtl=True, money_cols=(), widths=None,
-                font_size: float | None = None, wrap_cols=(), row_height: float | None = None) -> bytes:
+                font_size: float | None = None, wrap_cols=(), row_height: float | None = None,
+                font_name: str | None = None) -> bytes:
     """Generic report workbook.
 
     ``widths`` / ``font_size`` / ``wrap_cols`` let a wide sheet (the allowance
     statement) keep one generous, wrapped name column while every other column
     stays narrow and the text small enough to print on one page width.
     """
-    wb = xlsxgen.Workbook(rtl=rtl, title=title, font_size=font_size or 11.0)
+    wb = xlsxgen.Workbook(rtl=rtl, title=title, font_size=font_size or 11.0,
+                          font_name=font_name or XLSX_FONT)
     data = [list(columns)] + [list(r) for r in rows]
     wb.add_sheet(title[:31] or "Report", data,
                  widths=widths or [max(12, min(38, len(str(c)) + 6)) for c in columns],
