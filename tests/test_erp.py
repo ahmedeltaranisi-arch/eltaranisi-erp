@@ -1347,6 +1347,25 @@ class ERPTestCase(unittest.TestCase):
             self.assertEqual(status, 200)
             self.assertTrue(body.startswith(sig), path)
 
+    def test_B136_arabic_shaping_keeps_word_ends_and_joins(self):
+        """A word must END with a final/isolated form - never a medial tail.
+
+        Regression: a stray space inside the joining table made every last
+        letter of a word medial, so «سي» printed as «سيـ» and «سيرفيس» as
+        «سيرفيسـ».  The font's own ligatures (yeh+reh, lam+meem, lam+alef) also
+        have to be applied, or the joins break in the middle of the word.
+        """
+        import pdfgen
+        final_yeh = "\ufef2"
+        final_seen = "\ufeb2"
+        self.assertEqual(pdfgen.shape_arabic("سي")[-1], final_yeh)
+        self.assertEqual(pdfgen.shape_arabic("سي سيرفيس")[-1], final_seen)
+        self.assertEqual(pdfgen.shape_arabic("للشحن والتفريغ")[4], "\ufee6")  # final noon
+        lig = pdfgen.join_ligatures(pdfgen.shape_arabic("سيرفيس"))
+        self.assertIn("\ufc91", lig, "yeh+reh must use the font ligature")
+        lig = pdfgen.join_ligatures(pdfgen.shape_arabic("الملاحية"))
+        self.assertIn("\ufccc", lig, "lam+meem must use the font ligature")
+
     def test_B135_pdf_reports_embed_the_arabic_typeface_and_never_overflow(self):
         """Every PDF must carry the Arabic face and clamp text inside its column."""
         acc = self._debt_account()
