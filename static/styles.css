@@ -1491,6 +1491,14 @@ html, body { max-width: 100%; overflow-x: clip; }
 .sheet .cell-input:hover { border-color: var(--border-strong); }
 .sheet .cell-input:focus { outline: none; border-color: var(--brand); background: var(--surface); }
 .sheet .cell-input.w-rate { max-width: 62px; }
+/* the five counted columns can be typed by hand; the tint says "this number
+   also writes the day grid" */
+.sheet .cell-input.derived {
+  background: color-mix(in srgb, var(--brand) 7%, transparent);
+  border-color: color-mix(in srgb, var(--brand) 28%, transparent);
+  min-width: 46px;
+}
+.sheet .cell-input.derived:focus { background: var(--surface); }
 .sheet .cell-input.name-input { text-align: start; min-width: 190px; }
 .sheet .cell-input::-webkit-outer-spin-button,
 .sheet .cell-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }

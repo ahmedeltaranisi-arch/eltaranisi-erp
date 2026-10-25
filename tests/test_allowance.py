@@ -50,6 +50,54 @@ class AllowanceMathTest(unittest.TestCase):
         with self.assertRaises(allowance.AllowanceError):
             allowance.period_days("2026-09-30", "2026-09-01")
 
+    def test_typed_counter_writes_the_day_grid(self):
+        """Typing «3» in مرضى must put three «ام» cells in the grid (round x)."""
+        line = allowance.compute_line({
+            "daily_rate": "30",
+            "day_codes": {},
+            "_counters_in": {"leave_sick": 3, "mission_days": 2},
+        }, 30)
+        self.assertEqual(line["leave_sick"], 3)
+        self.assertEqual(line["mission_days"], 2)
+        self.assertEqual(line["present_days"], 25)
+        codes = json.loads(line["day_codes"])
+        self.assertEqual([codes["1"], codes["2"], codes["3"]], ["ام", "ام", "ام"])
+        self.assertEqual([codes["4"], codes["5"]], ["م", "م"])
+
+    def test_typed_counter_never_overwrites_another_code(self):
+        line = allowance.compute_line({
+            "daily_rate": "30",
+            "day_codes": {"1": "غ", "2": "غ"},
+            "_counters_in": {"leave_sick": 2},
+        }, 30)
+        codes = json.loads(line["day_codes"])
+        self.assertEqual(codes["1"], "غ")
+        self.assertEqual(codes["3"], "ام")
+        self.assertEqual(codes["4"], "ام")
+
+    def test_typed_counter_can_shrink_and_clear(self):
+        line = allowance.compute_line({
+            "daily_rate": "30",
+            "day_codes": {"1": "ام", "2": "ام", "3": "ام", "4": "ام"},
+            "_counters_in": {"leave_sick": 1},
+        }, 30)
+        self.assertEqual(line["leave_sick"], 1)
+        self.assertEqual(json.loads(line["day_codes"]), {"1": "ام"})
+        line = allowance.compute_line({
+            "daily_rate": "30",
+            "day_codes": {"1": "ام", "2": "بم"},
+            "_counters_in": {"leave_sick": 0},
+        }, 30)
+        self.assertEqual(json.loads(line["day_codes"]), {"2": "بم"})
+
+    def test_typed_counter_beyond_free_days_is_rejected(self):
+        with self.assertRaises(allowance.AllowanceError):
+            allowance.compute_line({
+                "daily_rate": "30",
+                "day_codes": {"1": "غ", "2": "غ"},
+                "_counters_in": {"ded_allowance_days": 5},
+            }, 3)
+
     def test_day_codes_drive_the_counts(self):
         line = allowance.compute_line({
             "daily_rate": "30",
@@ -248,6 +296,54 @@ class AllowanceApiTest(unittest.TestCase):
         self.assertEqual(first["present_days"], expected_net)
         self.assertEqual(first["net_days"], expected_net)
         self.assertEqual(first["total_cents"], expected_net * first["daily_rate_cents"])
+
+    def test_02a_typed_counters_reach_the_grid_over_the_api(self):
+        """Typing numbers in مرضى/ماموريات/خصم إعاشة must persist as day codes."""
+        if not self.period_id:
+            self.skipTest("no sheet created")
+        _, sheet = self.call("GET", f"/api/allowance/periods/{self.period_id}")
+        snapshot = json.loads(json.dumps(sheet["lines"], ensure_ascii=False))
+
+        def entry(row, grid=True):
+            return {"id": row["id"], "name_ar": row["name_ar"],
+                    "daily_rate": row["daily_rate_cents"] / 100,
+                    "leave_annual": row["leave_annual"], "ded_salary_days": row["ded_salary_days"],
+                    "adjustments": "%.2f" % (row["adjustments_cents"] / 100),
+                    "leave_sick": row["leave_sick"], "leave_unpaid": row["leave_unpaid"],
+                    "absence_days": row["absence_days"], "mission_days": row["mission_days"],
+                    "ded_allowance_days": row["ded_allowance_days"],
+                    "day_codes": (row.get("day_codes") or {}) if grid else {}}
+
+        def put(rows):
+            return self.call("PUT", f"/api/allowance/periods/{self.period_id}",
+                             {"lines": rows})
+
+        # the day grid is gone for the first worker - the numbers must rebuild it
+        rows = [entry(row, grid=(i != 0)) for i, row in enumerate(snapshot)]
+        rows[0].update({"leave_sick": 2, "leave_unpaid": 1, "absence_days": 0,
+                        "mission_days": 1, "ded_allowance_days": 1})
+        status, res = put(rows)
+        self.assertEqual(status, 200, res)
+        _, fresh = self.call("GET", f"/api/allowance/periods/{self.period_id}")
+        saved = [l for l in fresh["lines"] if l["id"] == snapshot[0]["id"]][0]
+        self.assertEqual((saved["leave_sick"], saved["leave_unpaid"],
+                          saved["mission_days"], saved["ded_allowance_days"]), (2, 1, 1, 1))
+        codes = list((saved["day_codes"] or {}).values())
+        self.assertEqual(codes.count("ام"), 2)
+        self.assertEqual(codes.count("م"), 1)
+        self.assertEqual(codes.count("خ"), 1)
+        self.assertEqual(saved["present_days"], fresh["days"] - 4)
+
+        # asking for more days than the window can hold is refused, not silently cut
+        rows[0]["ded_allowance_days"] = fresh["days"] + 5
+        status, err = put(rows)
+        self.assertEqual(status, 422, err)
+
+        # leave the sheet exactly as the other tests expect it
+        status, res = put([entry(row) for row in snapshot])
+        self.assertEqual(status, 200, res)
+        _, restored = self.call("GET", f"/api/allowance/periods/{self.period_id}")
+        self.assertEqual(restored["lines"][0]["leave_sick"], snapshot[0]["leave_sick"])
 
     def test_02b_attendance_window_endpoint(self):
         """POST /window: 01/02 → 15/02 must turn a 28-day sheet into 15 paid days."""

@@ -172,6 +172,36 @@ def attendance_window(line: dict, start_date: str, days: int) -> tuple:
     return (start - period_start).days + 1, (end - period_start).days + 1, start.isoformat(), end.isoformat()
 
 
+def sync_counter(codes: dict, first_day: int, last_day: int, code: str, target: int,
+                 field: str = "") -> dict:
+    """Make exactly ``target`` days carry ``code`` inside [first_day, last_day].
+
+    The five counters (مرضى / بدون مرتب / غياب / ماموريات / خصم إعاشة) are typed by
+    hand just like «اعتيادى».  Because the day grid is what the printed sheet
+    shows, typing a number also writes the matching codes into the grid - the
+    counter, the grid and the totals can never disagree:
+    * bigger number -> the first free days of the window take the code,
+    * smaller number -> the code is lifted off the latest days first.
+    """
+    have = sorted(int(d) for d, c in codes.items() if c == code)
+    if target == len(have):
+        return codes
+    if target > len(have):
+        free = [d for d in range(first_day, last_day + 1) if str(d) not in codes]
+        need = target - len(have)
+        if len(free) < need:
+            raise AllowanceError(
+                "COUNTER_OVERFLOW: مفيش أيام فاضية كفاية لتسجيل {0} يوم ({2}: {1}) / "
+                "not enough free days in the attendance window ({2}: {1})".format(
+                    need, target, field or code))
+        for day in free[:need]:
+            codes[str(day)] = code
+    else:
+        for day in have[target:]:
+            codes.pop(str(day), None)
+    return codes
+
+
 def compute_line(line: dict, days: int, start_date: str = None) -> dict:
     """Return a line with every count and amount recomputed (never trusts input)."""
     first_day, last_day, win_from, win_to = (1, days, None, None)
@@ -189,7 +219,13 @@ def compute_line(line: dict, days: int, start_date: str = None) -> dict:
     # this, clearing the last «خ» cell left a phantom "خصم إعاشة" day behind.
     has_grid = isinstance(raw_codes, dict) or (isinstance(raw_codes, str) and raw_codes.strip() not in ("", "null"))
     counts = {field: 0 for field in DERIVED_FIELDS}
+    typed = line.get("_counters_in") or {}
     if has_grid:
+        # a counter typed by hand rewrites the grid instead of fighting it
+        for field, value in typed.items():
+            if field in DERIVED_FIELDS:
+                codes = sync_counter(codes, first_day, last_day, CODE_OF[field],
+                                     max(0, _int(value)), field)
         for code in codes.values():
             counts[DAY_CODES[code]] += 1
         for field in DERIVED_FIELDS:
@@ -393,6 +429,9 @@ def save_period(conn, user, company_id: int, period_id: int, payload: dict) -> d
         if not name:
             continue
         merged["name_ar"] = name
+        typed = {f: raw[f] for f in DERIVED_FIELDS if f in raw and raw[f] not in (None, "")}
+        if typed:
+            merged["_counters_in"] = typed
         line = compute_line(merged, days, period["start_date"])
         if line_id and line_id in existing:
             seen.add(line_id)

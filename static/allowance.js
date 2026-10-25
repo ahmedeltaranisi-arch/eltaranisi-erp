@@ -50,6 +50,44 @@
     return [Math.min(first, last), Math.max(first, last)];
   }
 
+  /** day code that carries each hand-typed counter (mirror of allowance.DAY_CODES) */
+  const DERIVED_CODE = {
+    leave_sick: "ام", leave_unpaid: "بم", absence_days: "غ",
+    mission_days: "م", ded_allowance_days: "خ",
+  };
+
+  /**
+   * Typing a number in مرضى / بدون مرتب / غياب / ماموريات / خصم إعاشة writes the
+   * matching codes into the day grid (mirror of allowance.sync_counter), so the
+   * counter, the printed grid and the totals always agree.
+   * Returns an error message when the window has no free days left.
+   */
+  function syncCodes(line, field, value, period) {
+    const code = DERIVED_CODE[field];
+    if (!code) return null;
+    const [first, last] = windowOf(line, period);
+    line.day_codes = line.day_codes || {};
+    const have = Object.keys(line.day_codes)
+      .map(Number)
+      .filter(d => line.day_codes[String(d)] === code && d >= first && d <= last)
+      .sort((a, b) => a - b);
+    const target = Math.max(0, num(value));
+    if (target === have.length) return null;
+    if (target > have.length) {
+      const free = [];
+      for (let d = first; d <= last; d += 1) if (!line.day_codes[String(d)]) free.push(d);
+      const need = target - have.length;
+      if (free.length < need) {
+        return L(`مفيش أيام فاضية كفاية — محتاج ${need} يوم في نطاق الحضور`,
+          `Not enough free days — ${need} more needed in the attendance range`);
+      }
+      free.slice(0, need).forEach(d => { line.day_codes[String(d)] = code; });
+    } else {
+      have.slice(target).forEach(d => { delete line.day_codes[String(d)]; });
+    }
+    return null;
+  }
+
   /** client-side preview of the server maths (server always wins on save) */
   function computePreview(line, days, period) {
     const p = period || S.period || { days, start_date: line.att_from || "" };
@@ -409,6 +447,12 @@
     const cell = (field, extra = "") => editable
       ? `<input class="cell-input ${extra}" type="number" min="0" step="1" data-id="${line.id}" data-field="${field}" value="${line[field] ?? 0}" />`
       : `<span class="num">${line[field] ?? 0}</span>`;
+    // the grid counters are hand-editable too; the number writes the days
+    const counterCell = (field, row) => editable
+      ? `<input class="cell-input derived" type="number" min="0" step="1" data-id="${row.id}"
+          data-field="${field}" data-derived="1" value="${row[field] ?? 0}"
+          title="${ESC(L("اكتب عدد الأيام — يتسجل تلقائيًا في شبكة الأيام", "Type the days — the grid is filled for you"))}" />`
+      : `<span class="calc" data-calc="${field}" data-id="${row.id}">${row[field] ?? 0}</span>`;
     const moneyCell = editable
       ? `<input class="cell-input" type="number" step="0.01" data-id="${line.id}" data-field="adjustments" value="${(line.adjustments_cents / 100).toFixed(2)}" />`
       : `<span class="num">${fmtMoney(line.adjustments_cents)}</span>`;
@@ -423,11 +467,11 @@
         : ESC(line.name_ar)}</td>
       <td class="num"><span class="calc" data-calc="present_days" data-id="${line.id}">${line.present_days}</span></td>
       <td class="num">${cell("leave_annual")}</td>
-      <td class="num"><span class="calc" data-calc="leave_sick" data-id="${line.id}">${line.leave_sick}</span></td>
-      <td class="num"><span class="calc" data-calc="leave_unpaid" data-id="${line.id}">${line.leave_unpaid}</span></td>
-      <td class="num"><span class="calc" data-calc="absence_days" data-id="${line.id}">${line.absence_days}</span></td>
-      <td class="num"><span class="calc" data-calc="mission_days" data-id="${line.id}">${line.mission_days}</span></td>
-      <td class="num"><span class="calc" data-calc="ded_allowance_days" data-id="${line.id}">${line.ded_allowance_days}</span></td>
+      <td class="num">${counterCell("leave_sick", line)}</td>
+      <td class="num">${counterCell("leave_unpaid", line)}</td>
+      <td class="num">${counterCell("absence_days", line)}</td>
+      <td class="num">${counterCell("mission_days", line)}</td>
+      <td class="num">${counterCell("ded_allowance_days", line)}</td>
       <td class="num">${cell("ded_salary_days")}</td>
       <td class="num"><strong class="calc" data-calc="net_days" data-id="${line.id}">${line.net_days}</strong></td>
       <td class="num">${moneyCell}</td>
@@ -464,6 +508,9 @@
         const key = el.dataset.calc;
         el.textContent = key === "total" ? moneyLabel(line.total_cents) : line[key];
       });
+      $$(`input[data-derived][data-id="${id}"]`, view).forEach(inp => {
+        if (document.activeElement !== inp) inp.value = line[inp.dataset.field] ?? 0;
+      });
       const tot = totals();
       const td = $("#al-total-days", view); if (td) td.textContent = tot.days;
       const tm = $("#al-total-money", view); if (tm) tm.textContent = moneyLabel(tot.cents);
@@ -472,11 +519,39 @@
     };
 
     if (editable) {
+      const paintDays = (id) => {
+        const line = lineOf(id);
+        const tr = $$(`tr[data-line="${id}"]`, view)[0];
+        if (!line || !tr) return;
+        const [winFrom, winTo] = windowOf(line, period);
+        $$("td.day", tr).forEach(td => {
+          const day = td.dataset.day;
+          const code = (line.day_codes || {})[day] || "";
+          const off = Number(day) < winFrom || Number(day) > winTo;
+          td.dataset.code = code;
+          td.dataset.off = off ? 1 : 0;
+          td.classList.toggle("off", off);
+          td.title = ESC(off ? L("خارج نطاق الحضور", "Outside the attendance range") : (CODE_LABEL[code] || ""));
+          const span = td.querySelector(".code");
+          span.textContent = code;
+          span.className = "code " + (CODE_CLS[code] || "");
+        });
+      };
+
       $$("input.cell-input", view).forEach(inp => {
         inp.addEventListener("input", () => {
           const line = lineOf(inp.dataset.id);
           if (!line) return;
           const f = inp.dataset.field;
+          if (inp.dataset.derived === "1") {
+            const err = syncCodes(line, f, inp.value, period);
+            if (err) {
+              toast(err, "error");
+              inp.value = line[f] ?? 0;      // keep the sheet honest with the grid
+              return;
+            }
+            paintDays(inp.dataset.id);
+          }
           line[f] = f === "name_ar" ? inp.value : num(inp.value);
           refresh(inp.dataset.id);
         });
