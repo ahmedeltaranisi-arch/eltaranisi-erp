@@ -97,6 +97,8 @@ CACHEABLE_GET = {
     "/api/sales-invoices", "/api/purchase-invoices", "/api/reports/trial-balance",
     "/api/payments",
 }
+AUTH_TTL = int(os.environ.get("ERP_AUTH_CACHE_TTL", "60"))
+_auth_cache = {}            # token hash -> (expires_at, user)
 _cache_lock = threading.Lock()
 _cache = {}                 # key -> (expires_at, serialized body)
 _cache_epoch = 0            # bumped on every write
@@ -140,6 +142,28 @@ def cache_clear():
     with _cache_lock:
         _cache_epoch += 1
         _cache.clear()
+        _auth_cache.clear()      # a write may also be a logout / role change
+
+
+def auth_cache_get(user_id):
+    """Cached user row (roles + permissions) — never the session itself."""
+    if AUTH_TTL <= 0 or user_id is None:
+        return None
+    with _cache_lock:
+        entry = _auth_cache.get(user_id)
+        if entry and entry[0] > time.monotonic():
+            return entry[1]
+        _auth_cache.pop(user_id, None)
+        return None
+
+
+def auth_cache_put(user_id, user):
+    if AUTH_TTL <= 0 or user_id is None or user is None:
+        return
+    with _cache_lock:
+        if len(_auth_cache) > 512:
+            _auth_cache.clear()
+        _auth_cache[user_id] = (time.monotonic() + AUTH_TTL, user)
 
 
 def current_company(user):
@@ -492,6 +516,25 @@ def meta(ctx):
     }
 
 
+_STORAGE_FLAG = {"at": 0.0, "durable": True}
+
+
+def _storage_durable() -> bool:
+    """`durable` never changes while the process lives — resolve it once.
+
+    The login screen polls /api/health; computing it each time meant the D1
+    backend answered with six COUNT(*) round-trips that nobody uses.
+    """
+    import time as _time
+    if _time.monotonic() - _STORAGE_FLAG["at"] > 300:
+        try:
+            _STORAGE_FLAG["durable"] = bool(db.storage_info()["durable"])
+        except Exception:
+            _STORAGE_FLAG["durable"] = True
+        _STORAGE_FLAG["at"] = _time.monotonic()
+    return _STORAGE_FLAG["durable"]
+
+
 @route("GET", r"/api/health")
 def health(ctx):
     # dev_mode tells the login screen it may show the demo accounts panel.
@@ -499,7 +542,7 @@ def health(ctx):
     return {"status": "ok", "time": utcnow(), "version": "1.1.0",
             "features": {"pdf": True, "xlsx": True, "einvoice": True},
             "dev_mode": dev_mode,
-            "storage": {"durable": db.storage_info()["durable"]}}
+            "storage": {"durable": _storage_durable()}}
 
 
 # -------------------------- storage / backups ------------------------------
@@ -2375,15 +2418,20 @@ class Handler(BaseHTTPRequestHandler):
         if row is not None:
             if row["revoked"] or row["expires_at"] < utcnow():
                 return None, hashed          # explicit logout / expiry wins
-            return load_user(conn, row["user_id"]), hashed
+            user = auth_cache_get(row["user_id"])
+            if user is None:
+                user = load_user(conn, row["user_id"])
+                auth_cache_put(row["user_id"], user)   # saves a role/permission join
+            return user, hashed
         # Unknown session row. On an ephemeral (serverless) deployment the row may
         # simply live in another instance's database, so a valid signed token is
         # accepted; on a durable deployment an unknown token stays rejected.
         if EPHEMERAL_AUTH:
             claims = verify_token(raw)
             if claims:
-                user = load_user(conn, claims["user_id"])
+                user = auth_cache_get(claims["user_id"]) or load_user(conn, claims["user_id"])
                 if user and user["is_active"]:
+                    auth_cache_put(claims["user_id"], user)
                     return user, hashed
         return None, hashed
 

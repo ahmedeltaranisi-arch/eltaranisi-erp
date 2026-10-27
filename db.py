@@ -57,9 +57,21 @@ def storage_info() -> dict:
     return info
 
 
-def _d1_storage_info() -> dict:
+_D1_INFO_CACHE = {"at": 0.0, "value": None}
+
+
+def _d1_storage_info(with_counts: bool = True) -> dict:
+    """D1 storage facts. The row counts are cached: /api/health is polled by the
+    login screen and used to run six COUNT(*) queries (six HTTPS round-trips) on
+    every poll."""
     info = {"path": f"cloudflare-d1:{os.environ.get('CF_D1_DATABASE_ID') or os.environ.get('CF_D1_DATABASE') or '?'}",
             "durable": True, "engine": "cloudflare-d1", "exists": True}
+    if not with_counts:
+        return info
+    import time as _time
+    if _D1_INFO_CACHE["value"] and _time.monotonic() - _D1_INFO_CACHE["at"] < 120:
+        info["counts"] = _D1_INFO_CACHE["value"]
+        return info
     try:
         conn = connect()
         info["counts"] = {
@@ -68,6 +80,8 @@ def _d1_storage_info() -> dict:
                           "debt_items", "debt_payments", "users")
         }
         conn.close()
+        _D1_INFO_CACHE["at"] = _time.monotonic()
+        _D1_INFO_CACHE["value"] = info["counts"]
     except Exception:
         info["counts"] = {}
     return info
