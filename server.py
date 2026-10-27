@@ -2470,6 +2470,8 @@ class Handler(BaseHTTPRequestHandler):
         # ?__diag=1 answers with X-D1-Requests: how many HTTPS round-trips this
         # request cost (the number we optimise; see docs/PERFORMANCE.md).
         self._diag = qs.pop("__diag", "") == "1"
+        if self._diag:
+            _d1_client.requests_reset()
         try:
             body = self._read_body() if method in ("POST", "PATCH", "PUT", "DELETE") else {}
         except ApiError as exc:
