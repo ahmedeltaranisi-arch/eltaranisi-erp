@@ -26,6 +26,7 @@ import documents
 import editing
 import reports
 import db
+import d1 as _d1_client
 from db import BASE_DIR, connect, from_cents, money_str, read, to_cents, to_milli, transaction
 from security import (AuthError, PermissionError_, audit, has, issue_token, load_user, sync_system_roles,
                       new_session_token, public_user, require, role_can, token_hash, utcnow,
@@ -2386,6 +2387,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Frame-Options", "SAMEORIGIN")
         for k, v in (extra_headers or {}).items():
             self.send_header(k, v)
+        if getattr(self, "_diag", False):
+            self.send_header("X-D1-Requests", str(_d1_client.requests_count()))
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(payload)
@@ -2464,6 +2467,9 @@ class Handler(BaseHTTPRequestHandler):
     # ---------------- API ----------------
     def _handle_api(self, method, path, qs_raw):
         qs = {k: v[0] for k, v in qs_raw.items()}
+        # ?__diag=1 answers with X-D1-Requests: how many HTTPS round-trips this
+        # request cost (the number we optimise; see docs/PERFORMANCE.md).
+        self._diag = qs.pop("__diag", "") == "1"
         try:
             body = self._read_body() if method in ("POST", "PATCH", "PUT", "DELETE") else {}
         except ApiError as exc:

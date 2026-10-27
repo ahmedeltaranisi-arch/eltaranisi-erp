@@ -162,6 +162,20 @@ class Cursor:
 # --------------------------------------------------------------------------
 # HTTP client
 # --------------------------------------------------------------------------
+# Diagnostics: how many HTTPS round-trips one request costs (see X-D1-Requests).
+REQUESTS = 0
+
+
+def requests_reset() -> int:
+    global REQUESTS
+    REQUESTS = 0
+    return 0
+
+
+def requests_count() -> int:
+    return REQUESTS
+
+
 class Client:
     def __init__(self, account_id=None, database_id=None, token=None, base=None,
                  timeout=30, retries=3):
@@ -182,6 +196,8 @@ class Client:
 
     # -- low level ---------------------------------------------------------
     def _request(self, method, path, payload=None):
+        global REQUESTS
+        REQUESTS += 1                          # per-process HTTP round-trips (diagnostics)
         url = f"{self.base}{path}"
         data = json.dumps(payload).encode() if payload is not None else None
         last = None
