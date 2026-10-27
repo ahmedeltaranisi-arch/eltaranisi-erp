@@ -133,6 +133,80 @@ def is_d1() -> bool:
     return BACKEND == "d1"
 
 
+# --------------------------------------------------------------------------
+# per-request read memo
+# --------------------------------------------------------------------------
+# One request repeats the same lookups several times (the account row, the
+# document sequence, the fiscal period...). On D1 each repeat is a fresh HTTPS
+# round-trip, so identical SELECTs inside one request are answered from memory.
+# Any write clears the memo, so a value read before the write is never reused
+# after it.
+class _MemoCursor:
+    __slots__ = ("_rows", "lastrowid", "rowcount")
+
+    def __init__(self, rows, lastrowid=0):
+        self._rows = list(rows)
+        self.lastrowid = lastrowid
+        self.rowcount = len(self._rows)
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self):
+        return list(self._rows)
+
+    def fetchmany(self, size=1):
+        return self._rows[:size]
+
+    def __iter__(self):
+        return iter(self._rows)
+
+    def close(self):
+        pass
+
+
+class MemoConnection:
+    """Wraps a connection; de-duplicates identical SELECTs within one request."""
+
+    def __init__(self, conn):
+        object.__setattr__(self, "_conn", conn)
+        object.__setattr__(self, "_memo", {})
+
+    def execute(self, sql, params=()):
+        head = str(sql).lstrip()[:6].upper()
+        if head in ("SELECT", "WITH  ", "WITH\n"):
+            try:
+                key = (" ".join(str(sql).split()), tuple(params))
+                hash(key)
+            except TypeError:
+                return self._conn.execute(sql, params)
+            cached = self._memo.get(key)
+            if cached is not None:
+                return _MemoCursor(cached)
+            rows = self._conn.execute(sql, params).fetchall()
+            self._memo[key] = rows
+            return _MemoCursor(rows)
+        self._memo.clear()                    # a write may invalidate anything
+        return self._conn.execute(sql, params)
+
+    def executemany(self, sql, seq):
+        self._memo.clear()
+        return self._conn.executemany(sql, seq)
+
+    def executescript(self, sql):
+        self._memo.clear()
+        return self._conn.executescript(sql)
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def __setattr__(self, name, value):
+        if name.startswith("_"):
+            object.__setattr__(self, name, value)
+        else:
+            setattr(self._conn, name, value)
+
+
 @contextmanager
 def transaction():
     """Unit of work.
@@ -147,7 +221,7 @@ def transaction():
     conn = connect()
     try:
         conn.execute("BEGIN IMMEDIATE")
-        yield conn
+        yield MemoConnection(conn)
         conn.execute("COMMIT")
     except Exception:
         try:
@@ -163,7 +237,7 @@ def transaction():
 
 
 def read():
-    return connect()
+    return MemoConnection(connect())
 
 
 def drop_all_objects(conn) -> int:
@@ -318,6 +392,71 @@ def _apply_dark_theme_default(conn) -> None:
             continue
 
 
+# --------------------------------------------------------------------------
+# cold-start guard
+# --------------------------------------------------------------------------
+# `migrate()` is ~84 SQL statements. With the D1 backend every statement is an
+# HTTPS round-trip, so running it on every cold start cost ~9 s of the 26 s a
+# first request used to take. The applied schema fingerprint is stored under
+# `app_meta.schema_version`; a cold start reads that single row and only runs the
+# full migration when the fingerprint differs (i.e. schema.sql changed).
+SCHEMA_VERSION_KEY = "schema_version"
+
+
+def schema_fingerprint() -> str:
+    """Cheap, stable fingerprint of schema.sql (content hash, first 16 chars)."""
+    import hashlib
+    try:
+        raw = SCHEMA_PATH.read_bytes()
+    except OSError:
+        return "0" * 16
+    return hashlib.sha256(raw).hexdigest()[:16]
+
+
+def _read_schema_version(conn) -> str | None:
+    try:
+        row = conn.execute("SELECT value FROM app_meta WHERE key=?", (SCHEMA_VERSION_KEY,)).fetchone()
+        return (row["value"] if row else None)
+    except Exception:
+        return None
+
+
+def _write_schema_version(conn) -> None:
+    try:
+        conn.execute("CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT)")
+        conn.execute("INSERT INTO app_meta (key, value) VALUES (?,?) "
+                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                     (SCHEMA_VERSION_KEY, schema_fingerprint()))
+        conn.commit()
+    except Exception:
+        pass
+
+
+def ensure_schema(verbose: bool = False) -> str:
+    """Run `migrate()` only when this code's schema differs from the database.
+
+    Returns "skipped" or "migrated". One query in the common case.
+    """
+    if BACKEND != "d1" and not DB_PATH.exists():
+        return "skipped"
+    conn = connect()
+    try:
+        current = _read_schema_version(conn)
+    finally:
+        conn.close()
+    if current == schema_fingerprint():
+        return "skipped"
+    migrate()
+    conn = connect()
+    try:
+        _write_schema_version(conn)
+    finally:
+        conn.close()
+    if verbose:
+        print(f"schema migrated → {schema_fingerprint()}")
+    return "migrated"
+
+
 def migrate() -> None:
     """Apply additive, idempotent schema changes to an existing database.
 
@@ -346,6 +485,7 @@ def migrate() -> None:
         _sync_system_roles(conn)
         _apply_dark_theme_default(conn)
         _ensure_allowance_accounts(conn)
+        _write_schema_version(conn)
     finally:
         conn.close()
 

@@ -835,9 +835,14 @@ async function loadNotifications() {
 /* A serverless deployment keeps its SQLite file in /tmp: the file is wiped when
    the instance is recycled, so anything typed in would be lost without a trace.
    The banner makes that impossible to miss and offers a full database backup. */
+async function appHealth() {
+  if (!APP._health) APP._health = await api("/api/health").catch(() => ({}));
+  return APP._health;
+}
+
 async function checkStorage() {
   try {
-    const health = await api("/api/health");
+    const health = await appHealth();
     APP.storage = (health && health.storage) || { durable: true };
   } catch (e) {
     APP.storage = { durable: true };
@@ -1058,7 +1063,7 @@ async function loadDemoAccounts() {
   // Hosted/production deployments are not a "demo environment": drop the labels
   // that claim otherwise instead of showing them to real users.
   try {
-    const h = await fetch("/api/health").then(r => r.json()).catch(() => ({}));
+    const h = await appHealth();
     if (h && h.dev_mode === false) {
       document.body.classList.add("is-production");
       const foot = document.querySelector(".login-foot");
@@ -1071,6 +1076,8 @@ async function loadDemoAccounts() {
     }
   } catch (e) { /* offline-safe */ }
   try {
+    const h = await appHealth();
+    if (h && h.dev_mode === false) { $("#demo-box")?.classList.add("hidden"); return; }
     const res = await fetch("/api/dev/accounts");
     if (!res.ok) return;                       // production / demo disabled
     const data = await res.json();
@@ -1096,12 +1103,13 @@ async function loadDemoAccounts() {
 
 /* ------------------------------ boot ------------------------------ */
 async function bootApp() {
-  try {
-    APP.meta = await api("/api/meta");
-  } catch (e) {
-    if (!APP.token) { logoutLocal(); return; }
-  }
-  const me = await api("/api/auth/me");
+  // meta and the current user are independent: fetch them in one round-trip
+  // window instead of two (each request is a separate serverless invocation).
+  const [metaRes, meRes] = await Promise.allSettled([api("/api/meta"), api("/api/auth/me")]);
+  if (metaRes.status === "fulfilled") APP.meta = metaRes.value;
+  else if (!APP.token) { logoutLocal(); return; }
+  if (meRes.status !== "fulfilled") throw meRes.reason;
+  const me = meRes.value;
   APP.user = me.user;
   APP.lang = me.user.language || APP.lang;
   APP.theme = me.user.theme || APP.theme;
@@ -1109,7 +1117,7 @@ async function bootApp() {
   $("#login-screen").classList.add("hidden");
   $("#app").classList.remove("hidden");
   renderShell();
-  await checkStorage();
+  checkStorage();                      // banner only — do not block the page
   setupCompanySwitcher();
   renderBottomNav();
   setupSearch();

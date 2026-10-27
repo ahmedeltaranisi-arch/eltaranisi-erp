@@ -7,6 +7,8 @@ from __future__ import annotations
 import csv
 import io
 import json
+import threading
+import time
 import mimetypes
 import os
 import re
@@ -72,6 +74,72 @@ class ApiError(Exception):
         self.message = message
         self.status = status
         self.details = details or {}
+
+
+# ==========================================================================
+# response cache
+# ==========================================================================
+# The production database is Cloudflare D1, reached over HTTPS: every SQL
+# statement is a network round-trip (~120-170 ms). A screen that issues 33 of
+# them took ~6 s even though the SQL itself is trivial. Reference data (chart of
+# accounts, banks, customers, vendors, products, pick-lists) and whole read-only
+# screens therefore keep a short-lived copy in the function's memory.
+#
+# Correctness: any successful write on any instance bumps the epoch, which
+# invalidates every cached entry (writes are far rarer than reads). The TTL is a
+# belt-and-braces bound for instances that did not see the write.
+CACHE_TTL = int(os.environ.get("ERP_CACHE_TTL", "60"))
+CACHE_MAX_ENTRIES = 256
+CACHEABLE_GET = {
+    "/api/meta", "/api/dashboard", "/api/accounts", "/api/banks", "/api/customers",
+    "/api/vendors", "/api/products", "/api/debt/meta", "/api/debt/accounts",
+    "/api/debt/summary", "/api/payments/bootstrap", "/api/journal-entries",
+    "/api/sales-invoices", "/api/purchase-invoices", "/api/reports/trial-balance",
+    "/api/payments",
+}
+_cache_lock = threading.Lock()
+_cache = {}                 # key -> (expires_at, serialized body)
+_cache_epoch = 0            # bumped on every write
+_cache_stats = {"hits": 0, "misses": 0}
+
+
+def cache_key(path, company_id, qs_raw):
+    return (path, company_id, tuple(sorted(qs_raw.items())), _cache_epoch)
+
+
+def cache_get(key):
+    if CACHE_TTL <= 0:
+        return None
+    with _cache_lock:
+        entry = _cache.get(key)
+        if entry and entry[0] > time.monotonic():
+            _cache_stats["hits"] += 1
+            return entry[1]
+        if entry:
+            _cache.pop(key, None)
+        _cache_stats["misses"] += 1
+        return None
+
+
+def cache_put(key, payload):
+    if CACHE_TTL <= 0:
+        return
+    with _cache_lock:
+        if len(_cache) >= CACHE_MAX_ENTRIES:
+            # drop expired entries first, then the oldest one
+            now = time.monotonic()
+            for k in [k for k, v in _cache.items() if v[0] <= now]:
+                _cache.pop(k, None)
+            if len(_cache) >= CACHE_MAX_ENTRIES:
+                _cache.pop(next(iter(_cache)), None)
+        _cache[key] = (time.monotonic() + CACHE_TTL, payload)
+
+
+def cache_clear():
+    global _cache_epoch
+    with _cache_lock:
+        _cache_epoch += 1
+        _cache.clear()
 
 
 def current_company(user):
@@ -994,6 +1062,30 @@ def purchases_post(ctx, invoice_id):
 
 
 # ------------------------------ payments ----------------------------------
+@route("GET", r"/api/payments/bootstrap", "payments.view")
+def payments_bootstrap(ctx):
+    """Everything the receipt/payment form needs — in ONE request.
+
+    The form used to fire five separate requests (banks, customers, vendors,
+    sales invoices, purchase invoices). On the serverless deployment each one is
+    a full round-trip plus its own D1 queries, so opening the form took ~1.4 s
+    before anything useful appeared. Sections the user may not read are skipped
+    instead of failing the whole request.
+    """
+    def safe(fn, empty):
+        try:
+            return fn(ctx)
+        except (PermissionError_, AuthError):
+            return empty
+    return {
+        "banks": safe(banks, {"accounts": [], "position": {}}),
+        "customers": safe(customers_list, {"customers": []}),
+        "vendors": safe(vendors_list, {"vendors": []}),
+        "sales_invoices": safe(sales_list, {"invoices": []}),
+        "purchase_invoices": safe(purchases_list, {"invoices": []}),
+    }
+
+
 @route("GET", r"/api/payments", "payments.view")
 def payments_list(ctx):
     cid = ensure_company(ctx.user)
@@ -2349,14 +2441,28 @@ class Handler(BaseHTTPRequestHandler):
                     if perm:
                         require(user, perm)
                 args = rx.match(path).groups()
+                # ---- short-lived read cache (see "response cache" above) ----
+                ckey = None
+                if method == "GET" and path in CACHEABLE_GET and user is not None:
+                    ckey = cache_key(path, current_company(user), qs)
+                    cached = cache_get(ckey)
+                    if cached is not None:
+                        self._send(200, cached, "application/json; charset=utf-8",
+                                   {"Cache-Control": f"private, max-age={min(CACHE_TTL, 60)}"})
+                        return
                 result = fn(ctx, *args)
+                if ckey is not None and isinstance(result, (dict, list)):
+                    cache_put(ckey, j(result))
                 if isinstance(result, dict) and result.get("__file__"):
                     disp = "inline" if result.get("inline") else "attachment"
                     self._send(200, result["content"], result["content_type"],
                                {"Content-Disposition": f'{disp}; filename="{result["filename"]}"',
                                 "Cache-Control": "no-store"})
                     return
-                self._json(200, result)
+                headers = ({"Cache-Control": f"private, max-age={min(CACHE_TTL, 60)}"}
+                           if ckey is not None else None)
+                self._send(200, j(result),
+                           extra_headers=headers) if headers else self._json(200, result)
             except (ApiError,) as exc:
                 self._error(exc.status, exc.message, exc.details)
             except accounting.ValidationError as exc:
@@ -2373,6 +2479,9 @@ class Handler(BaseHTTPRequestHandler):
                 traceback.print_exc()
                 self._error(500, "INTERNAL_ERROR: حدث خطأ غير متوقع / Unexpected server error",
                             {"type": type(exc).__name__})
+            finally:
+                if method != "GET":
+                    cache_clear()
 
     # ---------------- static ----------------
     def _serve_static(self, path):
@@ -2386,7 +2495,11 @@ class Handler(BaseHTTPRequestHandler):
         if ctype.startswith("text/") or ctype in ("application/javascript", "application/json"):
             ctype += "; charset=utf-8"
         content = target.read_bytes()
-        self._send(200, content, ctype, {"Cache-Control": "no-cache"})
+        # assets can be reused for a few minutes (the browser revalidates after
+        # that); the shell (index.html) must always be fresh so a deploy is
+        # picked up immediately.
+        cache = "no-cache" if target.name == "index.html" else "public, max-age=300, stale-while-revalidate=86400"
+        self._send(200, content, ctype, {"Cache-Control": cache})
 
 
 def main():

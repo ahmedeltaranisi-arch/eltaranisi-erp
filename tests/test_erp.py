@@ -1366,6 +1366,29 @@ class ERPTestCase(unittest.TestCase):
         lig = pdfgen.join_ligatures(pdfgen.shape_arabic("الملاحية"))
         self.assertIn("\ufccc", lig, "lam+meem must use the font ligature")
 
+    def test_B142_reference_cache_never_serves_stale_data(self):
+        """A cached list must be dropped the moment anything is written."""
+        _, before, _ = self._raw_get("/api/vendors")
+        first = json.loads(before)["vendors"]
+        _, again, _ = self._raw_get("/api/vendors")
+        self.assertEqual(len(json.loads(again)["vendors"]), len(first))
+        code = f"V-CACHE-{int(time.time() * 1000) % 1000000}"
+        status, created = self.owner.post("/api/vendors", {
+            "code": code, "name_ar": "مقاول كاش", "name_en": "Cache Vendor", "payment_terms_days": 30})
+        self.assertEqual(status, 200, created)
+        _, after, _ = self._raw_get("/api/vendors")
+        codes = [v["code"] for v in json.loads(after)["vendors"]]
+        self.assertIn(code, codes, "a write must invalidate the cached list")
+
+    def test_B143_payments_bootstrap_returns_the_whole_form_in_one_call(self):
+        status, body, _ = self._raw_get("/api/payments/bootstrap")
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        for key in ("banks", "customers", "vendors", "sales_invoices", "purchase_invoices"):
+            self.assertIn(key, data, f"bootstrap must carry {key}")
+        self.assertTrue(data["customers"]["customers"])
+        self.assertTrue(data["banks"]["accounts"])
+
     def test_B135_pdf_reports_embed_the_arabic_typeface_and_never_overflow(self):
         """Every PDF must carry the Arabic face and clamp text inside its column."""
         acc = self._debt_account()

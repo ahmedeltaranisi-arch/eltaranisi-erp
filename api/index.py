@@ -68,8 +68,10 @@ def ensure_database() -> None:
     instance, so a cold start only needs to check the schema is reachable.
     """
     if D1_BACKEND:
+        # One cheap query instead of the full ~84-statement migration on every
+        # cold start (each statement is an HTTPS round-trip to D1).
         try:
-            db.migrate()                 # idempotent, additive
+            db.ensure_schema()           # runs migrate() only if schema.sql changed
         except Exception:
             traceback.print_exc()
         return
@@ -83,7 +85,7 @@ def ensure_database() -> None:
 
         seed_module.seed()
         try:
-            db.migrate()                      # additive migrations (same as server startup)
+            db.ensure_schema()                # additive migrations, only when needed
         except Exception:
             traceback.print_exc()
 

@@ -1208,10 +1208,22 @@
     },
 
     async newVoucher(type = "receipt", preset = {}) {
-      const [banks, cust, vend, sinv, pinv] = await Promise.all([
-        api("/api/banks"), api("/api/customers"), api("/api/vendors"),
-        api("/api/sales-invoices"), api("/api/purchase-invoices"),
-      ]);
+      // one request instead of five (server-side /api/payments/bootstrap)
+      let boot;
+      try {
+        boot = await api("/api/payments/bootstrap");
+      } catch (e) {                            // older server → keep the 5 calls
+        const [banks, cust, vend, sinv, pinv] = await Promise.all([
+          api("/api/banks"), api("/api/customers"), api("/api/vendors"),
+          api("/api/sales-invoices"), api("/api/purchase-invoices"),
+        ]);
+        boot = { banks, customers: cust, vendors: vend, sales_invoices: sinv, purchase_invoices: pinv };
+      }
+      const banks = boot.banks || {};
+      const cust = boot.customers || {};
+      const vend = boot.vendors || {};
+      const sinv = boot.sales_invoices || {};
+      const pinv = boot.purchase_invoices || {};
       const glOptions = banks.accounts.map(b => ({ value: b.gl_account_id, label: `${b.name_ar} (${b.gl_code})` }));
       const partylist = type === "receipt" ? cust.customers : vend.vendors;
       const openInvoices = type === "receipt"

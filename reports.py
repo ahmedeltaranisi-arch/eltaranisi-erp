@@ -223,31 +223,44 @@ def aging(conn, company_id, as_of, kind="sales"):
 
 
 def vendor_payables(conn, company_id, as_of):
-    """Detailed vendor payable position: invoiced, paid, outstanding, aging, next due."""
+    """Detailed vendor payable position: invoiced, paid, outstanding, aging, next due.
+
+    The per-vendor aggregates and the journal balance are joined in SQL: this
+    used to run two statements per vendor (N+1) — with ~2 vendors that is 4 extra
+    D1 round-trips on the dashboard.
+    """
     aging_data = aging(conn, company_id, as_of, "purchase")
-    vendors = conn.execute("SELECT * FROM vendors WHERE company_id=? ORDER BY name_ar", (company_id,)).fetchall()
+    rows = conn.execute(
+        """SELECT v.*,
+                  COALESCE(inv.invoiced,0) AS invoiced, COALESCE(inv.paid,0) AS paid,
+                  COALESCE(inv.cnt,0) AS cnt, inv.next_due,
+                  COALESCE(jnl.bal,0) AS journal_balance
+           FROM vendors v
+           LEFT JOIN (SELECT vendor_id, SUM(total_cents) invoiced, SUM(paid_cents) paid,
+                             COUNT(*) cnt,
+                             MIN(CASE WHEN total_cents>paid_cents THEN due_date END) next_due
+                      FROM purchase_invoices
+                      WHERE company_id=? AND status IN ('posted','partially_paid','paid')
+                      GROUP BY vendor_id) inv ON inv.vendor_id=v.id
+           LEFT JOIN (SELECT vendor_id, SUM(credit_cents-debit_cents) bal
+                      FROM v_posted_lines WHERE company_id=? GROUP BY vendor_id) jnl
+                  ON jnl.vendor_id=v.id
+           WHERE v.company_id=? ORDER BY v.name_ar""",
+        (company_id, company_id, company_id)).fetchall()
+    parties = {p["party_id"]: p for p in aging_data["parties"]}
     out = []
-    for v in vendors:
-        agg = conn.execute(
-            """SELECT COALESCE(SUM(total_cents),0) invoiced, COALESCE(SUM(paid_cents),0) paid,
-                      COUNT(*) cnt, MIN(CASE WHEN total_cents>paid_cents THEN due_date END) next_due
-               FROM purchase_invoices WHERE company_id=? AND vendor_id=? AND status IN ('posted','partially_paid','paid')""",
-            (company_id, v["id"])).fetchone()
-        journal_balance = conn.execute(
-            """SELECT COALESCE(SUM(l.credit_cents - l.debit_cents),0) v FROM v_posted_lines l
-               WHERE l.company_id=? AND l.vendor_id=?""",
-            (company_id, v["id"])).fetchone()["v"]
-        buckets = next((p for p in aging_data["parties"] if p["party_id"] == v["id"]), None)
+    for v in rows:
+        buckets = parties.get(v["id"])
         overdue = sum(buckets[k] for k in ("1_30", "31_60", "61_90", "over_90")) if buckets else 0
         out.append({
             "id": v["id"], "code": v["code"], "name_ar": v["name_ar"], "name_en": v["name_en"],
             "phone": v["phone"], "payment_terms_days": v["payment_terms_days"],
-            "invoiced_cents": agg["invoiced"], "paid_cents": agg["paid"],
-            "outstanding_cents": agg["invoiced"] - agg["paid"],
-            "journal_balance_cents": journal_balance,
+            "invoiced_cents": v["invoiced"], "paid_cents": v["paid"],
+            "outstanding_cents": v["invoiced"] - v["paid"],
+            "journal_balance_cents": v["journal_balance"],
             "overdue_cents": overdue,
-            "next_due_date": agg["next_due"],
-            "invoice_count": agg["cnt"],
+            "next_due_date": v["next_due"],
+            "invoice_count": v["cnt"],
             "buckets": {k: (buckets[k] if buckets else 0) for k in ("current", "1_30", "31_60", "61_90", "over_90")},
         })
     totals = {
@@ -286,28 +299,39 @@ def ar_position(conn, company_id):
 
 
 def monthly_series(conn, company_id, months=6, as_of=None):
+    """Revenue / expense per month — ONE query for the whole window.
+
+    It used to run one aggregate per month (6 round-trips). With the D1 backend
+    every statement is an HTTPS request, so this alone could cost a second.
+    """
     as_of = as_of or date.today().isoformat()
     end = datetime.strptime(as_of, "%Y-%m-%d").date().replace(day=1)
+    first = end
+    for _ in range(months - 1):
+        first = (first - timedelta(days=1)).replace(day=1)
+    nxt = (end.replace(day=28) + timedelta(days=7)).replace(day=1)
+    rows = conn.execute(
+        """SELECT substr(l.entry_date,1,7) AS m, a.type,
+                  SUM(l.debit_cents) d, SUM(l.credit_cents) c
+           FROM v_posted_lines l JOIN accounts a ON a.id=l.account_id
+           WHERE l.company_id=? AND l.entry_date>=? AND l.entry_date<?
+           GROUP BY m, a.type""",
+        (company_id, first.isoformat(), nxt.isoformat())).fetchall()
+    acc = {}
+    for r in rows:
+        bucket = acc.setdefault(r["m"], {"rev": 0, "exp": 0})
+        if r["type"] == "revenue":
+            bucket["rev"] += (r["c"] or 0) - (r["d"] or 0)
+        elif r["type"] == "expense":
+            bucket["exp"] += (r["d"] or 0) - (r["c"] or 0)
     series = []
-    for i in range(months - 1, -1, -1):
-        m = end
-        for _ in range(i):
-            m = (m - timedelta(days=1)).replace(day=1)
-        nxt = (m.replace(day=28) + timedelta(days=7)).replace(day=1)
-        rows = conn.execute(
-            """SELECT a.type, SUM(l.debit_cents) d, SUM(l.credit_cents) c
-               FROM v_posted_lines l JOIN accounts a ON a.id=l.account_id
-               WHERE l.company_id=? AND l.entry_date>=? AND l.entry_date<?
-               GROUP BY a.type""",
-            (company_id, m.isoformat(), nxt.isoformat())).fetchall()
-        rev = exp = 0
-        for r in rows:
-            if r["type"] == "revenue":
-                rev += (r["c"] or 0) - (r["d"] or 0)
-            elif r["type"] == "expense":
-                exp += (r["d"] or 0) - (r["c"] or 0)
-        series.append({"month": m.strftime("%Y-%m"), "revenue_cents": rev,
-                       "expenses_cents": exp, "profit_cents": rev - exp})
+    m = first
+    while m < nxt:
+        key = m.strftime("%Y-%m")
+        bucket = acc.get(key, {"rev": 0, "exp": 0})
+        series.append({"month": key, "revenue_cents": bucket["rev"],
+                       "expenses_cents": bucket["exp"], "profit_cents": bucket["rev"] - bucket["exp"]})
+        m = (m.replace(day=28) + timedelta(days=7)).replace(day=1)
     return series
 
 
