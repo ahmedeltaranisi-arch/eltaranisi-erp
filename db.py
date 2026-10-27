@@ -221,6 +221,159 @@ class MemoConnection:
             setattr(self._conn, name, value)
 
 
+# --------------------------------------------------------------------------
+# deferred writes (one round-trip for a whole document)
+# --------------------------------------------------------------------------
+# A document save issues 8-36 statements. On a local file that is free; on D1
+# every `execute()` is its own HTTPS request, so `POST /api/debt/payments`
+# (36 statements) spent 36 round-trips (~180 ms each) — that is the "site is
+# heavy when I add a statement / record a payment" complaint. This wrapper
+# buffers INSERT/UPDATE/DELETE and sends them as one atomic `batch()` the
+# moment anything has to read (or at commit), keeping statement order intact.
+_WRITE_HEADS = ("INSERT", "UPDATE", "DELETE", "REPLACE")
+
+
+class _DeferredCursor:
+    """Cursor of a buffered write: runs the batch when the result is needed."""
+
+    __slots__ = ("_owner", "_slot")
+
+    def __init__(self, owner, slot):
+        self._owner = owner
+        self._slot = slot
+
+    def _real(self):
+        return self._owner._settle(self._slot)
+
+    @property
+    def lastrowid(self):
+        return self._real().lastrowid
+
+    @property
+    def rowcount(self):
+        return self._real().rowcount
+
+    def fetchone(self):
+        return self._real().fetchone()
+
+    def fetchall(self):
+        return self._real().fetchall()
+
+    def fetchmany(self, size=1):
+        return self._real().fetchmany(size)
+
+    def __iter__(self):
+        return iter(self._real())
+
+    def close(self):
+        pass
+
+
+class DeferredConnection:
+    """Memoised reads + batched writes: the transaction unit for D1."""
+
+    def __init__(self, conn):
+        object.__setattr__(self, "_conn", conn)
+        object.__setattr__(self, "_memo", {})
+        object.__setattr__(self, "_pending", [])
+        object.__setattr__(self, "_slots", [])
+
+    # -- batching ----------------------------------------------------------
+    def flush(self):
+        """Send every buffered write as one request, in order."""
+        pending = self._pending
+        if not pending:
+            return
+        slots = self._slots
+        object.__setattr__(self, "_pending", [])
+        object.__setattr__(self, "_slots", [])
+        self._memo.clear()
+        results = self._conn.batch(pending)
+        if len(results) != len(pending):                 # defensive: run them one by one
+            results = [self._conn.execute(sql, params) for sql, params in pending]
+        for slot, cursor in zip(slots, results):
+            slot[0] = cursor
+
+    def _settle(self, slot):
+        self.flush()
+        if slot[0] is None:
+            raise RuntimeError("deferred write produced no result")
+        return slot[0]
+
+    # -- statements --------------------------------------------------------
+    def execute(self, sql, params=()):
+        """Buffered write, memoised read, or straight through for DDL."""
+        text = str(sql).lstrip()
+        head = text[:6].upper()
+        if head in _WRITE_HEADS:
+            slot = [None]
+            self._pending.append((str(sql), list(params or ())))
+            self._slots.append(slot)
+            return _DeferredCursor(self, slot)
+        if head in ("SELECT", "WITH  ", "WITH\n"):
+            self.flush()
+            try:
+                key = (" ".join(str(sql).split()), tuple(params))
+                hash(key)
+            except TypeError:
+                return self._conn.execute(sql, params)
+            cached = self._memo.get(key)
+            if cached is not None:
+                return _MemoCursor(cached)
+            rows = self._conn.execute(sql, params).fetchall()
+            self._memo[key] = rows
+            return _MemoCursor(rows)
+        self.flush()                                       # DDL, PRAGMA, BEGIN/COMMIT...
+        self._memo.clear()
+        return self._conn.execute(sql, params)
+
+    def executemany(self, sql, seq):
+        head = str(sql).lstrip()[:6].upper()
+        if head in _WRITE_HEADS:
+            slots = []
+            for params in seq:
+                slot = [None]
+                self._pending.append((str(sql), list(params or ())))
+                self._slots.append(slot)
+                slots.append(_DeferredCursor(self, slot))
+            self.flush()
+            return slots[-1] if slots else _MemoCursor([])
+        self.flush()
+        return self._conn.executemany(sql, seq)
+
+    def executescript(self, sql):
+        self.flush()
+        return self._conn.executescript(sql)
+
+    def batch(self, statements):
+        """Explicit atomic unit; anything already buffered goes first."""
+        self.flush()
+        return self._conn.batch(statements)
+
+    def commit(self):
+        self.flush()
+        self._conn.commit()
+
+    def rollback(self):
+        object.__setattr__(self, "_pending", [])
+        object.__setattr__(self, "_slots", [])
+        self._memo.clear()
+        self._conn.rollback()
+
+    def close(self):
+        self.flush()
+        self._conn.close()
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def __setattr__(self, name, value):
+        if name.startswith("_"):
+            object.__setattr__(self, name, value)
+        else:
+            setattr(self._conn, name, value)
+
+
 @contextmanager
 def transaction():
     """Unit of work.
@@ -233,6 +386,25 @@ def transaction():
     verifies the invariants afterwards.
     """
     conn = connect()
+    if BACKEND == "d1":
+        # no interactive transactions over HTTPS: buffer the writes and send
+        # them as a single atomic batch (see DeferredConnection)
+        unit = DeferredConnection(conn)
+        try:
+            yield unit
+            unit.flush()
+        except Exception:
+            try:
+                unit.rollback()
+            except Exception:
+                pass
+            raise
+        finally:
+            try:
+                unit.close()
+            except Exception:
+                pass
+        return
     try:
         conn.execute("BEGIN IMMEDIATE")
         yield MemoConnection(conn)
