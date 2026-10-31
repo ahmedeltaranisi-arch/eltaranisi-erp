@@ -149,6 +149,64 @@ with sync_playwright() as p:
             )
             check("original values restored", restored in (200, 204), restored)
 
+    # 6) the delete dialog: the message must be plain readable text (no leaked
+    #    HTML) and Enter must press «اعتماد» — exactly like the mouse.
+    #    Creating a throwaway row is only done against a local server.
+    destructive = ("127.0.0.1" in BASE) or ("localhost" in BASE)
+    page.goto(BASE + "/#/debt", wait_until="networkidle")
+    page.wait_for_timeout(1200)
+    item = None
+    if destructive:
+        item = page.evaluate(
+            """async () => {
+                 const tok = localStorage.getItem('erp_token');
+                 const accs = await (await fetch('/api/debt/accounts', { headers: { Authorization: 'Bearer ' + tok } })).json();
+                 const acc = (accs.accounts || [])[0];
+                 const res = await fetch('/api/debt/items', { method: 'POST',
+                   headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tok },
+                   body: JSON.stringify({ account_id: acc.id, description: 'اختبار زر Enter للحذف',
+                                          amount: 13014, post: false,
+                                          doc_date: (acc.created_at || '').slice(0, 10) || undefined }) });
+                 const body = await res.json();
+                 return res.ok ? { id: body.id, acc: acc.id } : null;
+               }"""
+        )
+        check("throwaway debt item created", bool(item), item)
+        if item:
+            page.goto(f"{BASE}/#/debt/{item['acc']}", wait_until="networkidle")
+            page.wait_for_timeout(1500)
+            trash = page.query_selector(f'[data-del-path="/api/debt/items/{item["id"]}"]')
+    else:
+        trash = page.query_selector("[data-del-path]")      # an existing row: cancel, never confirm
+    check("delete button found", trash is not None)
+    if trash:
+        trash.click()
+        page.wait_for_timeout(600)
+        text = page.inner_text("#modal-root")
+        check("delete dialog is on screen", page.query_selector("[data-cf-yes], #cf-ok") is not None)
+        check("message is plain text (no HTML leaks)",
+              "<span" not in text and "class=" not in text, text[:140])
+        check("accept button takes focus (Enter is one key away)",
+              page.evaluate("() => document.activeElement && document.activeElement.hasAttribute('data-modal-confirm')"))
+        if destructive and item:
+            check("message keeps the amount", "13,014.00" in text, text[:140])
+            page.keyboard.press("Enter")
+            page.wait_for_timeout(1800)
+            gone = page.evaluate(
+                """async (id) => {
+                     const tok = localStorage.getItem('erp_token');
+                     const res = await fetch('/api/debt/items/' + id, { headers: { Authorization: 'Bearer ' + tok } });
+                     return res.status;
+                   }""",
+                item["id"],
+            )
+            check("Enter deleted the row", gone == 404, gone)
+            check("delete dialog closed", not dialog_open(page))
+        else:
+            page.click("[data-cf-no]")
+            page.wait_for_timeout(300)
+            check("cancel on this host leaves the data untouched", not dialog_open(page))
+
     check("no page errors", not errors, errors)
     browser.close()
 

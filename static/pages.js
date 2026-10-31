@@ -1575,7 +1575,7 @@
       { key: "act", cls: "act", label: t("common.actions"), render: r => `
           ${can("debt.edit") ? debtItemEditBtn(r, meta) : ""}
           ${can("debt.delete") ? deleteButton(`/api/debt/items/${r.id}`,
-            `المستحق ${r.description} بمبلغ ${fmtMoney(r.amount_cents)}`,
+            `المستحق ${r.description} بمبلغ ${moneyLabel(r.amount_cents)}`,
             `due line ${r.description}`) : ""}` },
     ], st.items, { footer: `<tr class="foot-total"><td colspan="4">${ESC(t("debt.due"))}</td>
         <td class="num">${fmtMoney(T.due_cents)}</td><td></td><td></td></tr>`,
@@ -1595,8 +1595,8 @@
       { key: "act", cls: "act", label: t("common.actions"), render: r => `
           ${can("debt.edit") ? debtPaymentEditBtn(r, meta) : ""}
           ${can("debt.delete") ? deleteButton(`/api/debt/payments/${r.id}`,
-            `سداد ${fmtMoney(r.amount_cents)} ${r.voucher_no ? `باذن صرف ${r.voucher_no}` : ""}`,
-            `settlement ${fmtMoney(r.amount_cents)}`) : ""}` },
+            `سداد ${moneyLabel(r.amount_cents)} ${r.voucher_no ? `باذن صرف ${r.voucher_no}` : ""}`,
+            `settlement ${moneyLabel(r.amount_cents)}`) : ""}` },
     ], st.payments, { footer: `<tr class="foot-total"><td colspan="2">${ESC(t("debt.paid"))}</td>
         <td class="num">${fmtMoney(T.paid_cents)}</td><td colspan="5"></td></tr>`,
       empty: t("debt.noPayments") });

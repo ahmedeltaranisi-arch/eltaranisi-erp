@@ -212,6 +212,15 @@ function toast(msg, kind = "ok") {
   setTimeout(() => div.remove(), 4100);
 }
 
+/** Dialog messages are plain text. Callers sometimes hand us HTML (fmtMoney()
+ *  returns markup); without this the tags showed up literally: «span class="money"
+ *  بقيمة 13,014.00». */
+function dialogText(message) {
+  return String(message == null ? "" : message)
+    .replace(/<[^>]*>/g, "")
+    .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+}
+
 function openModal({ title, body, footer = "", wide = false, narrow = false, onMount, onClose }) {
   const root = $("#modal-root");
   root.classList.remove("hidden");
@@ -227,6 +236,10 @@ function openModal({ title, body, footer = "", wide = false, narrow = false, onM
   const close = () => { root.classList.add("hidden"); root.innerHTML = ""; if (onClose) onClose(); };
   root.querySelectorAll("[data-close]").forEach(b => b.onclick = close);
   root.onclick = (e) => { if (e.target === root) close(); };
+  // put the keyboard inside the dialog: the accept button takes focus, so Enter
+  // activates it natively — no matter which button opened the dialog
+  const accept = root.querySelector("[data-modal-confirm]");
+  if (accept) setTimeout(() => { try { accept.focus(); } catch (e) { /* gone */ } }, 0);
   if (onMount) onMount(root, close);
   return { root, close };
 }
@@ -234,7 +247,7 @@ function openModal({ title, body, footer = "", wide = false, narrow = false, onM
 function confirmDialog(message, onConfirm, { danger = false, title = "تأكيد" } = {}) {
   openModal({
     title, narrow: true,
-    body: `<p style="margin:0;font-size:14px">${ESC(message)}</p>`,
+    body: `<p style="margin:0;font-size:14px">${ESC(dialogText(message))}</p>`,
     footer: `<button class="btn" data-close>${ESC(t("common.cancel"))}</button>
              <button class="btn ${danger ? "btn-danger" : "btn-primary"}" id="cf-ok" data-modal-confirm>${ESC(t("common.approve"))}</button>`,
     onMount: (root, close) => {
@@ -266,7 +279,7 @@ function confirmAsync(message, { danger = true, title } = {}) {
     const { close } = openModal({
       title: title || (ar ? "تأكيد" : "Confirm"),
       narrow: true,
-      body: `<p style="margin:0;font-size:14px;white-space:pre-line;line-height:1.7">${ESC(message)}</p>`,
+      body: `<p style="margin:0;font-size:14px;white-space:pre-line;line-height:1.7">${ESC(dialogText(message))}</p>`,
       footer: `<button class="btn" data-cf-no>${ESC(t("common.cancel"))}</button>
                <button class="btn ${danger ? "btn-danger" : "btn-primary"}" data-cf-yes data-modal-confirm>
                  ${ESC(ar ? "تأكيد" : "Confirm")}</button>`,
@@ -1047,8 +1060,12 @@ function enterAcceptsDialog(e) {
   if (!btn) return false;
   const el = document.activeElement;
   if (el && (el.tagName === "TEXTAREA" || el.isContentEditable)) return false;
-  // a focused button/link activates itself: Enter on "إلغاء" must cancel, not accept
-  if (el && el.closest && el.closest("button,a[href]")) return false;
+  // a control *inside* the dialog activates itself: Enter on "إلغاء" must cancel,
+  // not accept. A control behind it (the trash button that opened the dialog, or
+  // any page button that still holds focus) must not swallow the key.
+  const root = $("#modal-root");
+  const inside = el && root && root.contains(el);
+  if (inside && el.closest && el.closest("button,a[href],input,select")) return false;
   e.preventDefault();
   btn.click();
   return true;
