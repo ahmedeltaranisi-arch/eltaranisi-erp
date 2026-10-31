@@ -94,7 +94,16 @@ with sync_playwright() as p:
     page.wait_for_timeout(1500)
     edit_btns = page.query_selector_all("[data-ed-path]")
     check("debt screen has an edit button", bool(edit_btns), len(edit_btns))
+    original = None
     if edit_btns:
+        # remember the record so the check leaves the data exactly as it found it
+        original = page.evaluate(
+            """() => {
+                 const b = document.querySelector('[data-ed-path]');
+                 return { path: b.dataset.edPath,
+                          fields: JSON.parse(decodeURIComponent(b.dataset.edFields || '%5B%5D')) };
+               }"""
+        )
         edit_btns[0].click()
         page.wait_for_timeout(700)
         check("edit form opened", page.query_selector("#gen-form") is not None)
@@ -121,10 +130,24 @@ with sync_playwright() as p:
         page.keyboard.press("Enter")
         page.wait_for_timeout(1500)
         check("confirm Enter → dialog closed", not dialog_open(page))
-        check("confirm Enter → no error toast",
-              page.query_selector(".toast.err") is None,
-              (page.query_selector(".toast.err").inner_text()
-               if page.query_selector(".toast.err") else ""))
+        err_toast = page.query_selector(".toast.err")
+        check("confirm Enter → no error toast", err_toast is None,
+              err_toast.inner_text() if err_toast else "")
+        # put the original values back through the API (audited, like any edit)
+        if original:
+            restored = page.evaluate(
+                """async ({ path, fields }) => {
+                     const body = {};
+                     for (const f of fields) body[f.name] = f.value;
+                     const res = await fetch(path, { method: 'PATCH',
+                       headers: { 'Content-Type': 'application/json',
+                                  'Authorization': 'Bearer ' + localStorage.getItem('erp_token') },
+                       body: JSON.stringify(body) });
+                     return res.status;
+                   }""",
+                original,
+            )
+            check("original values restored", restored in (200, 204), restored)
 
     check("no page errors", not errors, errors)
     browser.close()
