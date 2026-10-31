@@ -203,7 +203,8 @@ with sync_playwright() as p:
             check("Enter deleted the row", gone == 404, gone)
             check("delete dialog closed", not dialog_open(page))
         else:
-            page.click("[data-cf-no]")
+            cancel = page.query_selector("[data-cf-no]") or page.query_selector("#modal-root [data-close]")
+            cancel.click()
             page.wait_for_timeout(300)
             check("cancel on this host leaves the data untouched", not dialog_open(page))
 
