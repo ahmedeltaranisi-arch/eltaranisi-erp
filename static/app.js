@@ -236,7 +236,7 @@ function confirmDialog(message, onConfirm, { danger = false, title = "تأكيد
     title, narrow: true,
     body: `<p style="margin:0;font-size:14px">${ESC(message)}</p>`,
     footer: `<button class="btn" data-close>${ESC(t("common.cancel"))}</button>
-             <button class="btn ${danger ? "btn-danger" : "btn-primary"}" id="cf-ok">${ESC(t("common.approve"))}</button>`,
+             <button class="btn ${danger ? "btn-danger" : "btn-primary"}" id="cf-ok" data-modal-confirm>${ESC(t("common.approve"))}</button>`,
     onMount: (root, close) => {
       $("#cf-ok", root).onclick = async () => { close(); await onConfirm(); };
     }
@@ -268,7 +268,7 @@ function confirmAsync(message, { danger = true, title } = {}) {
       narrow: true,
       body: `<p style="margin:0;font-size:14px;white-space:pre-line;line-height:1.7">${ESC(message)}</p>`,
       footer: `<button class="btn" data-cf-no>${ESC(t("common.cancel"))}</button>
-               <button class="btn ${danger ? "btn-danger" : "btn-primary"}" data-cf-yes>
+               <button class="btn ${danger ? "btn-danger" : "btn-primary"}" data-cf-yes data-modal-confirm>
                  ${ESC(ar ? "تأكيد" : "Confirm")}</button>`,
       onMount: (root) => {
         root.querySelector("[data-cf-yes]").onclick = () => { finish(true); close(); };
@@ -1027,11 +1027,40 @@ function renderBottomNav() {
 }
 
 /* ------------------------------ keyboard shortcuts ------------------------------ */
+/* The open dialog's primary action. A confirmation box ("هل أنت متأكد…؟") marks
+ * its accept button with `data-modal-confirm`, so Enter can find it without
+ * knowing which dialog is on screen. */
+function modalPrimaryButton() {
+  const root = $("#modal-root");
+  if (!root || root.classList.contains("hidden")) return null;
+  const btn = root.querySelector("[data-modal-confirm]");
+  if (!btn || btn.disabled || btn.classList.contains("hidden")) return null;
+  return btn;
+}
+
+/* Enter = "I read the question, go ahead": it clicks the accept button, so the
+ * dialog's own onClick (close + async action, loading state, error reporting)
+ * runs exactly as if the mouse had pressed it — nothing is duplicated here. */
+function enterAcceptsDialog(e) {
+  if (e.key !== "Enter" || e.isComposing || e.defaultPrevented) return false;
+  const btn = modalPrimaryButton();
+  if (!btn) return false;
+  const el = document.activeElement;
+  if (el && (el.tagName === "TEXTAREA" || el.isContentEditable)) return false;
+  // a focused button/link activates itself: Enter on "إلغاء" must cancel, not accept
+  if (el && el.closest && el.closest("button,a[href]")) return false;
+  e.preventDefault();
+  btn.click();
+  return true;
+}
+
 function setupShortcuts() {
   document.addEventListener("keydown", (e) => {
-    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+    const active = document.activeElement || document.body;
+    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName) || active.isContentEditable;
     if (e.key === "/" && !typing) { e.preventDefault(); const s = $("#global-search"); if (s) s.focus(); }
     if (e.key === "?" && !typing) { e.preventDefault(); shortcutsModal(); }
+    if (enterAcceptsDialog(e)) return;
     if (e.key === "Escape") { closeSidebar(); $$(".dropdown-panel").forEach(p => p.classList.add("hidden")); }
   });
 }
@@ -1040,7 +1069,7 @@ function shortcutsModal() {
     ["/", APP.lang === "ar" ? "البحث الشامل" : "Global search"],
     ["?", APP.lang === "ar" ? "هذه القائمة" : "This help"],
     ["Esc", APP.lang === "ar" ? "إغلاق النوافذ والقوائم" : "Close panels"],
-    ["Enter", APP.lang === "ar" ? "حفظ النموذج" : "Submit form"],
+    ["Enter", APP.lang === "ar" ? "حفظ النموذج أو تأكيد الرسالة" : "Submit form / accept a dialog"],
   ];
   openModal({
     title: APP.lang === "ar" ? "اختصارات لوحة المفاتيح" : "Keyboard shortcuts",

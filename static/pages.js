@@ -2377,7 +2377,7 @@
                     <span>${ESC(c.payment_no)} · ${fmtDate(c.payment_date)} · ${fmtMoney(c.amount_cents)}</span></label>`).join("")
               : `<p class="muted small">${ESC(t("banks.noSuggestions"))}</p>`,
             footer: `<button class="btn" data-close>${ESC(t("common.cancel"))}</button>
-                     ${forTxn && forTxn.candidates.length ? `<button class="btn btn-primary" id="rec-ok">${ESC(t("banks.confirm"))}</button>` : ""}`,
+                     ${forTxn && forTxn.candidates.length ? `<button class="btn btn-primary" id="rec-ok" data-modal-confirm>${ESC(t("banks.confirm"))}</button>` : ""}`,
             onMount: (root, close) => {
               const btn = $("#rec-ok", root);
               if (!btn) return;
