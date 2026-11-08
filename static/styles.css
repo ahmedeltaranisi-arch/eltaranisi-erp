@@ -3081,3 +3081,105 @@ table.data td code, table.data td .mono { font-size: 12.2px; }
 @media print {
   .ai-side { display: none !important; }
 }
+
+/* ==================================================================
+   Financial statements — KPI strip and export menu.
+
+   1. Every KPI figure wrapped onto a second line with the currency dropped
+      below it. The strip used minmax(150px, 1fr) with six cells; a value like
+      "4,995,615.17" is ~122px at 17px tabular figures, which is exactly the
+      inner width of a minimum-width cell (150 − 2×14 padding). It could not
+      fit on one line however the grid was arranged.
+
+   2. The export panel was clipped at the edge of the content column: it is
+      anchored with inset-inline-end: 0 to a button that already sits at the
+      column's trailing edge, so in RTL it opened outward past the column.
+
+   3. Loss figures rendered as "4,995,615.17-" with the minus trailing. The
+      format string is correct; bidi reordering moves a neutral leading minus to
+      the end of the number run inside an RTL paragraph.
+   ================================================================== */
+
+/* ---- 1. KPI strip: fewer per row, room to breathe ---- */
+.stmt-kpis {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+  padding: 18px 24px 6px;
+}
+.stmt-kpi { padding: 13px 15px; min-width: 0; }
+.stmt-kpi span {
+  font-size: 11px;
+  letter-spacing: .03em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.stmt-kpi strong {
+  font-size: 16px;
+  line-height: 1.35;
+  margin-top: 5px;
+  white-space: nowrap;        /* one figure, one line */
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* the currency must stay on the number's baseline, never wrap under it */
+.stmt-kpi .money { white-space: nowrap; display: inline-flex; align-items: baseline; gap: 4px; }
+.stmt-kpi .money .cur { font-size: 11px; font-weight: 600; opacity: .75; margin: 0; }
+.stmt-kpi .money .num { margin: 0; }
+
+@media (max-width: 900px) {
+  .stmt-kpis { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; padding: 14px 16px 4px; }
+  .stmt-kpi strong { font-size: 14.5px; }
+}
+@media (max-width: 560px) {
+  .stmt-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .stmt-kpi { padding: 11px 12px; }
+  .stmt-kpi strong { font-size: 13.5px; }
+}
+
+/* ---- 2. export panel opens inwards and stays inside the column ---- */
+.stmt-toolbar { position: relative; gap: 14px; padding: 14px 16px; align-items: end; }
+.stmt-exports { position: relative; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.stmt-exports .export-menu .menu {
+  inset-inline-start: auto;
+  inset-inline-end: 0;
+  max-width: min(280px, calc(100vw - 32px));
+}
+@media (max-width: 720px) {
+  .stmt-exports .export-menu { width: 100%; }
+  .stmt-exports .export-menu summary { width: 100%; justify-content: center; }
+  .stmt-exports .export-menu .menu { inset-inline: 0; width: 100%; max-width: 100%; }
+}
+
+/* menu rows: even rhythm, and the format as a small pill rather than loose text */
+.export-menu .menu { padding: 7px; gap: 1px; }
+.export-menu .menu button,
+.export-menu .menu a { padding: 10px 11px; border-radius: 8px; font-size: 12.6px; gap: 10px; }
+.export-menu .menu .ml { flex: 1; text-align: start; }
+.export-menu .menu .hint {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  color: var(--text-3);
+  background: var(--surface-3);
+  padding: 2px 7px;
+  border-radius: 999px;
+  flex: none;
+}
+.export-menu .menu button:hover .hint { background: var(--brand-soft); color: var(--brand-ink); }
+
+/* ---- 3. the minus sign belongs in front of the digits ----
+   In an RTL paragraph a leading "-" is a neutral character, so bidi reorders it
+   to the end of the number run. Isolating the numeric run fixes every place
+   money appears, not just the KPI cards. */
+.money .num,
+td.num, th.num,
+.mono, .money { unicode-bidi: isolate; }
+.money .num { direction: ltr; }
+
+/* date fields keep a left-to-right numeric order inside an RTL form */
+.field input[type="date"], .date-field input { direction: ltr; text-align: start; }
+
+.stmt-toolbar .field > span,
+.stmt-select > span { font-size: 11.5px; letter-spacing: .02em; }
+.stmt-toolbar-spacer { flex: 1 1 12px; }
