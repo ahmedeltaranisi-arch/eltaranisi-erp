@@ -804,7 +804,14 @@ table.data tbody tr:focus-within { background: color-mix(in srgb, var(--brand) 7
 .export-menu summary:hover { background: var(--surface-2); }
 .export-menu[open] summary { box-shadow: var(--ring); border-color: transparent; }
 .export-menu .menu {
-  position: absolute; inset-inline-end: 0; top: calc(100% + 6px); min-width: 220px; z-index: 70;
+  /* `inset-inline-end: 0` is the trap here: in RTL it resolves to `left: 0`,
+     pinning the panel's LEFT edge to the button and making it grow RIGHTWARD —
+     out of the content column, under the sidebar, where it gets clipped.
+     Pinning the inline-start edge instead makes the panel open *toward* the
+     column in both directions. */
+  position: absolute; inset-inline-start: 0; inset-inline-end: auto;
+  top: calc(100% + 6px); min-width: 210px; max-width: min(280px, calc(100vw - 32px));
+  z-index: 70;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md);
   box-shadow: var(--shadow-lg); padding: 6px; display: grid; gap: 2px;
 }
@@ -3137,13 +3144,34 @@ table.data td code, table.data td .mono { font-size: 12.2px; }
   .stmt-kpi strong { font-size: 13.5px; }
 }
 
-/* ---- 2. export panel opens inwards and stays inside the column ---- */
+/* ---- 2. export panel opens inwards and stays inside the column ----
+   The anchoring was the bug, not the width. The panel was pinned with
+   `inset-inline-end: 0`, which in RTL resolves to `left: 0` — it fixed the
+   panel's LEFT edge to a button that already sits at the RIGHT edge of the
+   content column, so the panel opened rightward and slid under the sidebar,
+   where it was clipped after ~160px of its 280px.
+
+   `inset-inline-start: 0` resolves to `right: 0` in RTL: the panel's RIGHT edge
+   pins to the button's right edge and the panel opens leftward, into the
+   column. In LTR it resolves to `left: 0`, which is equally inward. One
+   declaration, correct in both directions. */
 .stmt-toolbar { position: relative; gap: 14px; padding: 14px 16px; align-items: end; }
 .stmt-exports { position: relative; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .stmt-exports .export-menu .menu {
-  inset-inline-start: auto;
-  inset-inline-end: 0;
+  inset-inline-start: 0;
+  inset-inline-end: auto;
+  width: max-content;
+  min-width: 210px;
   max-width: min(280px, calc(100vw - 32px));
+}
+/* the rows must not force the panel wider than its cap */
+.stmt-exports .export-menu .menu .ml { min-width: 0; }
+.stmt-exports .export-menu .menu button,
+.stmt-exports .export-menu .menu a { min-width: 0; }
+.stmt-exports .export-menu .menu .ml {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 @media (max-width: 720px) {
   .stmt-exports .export-menu { width: 100%; }
