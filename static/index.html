@@ -12,8 +12,8 @@
   <link rel="icon" href="/brand/favicon.ico" sizes="any" />
   <link rel="icon" href="/brand/icon-192.png" type="image/png" sizes="192x192" />
   <link rel="apple-touch-icon" href="/brand/apple-touch-icon.png" />
-  <meta name="theme-color" content="#0b1020" media="(prefers-color-scheme: dark)" />
-  <meta name="theme-color" content="#0b1020" />
+  <meta name="theme-color" content="#070c17" media="(prefers-color-scheme: dark)" />
+  <meta name="theme-color" content="#12457f" />
   <meta property="og:type" content="website" />
   <meta property="og:title" content="ELTARANISI ERP — نظام محاسبي وإداري متكامل" />
   <meta property="og:description" content="محاسبة مزدوجة القيد، مديونية موردين، صلاحيات على الخادم، وتقارير مالية قابلة للتصدير." />
@@ -33,16 +33,20 @@
       <div class="login-brand">
         <img class="login-logo" src="/brand/logo-full.png" alt="ELTARANISI ERP" width="196" height="181" />
       </div>
+      <div class="login-tagline">
+        <h1 data-i18n="login.hero">نظام محاسبي متكامل، بأمان مؤسسي</h1>
+        <p data-i18n="login.heroSub">قيود مزدوجة، قوائم مالية كاملة، مديونية وموردون، وصلاحيات دقيقة — كل شيء محسوب من الدفاتر.</p>
+      </div>
       <ul class="login-features">
         <li><span>✓</span><div><strong data-i18n="login.f1">محاسبة عامة مزدوجة القيد</strong><small data-i18n="login.f1d">قيود متوازنة، ترحيل ذري، وعكس آمن</small></div></li>
-        <li><span>✓</span><div><strong data-i18n="login.f2">مديونية الموردين وأعمار الديون</strong><small data-i18n="login.f2d">أرصدة مستحقة واستحقاقات قادمة لكل مورد</small></div></li>
+        <li><span>✓</span><div><strong data-i18n="login.f5">جميع القوائم المالية</strong><small data-i18n="login.f5d">الدخل، المركز المالي، التدفقات، حقوق الملكية، والأستاذ</small></div></li>
         <li><span>✓</span><div><strong data-i18n="login.f3">صلاحيات دقيقة على الخادم</strong><small data-i18n="login.f3d">فصل مهام، سجل تدقيق، ومستويات اعتماد</small></div></li>
         <li><span>✓</span><div><strong data-i18n="login.f4">عربي/إنجليزي ووضع ليلي</strong><small data-i18n="login.f4d">RTL وLTR كامل مع تفضيلات محفوظة</small></div></li>
       </ul>
       <div class="login-foot" data-i18n="login.foot">بيئة تطوير — البيانات تجريبية وليست بيانات إنتاج.</div>
     </div>
     <div class="login-panel">
-      <form id="login-form" class="login-card" autocomplete="off">
+      <form id="login-form" class="login-card" autocomplete="on" novalidate>
         <div class="login-tools">
           <button type="button" class="icon-btn" id="login-theme" title="Theme / المظهر" aria-label="Theme">
             <svg class="ico-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5z"/></svg>
@@ -51,9 +55,14 @@
         </div>
         <h2 data-i18n="login.title">تسجيل الدخول</h2>
         <p class="muted" data-i18n="login.subtitle">استخدم بيانات حسابك المؤسسي. كل إجراء يُسجَّل في سجل التدقيق.</p>
+        <div class="login-security">
+          <svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+          <span data-i18n="login.secureNote">اتصال مشفّر، كلمات المرور لا تُخزَّن كنص، والحساب يُقفل مؤقتًا بعد محاولات فاشلة متكررة.</span>
+        </div>
         <label class="field">
           <span data-i18n="login.username">اسم المستخدم</span>
-          <input name="username" id="login-username" required autocomplete="username" placeholder="ahmed.taranisi" />
+          <input name="username" id="login-username" required autocomplete="username" autocapitalize="none"
+                 spellcheck="false" placeholder="" data-i18n-ph="login.usernamePh" />
         </label>
         <label class="field">
           <span data-i18n="login.password">كلمة المرور</span>
@@ -62,10 +71,10 @@
             <button type="button" class="pw-toggle" id="pw-toggle" aria-label="show password" data-i18n-title="login.showPw" title="إظهار كلمة المرور">👁</button>
           </div>
         </label>
-        <div id="login-error" class="form-error hidden"></div>
-        <button class="btn btn-primary btn-block" type="submit" data-i18n="login.submit">دخول آمن</button>
+        <div id="login-error" class="form-error hidden" role="alert"></div>
+        <button class="btn btn-primary btn-block" type="submit" id="login-submit" data-i18n="login.submit">دخول آمن</button>
         <details class="demo-box hidden" id="demo-box">
-          <summary data-i18n="login.demo">حسابات تجريبية جاهزة (بيئة تطوير) — اضغط للتعبئة</summary>
+          <summary data-i18n="login.demo">حسابات تجريبية جاهزة (بيئة تطوير) — اضغط للدخول</summary>
           <div class="demo-grid" id="demo-grid"></div>
         </details>
         <div class="login-hint">

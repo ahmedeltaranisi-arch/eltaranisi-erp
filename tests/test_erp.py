@@ -1505,9 +1505,20 @@ class ERPTestCase(unittest.TestCase):
             self.assertEqual(resp.status, 200)
             data = json.loads(resp.read().decode())
         users = {a["username"] for a in data["accounts"]}
-        self.assertIn("ahmed.taranisi", users)
         self.assertIn("mahmoud.morad", users)
-        self.assertEqual(len(users), 7)
+        self.assertIn("heba.elsherif", users)
+        # The owner account must never be offered by the one-click picker: its name
+        # is the company's name and printing it on a sign-in screen names the
+        # highest-privilege account for anyone who reaches the page.
+        self.assertNotIn("ahmed.taranisi", users)
+        self.assertEqual(len(users), 6)
+        roles = {a["role"] for a in data["accounts"]}
+        self.assertNotIn("company_owner", roles)
+        # ...and it cannot be reached by one click either.
+        status, _ = self.owner.post("/api/auth/demo-login", {"username": "ahmed.taranisi"})
+        self.assertEqual(status, 403)
+        # no password ever leaves the server for the picker
+        self.assertFalse(any("password" in a for a in data["accounts"]))
 
     # ================================================================
     # 8. ACCOUNTING INTEGRITY ENDPOINT (backend-agnostic safety net)
