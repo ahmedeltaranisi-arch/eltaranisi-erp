@@ -3486,12 +3486,14 @@
         `<span class="badge violet">${icon("sparkle")} ${ESC(L("من القيود المرحّلة فقط", "Posted entries only"))}</span>`)}
         <div class="ai-shell">
           <aside class="ai-side">
-            ${card(L("اسأل عن أي جزء", "Ask about any module"), `
-              <div class="chip-row ai-chips">
-                ${chips.map(s => `<button class="chip" data-q="${ESC(s)}">${ESC(s)}</button>`).join("")}
+            ${card(L("جرّب أحد هذه", "Try one of these"), `
+              <div class="ai-suggest">
+                ${chips.slice(0, 6).map((s, i) => `<button type="button" class="chip" data-q="${ESC(s)}">
+                  ${icon(["cash", "scale", "payables", "wallet", "receivables", "reports"][i] || "sparkle")}
+                  <span>${ESC(s)}</span></button>`).join("")}
               </div>
-              <p class="field-hint" style="margin-top:12px">${ESC(t("assistant.disclaimer"))}</p>`)}
-            ${card(L("ما يمكنني رؤيته", "What I can see"), `
+              <p class="field-hint" style="margin-top:11px">${ESC(t("assistant.disclaimer"))}</p>`)}
+            ${card(L("ما أستطيع قراءته", "What I can read"), `
               <div class="ai-scope">
                 ${[["wallet", "الخزينة والبنوك", "Cash & banks", "#/banks"],
                    ["receivables", "العملاء والتحصيل", "Customers & collection", "#/receivables"],
@@ -3499,9 +3501,8 @@
                    ["inventory", "المخزون", "Inventory", "#/inventory"],
                    ["payroll", "الرواتب", "Payroll", "#/payroll"],
                    ["scale", "القوائم المالية", "Financial statements", "#/statements"]]
-                  .filter(() => true)
                   .map(([ic, arL, enL, href]) => `<a class="ai-scope-item" href="${href}">
-                    ${icon(ic)}<span>${ESC(ar ? arL : enL)}</span>${icon("chevron")}</a>`).join("")}
+                    ${icon(ic)}<span>${ESC(ar ? arL : enL)}</span></a>`).join("")}
               </div>
               <p class="field-hint" style="margin-top:10px">${ESC(L("كل إجابة محدودة بصلاحياتك على الخادم.", "Every answer is limited by your server-side permissions."))}</p>`)}
           </aside>
