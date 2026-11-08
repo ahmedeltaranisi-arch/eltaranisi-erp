@@ -3512,11 +3512,20 @@
                   <span class="ai-avatar">${icon("sparkle")}</span>
                   <span class="ai-who">${ESC(t("assistant.title"))}</span>
                 </div>
-                <div class="ai-headline">${ESC(L("أهلًا بك. اسألني عن أي جزء من النظام.",
-                  "Welcome. Ask me about any part of the system."))}</div>
+                <div class="ai-headline">${ESC(L("أهلًا بك — بماذا أساعدك؟",
+                  "Welcome — what would you like to know?"))}</div>
                 <div class="ai-text"><p>${ESC(L(
-                  "الأرباح والإيرادات والمصروفات، السيولة والبنوك، العملاء والموردون وأعمار الديون، المخزون، الرواتب، الأصول، الموازنة، المديونية، ضريبة القيمة المضافة، القيود والفترات، أو أي قائمة من القوائم المالية.",
-                  "Profit, revenue and expenses; cash and banks; customers, vendors and aging; inventory; payroll; assets; budgets; contractor debt; VAT; entries and periods; or any financial statement."))}</p></div>
+                  "أجيب من القيود المرحّلة فقط، وضمن صلاحياتك. اختر سؤالًا للبدء أو اكتب سؤالك.",
+                  "I answer only from posted entries, within your permissions. Pick a question to start, or type your own."))}</p></div>
+                <div class="ai-starters" id="ai-starters">
+                  ${(ar
+                    ? [["الأداء العام", "cash"], ["صافي الربح", "scale"], ["مديونية الموردين", "payables"],
+                       ["السيولة النقدية", "wallet"], ["أعمار ديون العملاء", "receivables"], ["المصروفات الأكبر", "reports"]]
+                    : [["Overall performance", "cash"], ["Net profit", "scale"], ["Vendor payables", "payables"],
+                       ["Available cash", "wallet"], ["Receivables aging", "receivables"], ["Largest expenses", "reports"]])
+                    .map(([label, ic]) => `<button type="button" class="ai-starter" data-q="${ESC(label)}">
+                      ${icon(ic)}<span>${ESC(label)}</span></button>`).join("")}
+                </div>
               </div>
             </div>
             <form class="ai-composer" id="chat-form" autocomplete="off">
