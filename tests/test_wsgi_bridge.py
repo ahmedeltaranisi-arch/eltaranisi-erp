@@ -120,8 +120,15 @@ def main():
     status, body, headers = call("GET", "/api/health")
     check("GET /api/health → 200 JSON", status == 200 and b'"status": "ok"' in body)
     status, body, headers = call("GET", "/api/dev/accounts")
-    check("GET /api/dev/accounts exposes 7 demo logins",
-          status == 200 and body.count(b'"username"') == 7)
+    # Six of the seven seeded users: the owner is deliberately kept out of the
+    # public picker, because its full name is the company's own name and printing
+    # it on a sign-in page would point an attacker straight at that account. The
+    # owner still signs in by typing the username.
+    listed = body.count(b'"username"')
+    check("GET /api/dev/accounts exposes 6 demo logins (owner excluded)",
+          status == 200 and listed == 6, f"(got {listed})")
+    check("the owner is not listed in the public picker",
+          b'"company_owner"' not in body)
 
     # 3. auth guard
     status, body, headers = call("GET", "/api/meta")

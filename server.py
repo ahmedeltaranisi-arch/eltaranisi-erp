@@ -2436,6 +2436,12 @@ def _statement_table(data, kind):
         header = ["Code", "Account", "Unit", "Due", "Paid", "Net"]
         rows = [[a["code"], a["name_ar"], a["unit"], money(a["due_cents"]),
                  money(a["paid_cents"]), money(a["net_cents"])] for a in data["accounts"]]
+        # Like every other statement, the file must carry its totals even when the
+        # period is empty: a fresh database seeds debt *accounts* but no items, so
+        # without this the export was a bare header and looked like a broken file.
+        t = data["totals"]
+        rows.append(["", "Total", "", money(t["due_cents"]),
+                     money(t["paid_cents"]), money(t["net_cents"])])
         return header, rows
     raise ApiError("INVALID_INPUT: نوع القائمة غير مدعوم / Unsupported statement")
 

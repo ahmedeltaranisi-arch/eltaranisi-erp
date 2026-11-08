@@ -541,7 +541,20 @@ class ERPTestCase(unittest.TestCase):
             with urllib.request.urlopen(req, timeout=60) as resp:
                 self.assertEqual(resp.status, 200, f"{kind} {path}")
                 body = resp.read()
-            self.assertGreater(len(body), 100, f"{kind} {path} produced an empty file")
+            # Assert the file is *well formed*, not that it is large. A statement
+            # for a period with no activity is legitimately small — debt-position
+            # on a fresh seed is a header plus a zeroed totals row (56 bytes) —
+            # so a byte-count floor would call a correct export empty.
+            if magic == b"%PDF":
+                self.assertTrue(body.rstrip().endswith(b"%%EOF"),
+                                f"{kind} {path} is a truncated PDF")
+            elif magic == b"PK":
+                import io, zipfile
+                self.assertTrue(zipfile.is_zipfile(io.BytesIO(body)),
+                                f"{kind} {path} is not a readable workbook")
+            else:  # CSV: must at least carry its header line
+                self.assertGreater(body.count(b"\r\n"), 0,
+                                   f"{kind} {path} has no header row")
             self.assertTrue(body.startswith(magic), f"{kind} {path} wrong format")
 
     def test_52_export_requires_permission(self):
