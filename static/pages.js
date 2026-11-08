@@ -629,7 +629,7 @@
           };
           const wire = () => {
             $$(".rm-line", root).forEach(b => b.onclick = () => {
-              if ($$("#je-lines tbody tr", root).length > 2) { b.closest("tr").remove(); recalc(); }
+              if ($$("#je-lines tbody tr", root).length > 2) { b.closest(".de-row").remove(); recalc(); }
             });
             $$(".line-debit,.line-credit", root).forEach(inp => inp.oninput = () => {
               if (inp.classList.contains("line-debit") && Number(inp.value) > 0) $(".line-credit", inp.closest("tr")).value = "";
@@ -712,13 +712,19 @@
       const [cust, prods, meta] = await Promise.all([api("/api/customers"), api("/api/products"), api("/api/meta")]);
       const customers = cust.customers.filter(c => c.is_active);
       const products = prods.products.filter(p => p.is_active);
-      const rowHtml = () => `<tr>
-          <td data-label="${ESC(L("الصنف", "Item"))}"><select class="input li-prod">${products.map(p => `<option value="${p.id}" data-price="${p.sale_price_cents}" data-tax="${p.tax_rate_bp}">${ESC(p.sku)} — ${ESC(p.name_ar)}</option>`).join("")}</select></td>
-          <td data-label="${ESC(t("common.qty"))}"><input class="input li-qty" type="number" step="0.001" min="0" value="1"/></td>
-          <td data-label="${ESC(t("common.price"))}"><input class="input li-price" type="number" step="0.01" min="0"/></td>
-          <td data-label="${ESC(t("common.tax"))}"><input class="input li-tax" type="number" step="0.01" min="0" value="14"/></td>
-          <td class="num li-total mono" data-label="${ESC(t("common.total"))}">0.00</td>
-          <td><button class="icon-btn rm">${icon("close")}</button></td></tr>`;
+      const rowHtml = () => `<div class="de-row">
+          <div class="de-item">
+            <select class="input li-prod">${products.map(p => `<option value="${p.id}" data-price="${p.sale_price_cents}" data-tax="${p.tax_rate_bp}">${ESC(p.sku)} — ${ESC(p.name_ar)}</option>`).join("")}</select>
+          </div>
+          <div class="de-qty" data-l-qty="${ESC(t("common.qty"))}">
+            <input class="input li-qty" type="number" step="0.001" min="0" value="1" aria-label="${ESC(t("common.qty"))}"/></div>
+          <div class="de-price" data-l-price="${ESC(t("common.price"))}">
+            <input class="input li-price" type="number" step="0.01" min="0" placeholder="0.00" aria-label="${ESC(t("common.price"))}"/></div>
+          <div class="de-tax" data-l-tax="${ESC(t("common.tax"))}">
+            <input class="input li-tax" type="number" step="0.01" min="0" value="14" aria-label="${ESC(t("common.tax"))}"/></div>
+          <div class="de-total li-total">0.00</div>
+          <button type="button" class="de-del rm" title="${ESC(t("common.delete"))}">${icon("close")}</button>
+        </div>`;
       openModal({
         title: t("sales.new"), wide: true,
         body: `
@@ -731,20 +737,24 @@
               <select id="si-wh">${meta.warehouses.map(w => `<option value="${w.id}">${ESC(w.name_ar)}</option>`).join("")}</select></div>
             <div class="field" style="grid-column:span 2"><span>${ESC(t("common.notes"))}</span><input id="si-notes"/></div>
           </div>
-          <div class="table-wrap" style="border:1px solid var(--border);border-radius:12px">
-            <table class="data compact" id="si-lines">
-              <thead><tr><th>${ESC(L("الصنف", "Product"))}</th><th>${ESC(t("common.qty"))}</th><th>${ESC(t("common.price"))}</th>
-                <th>${ESC(t("common.tax"))} %</th><th class="num">${ESC(t("common.total"))}</th><th></th></tr></thead>
-              <tbody>${rowHtml()}</tbody>
-            </table>
-          </div>
-          <div style="display:flex;gap:18px;align-items:center;margin-top:12px;flex-wrap:wrap">
-            <button class="btn btn-sm" id="si-add">${icon("plus")} ${ESC(t("common.add"))}</button>
-            <span class="muted small">${ESC(t("common.subtotal"))}: <strong id="si-sub">0.00</strong></span>
-            <span class="muted small">${ESC(t("common.tax"))}: <strong id="si-tax">0.00</strong></span>
-            <span class="muted small">${ESC(t("common.total"))}: <strong id="si-total">0.00</strong></span>
-            <div style="flex:1"></div>
-            <label class="checkbox"><input type="checkbox" id="si-post" checked/> ${ESC(L("ترحيل الفاتورة فورًا", "Post invoice immediately"))}</label>
+          <div class="doc-editor" id="si-lines">
+            <div class="de-head">
+              <span>${ESC(L("الصنف", "Product"))}</span>
+              <span class="de-c">${ESC(t("common.qty"))}</span>
+              <span class="de-c">${ESC(t("common.price"))}</span>
+              <span class="de-c">${ESC(L("ضريبة %", "Tax %"))}</span>
+              <span class="de-e">${ESC(t("common.total"))}</span><span></span>
+            </div>
+            <div class="de-rows">${rowHtml()}</div>
+            <div class="de-foot">
+              <button type="button" class="btn btn-sm" id="si-add">${icon("plus")} ${ESC(t("common.add"))}</button>
+              <label class="de-post"><input type="checkbox" id="si-post" checked/> ${ESC(L("ترحيل الفاتورة فورًا", "Post invoice immediately"))}</label>
+              <div class="de-totals">
+                <div class="de-sum"><span>${ESC(t("common.subtotal"))}</span><strong id="si-sub">0.00</strong></div>
+                <div class="de-sum"><span>${ESC(t("common.tax"))}</span><strong id="si-tax">0.00</strong></div>
+                <div class="de-sum de-grand"><span>${ESC(t("common.total"))}</span><strong id="si-total">0.00</strong></div>
+              </div>
+            </div>
           </div>
           <div class="form-error hidden" id="si-error"></div>`,
         footer: `<button class="btn" data-close>${ESC(t("common.cancel"))}</button>
@@ -752,7 +762,7 @@
         onMount: (root, close) => {
           const recalc = () => {
             let sub = 0, tax = 0;
-            $$("#si-lines tbody tr", root).forEach(tr => {
+            $$("#si-lines .de-row", root).forEach(tr => {
               const q = Number($(".li-qty", tr).value || 0), p = Number($(".li-price", tr).value || 0);
               const tRate = Number($(".li-tax", tr).value || 0);
               const line = q * p, lineTax = line * tRate / 100;
@@ -765,25 +775,28 @@
           };
           const wire = () => {
             $$(".li-prod", root).forEach(sel => sel.onchange = () => {
-              const tr = sel.closest("tr");
+              const tr = sel.closest(".de-row");
               $(".li-price", tr).value = (Number(sel.selectedOptions[0].dataset.price) / 100).toFixed(2);
               $(".li-tax", tr).value = (Number(sel.selectedOptions[0].dataset.tax) / 100).toFixed(2);
               recalc();
             });
             $$("input", root).forEach(i => i.oninput = recalc);
             $$(".rm", root).forEach(b => b.onclick = () => {
-              if ($$("#si-lines tbody tr", root).length > 1) { b.closest("tr").remove(); recalc(); }
+              if ($$("#si-lines .de-row", root).length > 1) {
+                b.closest(".de-row").remove(); recalc(); syncDelete(root, "#si-lines");
+              }
             });
+            syncDelete(root, "#si-lines");
             $$(".li-prod", root).forEach(sel => sel.dispatchEvent(new Event("change")));
           };
           wire();
           $("#si-add", root).onclick = () => {
-            $("#si-lines tbody", root).insertAdjacentHTML("beforeend", rowHtml());
+            $("#si-lines .de-rows", root).insertAdjacentHTML("beforeend", rowHtml());
             wire();
           };
           $("#si-save", root).onclick = async () => {
             try {
-              const lines = $$("#si-lines tbody tr", root).map(tr => ({
+              const lines = $$("#si-lines .de-row", root).map(tr => ({
                 product_id: Number($(".li-prod", tr).value),
                 qty: Number($(".li-qty", tr).value || 0),
                 unit_price: Number($(".li-price", tr).value || 0),
@@ -931,14 +944,20 @@
       const optionsHtml = products.map(p =>
         `<option value="${p.id}" data-price="${p.purchase_price_cents}" data-tax="${p.tax_rate_bp}">${ESC(p.sku)} — ${ESC(p.name_ar)}</option>`).join("")
         + `<option value="${FREE}" data-price="0" data-tax="0">${ESC(L("＋ بند حر (خدمة / لا يوجد صنف)", "＋ Free line (service / no item)"))}</option>`;
-      const rowHtml = () => `<tr>
-          <td data-label="${ESC(L("الصنف", "Item"))}"><select class="input li-prod">${optionsHtml}</select>
-              <input class="input li-desc hidden" placeholder="${ESC(L("وصف البند", "Line description"))}" style="margin-top:6px"/></td>
-          <td data-label="${ESC(t("common.qty"))}"><input class="input li-qty" type="number" step="0.001" min="0" value="1"/></td>
-          <td data-label="${ESC(t("common.price"))}"><input class="input li-price" type="number" step="0.01" min="0"/></td>
-          <td data-label="${ESC(t("common.tax"))}"><input class="input li-tax" type="number" step="0.01" min="0" value="14"/></td>
-          <td class="num li-total mono" data-label="${ESC(t("common.total"))}">0.00</td>
-          <td><button class="icon-btn rm">${icon("close")}</button></td></tr>`;
+      const rowHtml = () => `<div class="de-row">
+          <div class="de-item">
+            <select class="input li-prod">${optionsHtml}</select>
+            <input class="input li-desc hidden" placeholder="${ESC(L("وصف البند", "Line description"))}"/>
+          </div>
+          <div class="de-qty" data-l-qty="${ESC(t("common.qty"))}">
+            <input class="input li-qty" type="number" step="0.001" min="0" value="1" aria-label="${ESC(t("common.qty"))}"/></div>
+          <div class="de-price" data-l-price="${ESC(t("common.price"))}">
+            <input class="input li-price" type="number" step="0.01" min="0" placeholder="0.00" aria-label="${ESC(t("common.price"))}"/></div>
+          <div class="de-tax" data-l-tax="${ESC(t("common.tax"))}">
+            <input class="input li-tax" type="number" step="0.01" min="0" value="14" aria-label="${ESC(t("common.tax"))}"/></div>
+          <div class="de-total li-total">0.00</div>
+          <button type="button" class="de-del rm" title="${ESC(t("common.delete"))}">${icon("close")}</button>
+        </div>`;
       openModal({
         title: t("purchases.new"), wide: true,
         body: `
@@ -954,17 +973,22 @@
             <div class="field"><span>${ESC(t("purchases.po"))}</span><input id="pi-po"/></div>
             <div class="field"><span>${ESC(t("purchases.grn"))}</span><input id="pi-grn"/></div>
           </div>
-          <div class="table-wrap" style="border:1px solid var(--border);border-radius:12px">
-            <table class="data compact" id="pi-lines">
-              <thead><tr><th>${ESC(L("الصنف / البند", "Item / line"))}</th><th>${ESC(t("common.qty"))}</th><th>${ESC(t("common.price"))}</th>
-                <th>${ESC(t("common.tax"))} %</th><th class="num">${ESC(t("common.total"))}</th><th></th></tr></thead>
-              <tbody>${rowHtml()}</tbody></table>
-          </div>
-          <div style="display:flex;gap:18px;align-items:center;margin-top:12px;flex-wrap:wrap">
-            <button class="btn btn-sm" id="pi-add">${icon("plus")} ${ESC(L("إضافة بند حر", "Add a line"))}</button>
-            <span class="muted small">${ESC(t("common.total"))}: <strong id="pi-total">0.00</strong></span>
-            <div style="flex:1"></div>
-            <label class="checkbox"><input type="checkbox" id="pi-post" checked/> ${ESC(L("ترحيل الفاتورة فورًا", "Post invoice immediately"))}</label>
+          <div class="doc-editor" id="pi-lines">
+            <div class="de-head">
+              <span>${ESC(L("الصنف / البند", "Item / line"))}</span>
+              <span class="de-c">${ESC(t("common.qty"))}</span>
+              <span class="de-c">${ESC(t("common.price"))}</span>
+              <span class="de-c">${ESC(L("ضريبة %", "Tax %"))}</span>
+              <span class="de-e">${ESC(t("common.total"))}</span><span></span>
+            </div>
+            <div class="de-rows">${rowHtml()}</div>
+            <div class="de-foot">
+              <button type="button" class="btn btn-sm" id="pi-add">${icon("plus")} ${ESC(L("إضافة بند", "Add line"))}</button>
+              <label class="de-post"><input type="checkbox" id="pi-post" checked/> ${ESC(L("ترحيل الفاتورة فورًا", "Post invoice immediately"))}</label>
+              <div class="de-totals">
+                <div class="de-sum de-grand"><span>${ESC(t("common.total"))}</span><strong id="pi-total">0.00</strong></div>
+              </div>
+            </div>
           </div>
           <div class="form-error hidden" id="pi-error"></div>`,
         footer: `<button class="btn" data-close>${ESC(t("common.cancel"))}</button>
@@ -972,7 +996,7 @@
         onMount: (root, close) => {
           const recalc = () => {
             let total = 0;
-            $$("#pi-lines tbody tr", root).forEach(tr => {
+            $$("#pi-lines .de-row", root).forEach(tr => {
               const q = Number($(".li-qty", tr).value || 0), p = Number($(".li-price", tr).value || 0);
               const rate = Number($(".li-tax", tr).value || 0);
               const line = q * p * (1 + rate / 100);
@@ -982,7 +1006,7 @@
             $("#pi-total", root).textContent = total.toFixed(2);
           };
           const syncRow = (sel) => {
-            const tr = sel.closest("tr");
+            const tr = sel.closest(".de-row");
             const free = sel.value === FREE;
             const desc = $(".li-desc", tr);
             desc.classList.toggle("hidden", !free);
@@ -996,27 +1020,31 @@
             $$(".li-prod", root).forEach(sel => { sel.onchange = () => syncRow(sel); });
             $$("input", root).forEach(i => i.oninput = recalc);
             $$(".rm", root).forEach(b => b.onclick = () => {
-              if ($$("#pi-lines tbody tr", root).length > 1) { b.closest("tr").remove(); recalc(); }
+              if ($$("#pi-lines .de-row", root).length > 1) {
+                b.closest(".de-row").remove(); recalc(); syncDelete(root, "#pi-lines");
+              }
             });
+            syncDelete(root, "#pi-lines");
             $$(".li-prod", root).forEach(sel => {
               const free = sel.value === FREE;
-              $(".li-desc", sel.closest("tr")).classList.toggle("hidden", !free);
+              $(".li-desc", sel.closest(".de-row")).classList.toggle("hidden", !free);
             });
           };
           wire();
           $("#pi-add", root).onclick = () => {
-            $("#pi-lines tbody", root).insertAdjacentHTML("beforeend", rowHtml());
+            $("#pi-lines .de-rows", root).insertAdjacentHTML("beforeend", rowHtml());
             wire();
-            const rows = $$("#pi-lines tbody tr", root);
+            const rows = $$("#pi-lines .de-row", root);
             const last = rows[rows.length - 1];
             const sel = $(".li-prod", last);
             sel.value = FREE;                    // new lines start as a free service line
             syncRow(sel);
+            syncDelete(root, "#pi-lines");
             $(".li-desc", last).focus();
           };
           $("#pi-save", root).onclick = async () => {
             try {
-              const rows = $$("#pi-lines tbody tr", root);
+              const rows = $$("#pi-lines .de-row", root);
               const lines = [];
               let needsWarehouse = false;
               for (const tr of rows) {
@@ -3397,6 +3425,16 @@
          "Budget vs actual", "VAT position", "Payroll", "Inventory", "Contractor debt",
          "Pending entries", "Fiscal periods", "Assets & depreciation", "KPI ratios"],
   };
+
+  // The last remaining line cannot be deleted (an invoice needs at least one),
+  // so the button is disabled instead of silently doing nothing when clicked.
+  function syncDelete(root, editorSel) {
+    const rows = $$(`${editorSel} .de-row`, root);
+    $$(`${editorSel} .de-del`, root).forEach(b => {
+      b.disabled = rows.length < 2;
+      b.setAttribute("aria-disabled", rows.length < 2 ? "true" : "false");
+    });
+  }
 
   function assistantCard(c) {
     if (c.raw) {

@@ -2556,3 +2556,240 @@ table.data td code, table.data td .mono { font-size: 12.2px; }
   .neg { color: #000 !important; }
   .badge { border: 1px solid #999 !important; color: #000 !important; background: #fff !important; }
 }
+
+/* ==================================================================
+   Document line editor — shared by sales and purchase invoices.
+
+   What was wrong before: the line table reused `table.data`, whose cells
+   carry `white-space: nowrap` and whose `.input` children are sized with
+   `min-height: 44px; padding: 11px 14px` for full-page forms. Six of those
+   inside a 900px modal left barely 130px per column, so the item name was
+   truncated, the quantity spinner overlapped the digits, the price was cut
+   mid-number, and the row delete button drifted. The layout also depended on
+   the browser supporting `:has()`, so it broke differently in each engine.
+
+   The fix is a purpose-built grid that never depends on table auto-layout:
+   fixed tracks for the numeric fields, one flexible track for the item, and
+   compact controls that fit inside those tracks at every width.
+   ================================================================== */
+
+.doc-editor { display: flex; flex-direction: column; gap: 10px; }
+
+/* ---- header row ---- */
+.doc-editor .de-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 92px 118px 74px 116px 34px;
+  gap: 8px;
+  padding: 0 10px 0 2px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .02em;
+  color: var(--text-3);
+  text-transform: uppercase;
+}
+.doc-editor .de-head > span { padding-inline-start: 2px; }
+.doc-editor .de-head .de-c { text-align: center; }
+.doc-editor .de-head .de-e { text-align: end; }
+
+/* ---- rows ---- */
+.de-rows { display: flex; flex-direction: column; gap: 8px; }
+
+.de-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 92px 118px 74px 116px 34px;
+  gap: 8px;
+  align-items: start;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  transition: border-color .14s var(--ease), background .14s var(--ease);
+}
+.de-row:hover { border-color: var(--border-strong); }
+.de-row:focus-within {
+  border-color: color-mix(in srgb, var(--brand) 55%, transparent);
+  background: var(--surface);
+}
+
+/* the item cell stacks the select and (for free lines) a description field */
+.de-item { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+
+/* ---- compact controls: override the full-page .input sizing ---- */
+.doc-editor .input,
+.doc-editor select.input,
+.doc-editor input.input {
+  min-height: 38px;
+  height: 38px;
+  padding: 0 10px;
+  font-size: 13px;
+  border-radius: 8px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.doc-editor select.input { padding-inline-end: 26px; text-overflow: ellipsis; }
+.doc-editor input.input[type="number"] {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+  direction: ltr;
+  /* keep the spinner from sitting on top of the digits */
+  padding-inline-end: 22px;
+}
+.doc-editor input.input[type="number"]::-webkit-outer-spin-button,
+.doc-editor input.input[type="number"]::-webkit-inner-spin-button { opacity: 1; margin-inline-start: 4px; }
+
+/* ---- per-row total ---- */
+.de-total {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 38px;
+  padding-inline-end: 2px;
+  font-size: 13px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: ltr;
+  color: var(--text);
+}
+
+/* ---- remove button ---- */
+.de-del {
+  width: 34px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: background .14s var(--ease), color .14s var(--ease), border-color .14s var(--ease);
+}
+.de-del:hover {
+  background: var(--danger-soft);
+  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
+  color: var(--danger);
+}
+.de-del .ico-svg { width: 15px; height: 15px; }
+.de-del:disabled { opacity: .3; cursor: not-allowed; }
+.de-del:disabled:hover { background: transparent; border-color: transparent; color: var(--text-3); }
+
+/* ---- footer: add line + totals + post switch ---- */
+.de-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 2px 0;
+  border-top: 1px dashed var(--border);
+  margin-top: 2px;
+}
+.de-totals {
+  display: flex;
+  align-items: baseline;
+  gap: 18px;
+  margin-inline-start: auto;
+  flex-wrap: wrap;
+}
+.de-totals .de-sum { display: flex; align-items: baseline; gap: 7px; }
+.de-totals .de-sum span {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: .03em;
+}
+.de-totals .de-sum strong {
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  direction: ltr;
+  color: var(--text-2);
+}
+.de-totals .de-sum.de-grand {
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--brand-soft);
+  border: 1px solid color-mix(in srgb, var(--brand) 24%, transparent);
+}
+.de-totals .de-sum.de-grand span { color: var(--brand-ink); }
+.de-totals .de-sum.de-grand strong {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--brand-ink);
+}
+
+/* the post-immediately switch reads as a real control, not stray text */
+.de-post {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-2);
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  user-select: none;
+}
+.de-post:hover { border-color: var(--border-strong); }
+.de-post input { width: 16px; height: 16px; accent-color: var(--brand); cursor: pointer; margin: 0; }
+
+/* ---- narrow widths: two-line rows instead of a squeezed single line ---- */
+@media (max-width: 860px) {
+  .doc-editor .de-head { display: none; }
+  .de-row {
+    grid-template-columns: minmax(0, 1fr) 34px;
+    grid-template-areas:
+      "item  del"
+      "qty   price"
+      "tax   total";
+    gap: 8px;
+    padding: 10px;
+  }
+  .de-item  { grid-area: item; }
+  .de-qty   { grid-area: qty; }
+  .de-price { grid-area: price; }
+  .de-tax   { grid-area: tax; }
+  .de-total { grid-area: total; justify-content: flex-end; }
+  .de-del   { grid-area: del; align-self: start; }
+  /* label the numeric fields now that the header row is gone */
+  .de-qty::before, .de-price::before, .de-tax::before {
+    display: block;
+    font-size: 10.5px;
+    font-weight: 700;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    margin-bottom: 4px;
+  }
+  .de-qty::before { content: attr(data-l-qty); }
+  .de-price::before { content: attr(data-l-price); }
+  .de-tax::before { content: attr(data-l-tax); }
+  .de-totals { margin-inline-start: 0; width: 100%; justify-content: space-between; }
+}
+
+@media (max-width: 520px) {
+  .de-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 34px;
+    grid-template-areas:
+      "item  item  del"
+      "qty   price price"
+      "tax   total total";
+  }
+  .de-totals .de-sum.de-grand { width: 100%; justify-content: space-between; }
+}
+
+/* dark theme: lift the row off the modal surface so the grid reads as rows */
+[data-theme="dark"] .de-row { background: var(--surface-3); border-color: var(--border-strong); }
+[data-theme="dark"] .de-row:focus-within { background: var(--surface-2); }
+[data-theme="dark"] .de-post { background: var(--surface-3); }
+[data-theme="dark"] .de-totals .de-sum.de-grand {
+  background: color-mix(in srgb, var(--brand) 16%, var(--surface-2));
+}
