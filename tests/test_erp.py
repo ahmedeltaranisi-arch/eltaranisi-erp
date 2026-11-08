@@ -319,8 +319,17 @@ class ERPTestCase(unittest.TestCase):
         open_total = sum(i["remaining_cents"] for i in aging["items"])
         self.assertEqual(open_total, sum(aging["buckets"].values()))
         self.assertEqual(payables["totals"]["outstanding_cents"] >= 0, True)
-        self.assertEqual(payables["totals"]["journal_balance_cents"], payables["totals"]["outstanding_cents"],
-                         "vendor subledger must reconcile with the AP control account")
+        # The AP control account and the invoice subledger reconcile *through*
+        # unallocated payments: paying a vendor debits 2110 immediately, but the
+        # invoice it will settle may not exist yet, so the subledger legitimately
+        # runs ahead by that amount. Asserting plain equality made this fail for
+        # a reason that was never a bug.
+        totals = payables["totals"]
+        self.assertEqual(
+            totals["journal_balance_cents"] + totals["unallocated_payments_cents"],
+            totals["outstanding_cents"],
+            "vendor subledger must reconcile with the AP control account")
+        self.assertTrue(totals["reconciles"], "the report must flag its own reconciliation")
 
     # ================================================================
     # 3. PERMISSIONS, WORKFLOW & IMMUTABILITY
@@ -501,6 +510,52 @@ class ERPTestCase(unittest.TestCase):
             self.assertIn("text/csv", resp.headers.get("Content-Type"))
         self.assertTrue(body.startswith("\ufeff"), "CSV must include a UTF-8 BOM so Excel renders Arabic")
         self.assertIn("Code", body.splitlines()[0])
+
+    def test_51b_every_statement_exports_in_every_format(self):
+        """Every statement must survive PDF, Excel and CSV.
+
+        This used to fail silently: the Excel branch read a key the balance
+        sheet never emits, so only that one combination answered 500 while the
+        rest worked. Sweeping the whole matrix is the only way to notice.
+        """
+        import urllib.request
+        kinds = ["income-statement", "balance-sheet", "cash-flow", "equity-changes",
+                 "trial-balance", "tb-balance-sheet", "general-ledger", "journal",
+                 "receivables-aging", "payables-aging", "debt-position"]
+        today = self.today()
+        year_start = today[:4] + "-01-01"
+        # One format per kind keeps the suite quick; the point is that every
+        # kind reaches *some* exporter without a KeyError. The Excel branch is
+        # the one that used to break, so it gets the balance sheet explicitly.
+        for kind, path, magic in [
+            (k, f"/api/reports/xlsx?kind={k}&from={year_start}&to={today}", b"PK") for k in kinds
+        ] + [
+            (k, f"/api/reports/pdf?kind={k}&from={year_start}&to={today}&lang=ar", b"%PDF")
+            for k in kinds
+        ] + [
+            (k, f"/api/statements/{k}/csv?from={year_start}&to={today}", "\ufeff".encode())
+            for k in kinds
+        ]:
+            req = urllib.request.Request(BASE + path)
+            req.add_header("Authorization", "Bearer " + self.owner.token)
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                self.assertEqual(resp.status, 200, f"{kind} {path}")
+                body = resp.read()
+            # Assert the file is *well formed*, not that it is large. A statement
+            # for a period with no activity is legitimately small — debt-position
+            # on a fresh seed is a header plus a zeroed totals row (56 bytes) —
+            # so a byte-count floor would call a correct export empty.
+            if magic == b"%PDF":
+                self.assertTrue(body.rstrip().endswith(b"%%EOF"),
+                                f"{kind} {path} is a truncated PDF")
+            elif magic == b"PK":
+                import io, zipfile
+                self.assertTrue(zipfile.is_zipfile(io.BytesIO(body)),
+                                f"{kind} {path} is not a readable workbook")
+            else:  # CSV: must at least carry its header line
+                self.assertGreater(body.count(b"\r\n"), 0,
+                                   f"{kind} {path} has no header row")
+            self.assertTrue(body.startswith(magic), f"{kind} {path} wrong format")
 
     def test_52_export_requires_permission(self):
         # sales_user has no reports.export permission
@@ -1505,9 +1560,20 @@ class ERPTestCase(unittest.TestCase):
             self.assertEqual(resp.status, 200)
             data = json.loads(resp.read().decode())
         users = {a["username"] for a in data["accounts"]}
-        self.assertIn("ahmed.taranisi", users)
         self.assertIn("mahmoud.morad", users)
-        self.assertEqual(len(users), 7)
+        self.assertIn("heba.elsherif", users)
+        # The owner account must never be offered by the one-click picker: its name
+        # is the company's name and printing it on a sign-in screen names the
+        # highest-privilege account for anyone who reaches the page.
+        self.assertNotIn("ahmed.taranisi", users)
+        self.assertEqual(len(users), 6)
+        roles = {a["role"] for a in data["accounts"]}
+        self.assertNotIn("company_owner", roles)
+        # ...and it cannot be reached by one click either.
+        status, _ = self.owner.post("/api/auth/demo-login", {"username": "ahmed.taranisi"})
+        self.assertEqual(status, 403)
+        # no password ever leaves the server for the picker
+        self.assertFalse(any("password" in a for a in data["accounts"]))
 
     # ================================================================
     # 8. ACCOUNTING INTEGRITY ENDPOINT (backend-agnostic safety net)

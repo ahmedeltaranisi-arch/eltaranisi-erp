@@ -270,6 +270,23 @@ def vendor_payables(conn, company_id, as_of):
         "overdue_cents": sum(o["overdue_cents"] for o in out),
         "journal_balance_cents": sum(o["journal_balance_cents"] for o in out),
     }
+    # Money paid to a vendor that has not been placed against an invoice still
+    # debits the control account, but no invoice is reduced — so the invoice
+    # subledger still shows it while the ledger does not. The identity is
+    #
+    #     outstanding = journal balance + unallocated payments
+    #
+    # and without this line the two sides never agree, so the difference looks
+    # like a bug when it is really an open item waiting to be allocated.
+    unalloc = conn.execute(
+        """SELECT COALESCE(SUM(p.amount_cents - p.allocated_cents), 0) AS c
+           FROM payments p
+           WHERE p.company_id=? AND p.party_type='vendor' AND p.status='posted'
+             AND p.amount_cents > p.allocated_cents""",
+        (company_id,)).fetchone()["c"]
+    totals["unallocated_payments_cents"] = unalloc
+    totals["reconciles"] = (totals["journal_balance_cents"] + unalloc
+                            == totals["outstanding_cents"])
     return {"as_of": as_of, "vendors": out, "totals": totals,
             "aging": aging_data["buckets"], "invoices": aging_data["items"]}
 
@@ -404,3 +421,605 @@ def budget_vs_actual(conn, company_id, fiscal_year_id):
         e["variance_pct"] = round((e["variance_cents"] / e["budget_cents"] * 100), 1) if e["budget_cents"] else None
         result.append(e)
     return result
+
+
+# =========================================================================
+# Financial statements — presentation layer
+# =========================================================================
+# The functions above answer "what are the balances". This section turns them
+# into the statements an accountant actually reads: a multi-step income
+# statement with sections and totals, a classified balance sheet with groups
+# and a current-year-earnings line derived from the ledger, a cash-flow
+# statement with three activities (IAS 7 style), a statement of changes in
+# equity, a trial-balance balance sheet, plus three "analytic" statements that
+# are specific to this business (receivables/payables ledgers and the
+# contractor debt position).
+#
+# Everything below is built from posted journal lines only (v_posted_lines) and
+# never from invoice tables, so the statements always tie back to the ledger.
+
+STATEMENT_META = [
+    {"id": "income-statement", "group": "primary",
+     "name_ar": "قائمة الدخل", "name_en": "Income statement",
+     "desc_ar": "الإيرادات والتكاليف والمصروفات وصافي الربح للفترة.",
+     "desc_en": "Revenue, cost of sales, expenses and net profit for the period."},
+    {"id": "balance-sheet", "group": "primary",
+     "name_ar": "قائمة المركز المالي", "name_en": "Statement of financial position",
+     "desc_ar": "الأصول والالتزامات وحقوق الملكية في تاريخ معين.",
+     "desc_en": "Assets, liabilities and equity at a point in time."},
+    {"id": "cash-flow", "group": "primary",
+     "name_ar": "قائمة التدفقات النقدية", "name_en": "Cash flow statement",
+     "desc_ar": "التدفقات من الأنشطة التشغيلية والاستثمارية والتمويلية.",
+     "desc_en": "Operating, investing and financing cash flows."},
+    {"id": "equity-changes", "group": "primary",
+     "name_ar": "قائمة التغير في حقوق الملكية", "name_en": "Statement of changes in equity",
+     "desc_ar": "حركة كل بند من بنود حقوق الملكية خلال الفترة.",
+     "desc_en": "Movement of each equity line during the period."},
+    {"id": "trial-balance", "group": "verification",
+     "name_ar": "ميزان المراجعة", "name_en": "Trial balance",
+     "desc_ar": "أرصدة افتتاحية وحركة وأرصدة ختامية لكل حساب.",
+     "desc_en": "Opening balances, movements and closing balances per account."},
+    {"id": "tb-balance-sheet", "group": "verification",
+     "name_ar": "الميزانية العمومية (من ميزان المراجعة)", "name_en": "Balance sheet from trial balance",
+     "desc_ar": "عرض الميزانية بالطريقة التقليدية مدين/دائن من أرصدة الميزان.",
+     "desc_en": "Traditional debit/credit presentation built from trial-balance balances."},
+    {"id": "general-ledger", "group": "verification",
+     "name_ar": "دفتر الأستاذ العام", "name_en": "General ledger",
+     "desc_ar": "حركة كل حساب بالتفصيل مع الرصيد الجاري.",
+     "desc_en": "Every account's postings with a running balance."},
+    {"id": "journal", "group": "verification",
+     "name_ar": "دفتر اليومية", "name_en": "General journal",
+     "desc_ar": "كل القيود المرحّلة في الفترة ببنودها.",
+     "desc_en": "All posted entries in the period with their lines."},
+    {"id": "receivables-aging", "group": "analytic",
+     "name_ar": "أعمار ديون العملاء", "name_en": "Receivables aging",
+     "desc_ar": "مستحقات العملاء موزعة على فترات التأخير.",
+     "desc_en": "Customer balances by age bucket."},
+    {"id": "payables-aging", "group": "analytic",
+     "name_ar": "أعمار ديون الموردين", "name_en": "Payables aging",
+     "desc_ar": "مستحقات الموردين موزعة على فترات التأخير.",
+     "desc_en": "Vendor balances by age bucket."},
+    {"id": "debt-position", "group": "analytic",
+     "name_ar": "حساب المديونية والمقاولين", "name_en": "Contractor debt position",
+     "desc_ar": "مستحقات وسدادات المقاولين والموردين بحسب الحساب.",
+     "desc_en": "Contractor and vendor dues against settlements, per account."},
+]
+
+
+def _amt(conn, company_id, code_prefixes, date_from, date_to, side="credit"):
+    """Net movement of postable accounts whose code starts with any prefix.
+
+    ``side='credit'`` returns credits minus debits (revenue/liability view),
+    ``side='debit'`` returns debits minus credits (asset/expense view).
+    """
+    qmarks = ",".join("?" * len(code_prefixes))
+    cond = " OR ".join(["a.code LIKE ?"] * len(code_prefixes))
+    params = [p + "%" for p in code_prefixes]
+    row = conn.execute(
+        f"""SELECT COALESCE(SUM(l.debit_cents),0) d, COALESCE(SUM(l.credit_cents),0) c
+            FROM v_posted_lines l JOIN accounts a ON a.id = l.account_id
+            WHERE l.company_id = ? AND a.is_postable = 1 AND ({cond})
+              AND l.entry_date BETWEEN ? AND ?""",
+        (company_id, *params, date_from, date_to)).fetchone()
+    d, c = row["d"] or 0, row["c"] or 0
+    return (c - d) if side == "credit" else (d - c)
+
+
+def _leaf_accounts(conn, company_id):
+    return [dict(r) for r in conn.execute(
+        """SELECT id, code, name_ar, name_en, type, parent_id, level
+           FROM accounts WHERE company_id=? AND is_postable=1 ORDER BY code""",
+        (company_id,)).fetchall()]
+
+
+def _group_tree(accounts, parent_codes):
+    """Split leaf accounts into the (code, children) groups of ``parent_codes``.
+
+    Accounts are matched on their code prefix, so a group stays correct even if
+    the chart of accounts was extended by the customer (5110, 5115 …).
+    """
+    groups = []
+    for pcode in parent_codes:
+        children = [a for a in accounts if a["code"].startswith(pcode) and a["code"] != pcode]
+        groups.append((pcode, children))
+    return groups
+
+
+def _line(a, amount):
+    return {"code": a["code"], "name_ar": a["name_ar"], "name_en": a["name_en"],
+            "amount_cents": amount}
+
+
+def _section(key, name_ar, name_en, lines, total_cents=None):
+    total = sum(l["amount_cents"] for l in lines) if total_cents is None else total_cents
+    return {"key": key, "name_ar": name_ar, "name_en": name_en,
+            "lines": lines, "total_cents": total}
+
+
+def income_statement_full(conn, company_id, date_from, date_to):
+    """Multi-step income statement: revenue → cost of sales → operating
+    expenses → other income/expense → profit, with comparatives left to the
+    caller (the API runs this twice for two periods)."""
+    accounts = _leaf_accounts(conn, company_id)
+    bal = account_balances(conn, company_id, date_from, date_to)
+    by_id = {r["id"]: r for r in bal}
+
+    def movement(prefixes, side):
+        out = []
+        for a in accounts:
+            if not any(a["code"].startswith(p) for p in prefixes):
+                continue
+            r = by_id.get(a["id"], {})
+            d, c = r.get("period_debit", 0), r.get("period_credit", 0)
+            amt = (c - d) if side == "credit" else (d - c)
+            if amt:
+                out.append(_line(a, amt))
+        return out
+
+    # revenue: 4x excluding returns/discounts (4200) which reduce revenue
+    gross_rev = movement(["4100", "4110", "4120", "4130"], "credit")
+    returns = movement(["4200"], "debit")
+    other_income = movement(["49"], "credit")
+    revenue_total = sum(l["amount_cents"] for l in gross_rev) + sum(l["amount_cents"] for l in other_income)
+    returns_total = sum(l["amount_cents"] for l in returns)
+    net_revenue = revenue_total - returns_total
+
+    cogs = movement(["5100", "511"], "debit")
+    cogs_total = sum(l["amount_cents"] for l in cogs)
+    gross_profit = net_revenue - cogs_total
+
+    # operating expenses: everything in 52xx and 53xx/54xx/59xx, by group
+    op_groups = [("52", "مصروفات تشغيلية", "Operating expenses"),
+                 ("53", "مصروفات بيعية وإدارية", "Selling & administrative"),
+                 ("54", "مصروفات بنكية وتمويلية", "Bank & finance charges"),
+                 ("59", "مصروفات أخرى", "Other expenses")]
+    op_expense_sections = []
+    for prefix, ar, en in op_groups:
+        lines = movement([prefix], "debit")
+        if lines:
+            op_expense_sections.append(_section(prefix, ar, en, lines))
+    op_total = sum(s["total_cents"] for s in op_expense_sections)
+    ebitda_ish = gross_profit - op_total
+
+    depreciation = [l for l in sum([s["lines"] for s in op_expense_sections], [])
+                    if l["code"].startswith("5320")]
+    dep_total = sum(l["amount_cents"] for l in depreciation)
+    ebit = ebitda_ish
+
+    other_exp = movement(["55", "56", "57", "58"], "debit")
+    other_exp_total = sum(l["amount_cents"] for l in other_exp)
+    profit_before_tax = ebit + sum(l["amount_cents"] for l in other_income) - other_exp_total
+    tax_lines = movement(["221", "222", "223"], "credit")
+    net_profit = profit_before_tax  # no P&L tax expense account in this chart
+
+    return {
+        "date_from": date_from, "date_to": date_to,
+        "sections": {
+            "revenue": _section("revenue", "الإيرادات", "Revenue", gross_rev, revenue_total),
+            "returns": _section("returns", "مردودات وخصومات المبيعات", "Sales returns & discounts",
+                                returns, returns_total),
+            "cost_of_sales": _section("cost_of_sales", "تكلفة النشاط", "Cost of sales", cogs, cogs_total),
+            "operating_expenses": op_expense_sections,
+            "other_expenses": other_exp,
+        },
+        "net_revenue_cents": net_revenue,
+        "total_revenue_cents": net_revenue,
+        "gross_profit_cents": gross_profit,
+        "operating_expenses_cents": op_total,
+        "depreciation_cents": dep_total,
+        "operating_profit_cents": ebit,
+        "other_income_cents": sum(l["amount_cents"] for l in other_income),
+        "other_expenses_cents": other_exp_total,
+        "profit_before_tax_cents": profit_before_tax,
+        "net_profit_cents": net_profit,
+        "gross_margin_pct": round(gross_profit / net_revenue * 100, 1) if net_revenue else None,
+        "net_margin_pct": round(net_profit / net_revenue * 100, 1) if net_revenue else None,
+        "expense_ratio_pct": round(op_total / net_revenue * 100, 1) if net_revenue else None,
+        # kept for backwards compatibility with existing screens / exports
+        "revenue": gross_rev + other_income,
+        "expenses": cogs + sum([s["lines"] for s in op_expense_sections], []) + other_exp,
+        "total_expenses_cents": cogs_total + op_total + other_exp_total,
+    }
+
+
+BALANCE_GROUPS = {
+    "current_assets": ("الأصول المتداولة", "Current assets", ["111", "112", "12", "126", "127"]),
+    "inventory": ("المخزون", "Inventory", ["131"]),
+    "fixed_assets": ("الأصول الثابتة", "Fixed assets", ["14", "133"]),
+    "other_assets": ("أصول أخرى", "Other assets", ["15", "16", "17", "18", "19"]),
+    "current_liabilities": ("الالتزامات المتداولة", "Current liabilities", ["21", "22"]),
+    "long_term_liabilities": ("التزامات طويلة الأجل", "Long-term liabilities", ["23", "24", "25"]),
+    "equity": ("حقوق الملكية", "Equity", ["3"]),
+}
+
+
+def balance_sheet_full(conn, company_id, as_of):
+    """Classified balance sheet at a date.
+
+    - Assets are shown net: accumulated depreciation (1330, a credit-balance
+      asset contra account) is presented as a negative line inside fixed assets,
+      so the fixed-asset block shows book value.
+    - Equity includes the *current period result* computed from the ledger
+      (revenue − expense for the current fiscal year) instead of a hard-coded
+      equity balance, so the statement balances even before the year is closed.
+    """
+    accounts = _leaf_accounts(conn, company_id)
+    bal = account_balances(conn, company_id, "0000-01-01", as_of)
+    by_id = {r["id"]: r for r in bal}
+    fy_start, fy_end = _fy_bounds(conn, company_id, as_of)
+
+    def bucket(a):
+        for key, (_ar, _en, prefixes) in BALANCE_GROUPS.items():
+            if any(a["code"].startswith(p) for p in prefixes):
+                return key
+        if a["type"] == "asset":
+            return "other_assets"
+        if a["type"] == "liability":
+            return "current_liabilities"
+        if a["type"] == "equity":
+            return "equity"
+        return None
+
+    groups = {k: [] for k in BALANCE_GROUPS}
+    for a in accounts:
+        r = by_id.get(a["id"], {})
+        closing = r.get("closing", 0)
+        if not closing:
+            continue
+        key = bucket(a)
+        if key is None:
+            continue
+        # present in the natural sign of the statement:
+        # assets / expenses debit-positive, liabilities / equity credit-positive
+        natural = closing if a["type"] in ("asset", "expense") else -closing
+        groups[key].append(_line(a, natural))
+
+    def mk(key, sign=1):
+        ar, en, _ = BALANCE_GROUPS[key]
+        lines = sorted(groups[key], key=lambda l: l["code"])
+        total = sum(l["amount_cents"] for l in lines) * sign
+        return _section(key, ar, en, lines, total)
+
+    current_assets = mk("current_assets")
+    inventory = mk("inventory")
+    fixed_assets = mk("fixed_assets")
+    other_assets = mk("other_assets")
+    current_liabilities = mk("current_liabilities")
+    long_term = mk("long_term_liabilities")
+    equity = mk("equity")
+
+    # current-period result from the ledger (not from the 3900 account)
+    period = income_statement(conn, company_id, fy_start, as_of)
+    period_result = period["net_profit_cents"]
+    closed_result_rows = [l for l in equity["lines"] if l["code"].startswith("3900")]
+    for row in closed_result_rows:            # 3900 already posted → avoid double count
+        period_result -= -row["amount_cents"] if row["amount_cents"] < 0 else 0
+    equity_lines = [l for l in equity["lines"] if not l["code"].startswith("3900")]
+    equity_lines.append({"code": "3900", "name_ar": "نتيجة أعمال الفترة (من الدفاتر)",
+                         "name_en": "Result for the period (from the ledger)",
+                         "amount_cents": period_result})
+    equity_total = sum(l["amount_cents"] for l in equity_lines)
+    equity["lines"] = equity_lines
+    equity["total_cents"] = equity_total
+
+    total_assets = (current_assets["total_cents"] + inventory["total_cents"]
+                    + fixed_assets["total_cents"] + other_assets["total_cents"])
+    total_liabilities = current_liabilities["total_cents"] + long_term["total_cents"]
+    total_equity = equity_total
+
+    return {
+        "as_of": as_of, "fiscal_start": fy_start,
+        "assets_groups": [current_assets, inventory, fixed_assets, other_assets],
+        "liabilities_groups": [current_liabilities, long_term],
+        "equity_group": equity,
+        "current_assets_cents": current_assets["total_cents"] + inventory["total_cents"],
+        "non_current_assets_cents": fixed_assets["total_cents"] + other_assets["total_cents"],
+        "total_assets_cents": total_assets,
+        "current_liabilities_cents": current_liabilities["total_cents"],
+        "non_current_liabilities_cents": long_term["total_cents"],
+        "total_liabilities_cents": total_liabilities,
+        "total_equity_cents": total_equity,
+        "total_liabilities_equity_cents": total_liabilities + total_equity,
+        "balanced": total_assets == total_liabilities + total_equity,
+        "current_period_profit_cents": period_result,
+        "working_capital_cents": (current_assets["total_cents"] + inventory["total_cents"]
+                                  - current_liabilities["total_cents"]),
+        "current_ratio": (round((current_assets["total_cents"] + inventory["total_cents"])
+                                / current_liabilities["total_cents"], 2)
+                          if current_liabilities["total_cents"] else None),
+        "debt_to_equity": (round(total_liabilities / total_equity, 2) if total_equity else None),
+    }
+
+
+def _cash_account_ids(conn, company_id):
+    ids = [r["gl_account_id"] for r in conn.execute(
+        "SELECT gl_account_id FROM bank_accounts WHERE company_id=? AND gl_account_id IS NOT NULL",
+        (company_id,)).fetchall()]
+    return [i for i in ids if i]
+
+
+def _classify_counter_line(conn, company_id, account_id):
+    """Which activity does a non-cash leg belong to?"""
+    a = conn.execute("SELECT code, type, is_postable FROM accounts WHERE id=?", (account_id,)).fetchone()
+    if a is None:
+        return "operating"
+    code = a["code"] or ""
+    if code.startswith("14") or code.startswith("15") or code.startswith("16"):
+        return "investing"
+    if code.startswith("23") or code.startswith("24") or code.startswith("3"):
+        return "financing"
+    return "operating"
+
+
+def cash_flow_statement(conn, company_id, date_from, date_to):
+    """Cash flow statement with three activities (IAS 7, direct method).
+
+    Each posted entry that touches a cash/bank GL account is re-read together
+    with its counter-lines: the cash movement is classified by the *nature of
+    the counter account* (fixed asset → investing, loan/capital → financing,
+    everything else → operating). This is a real statement, not a summary of
+    bank traffic, and it always reconciles: opening + net = closing.
+
+    One extra statement is needed per date (opening and closing cash), which is
+    exactly what a D1 deployment can afford.
+    """
+    cash_ids = _cash_account_ids(conn, company_id)
+    if not cash_ids:
+        return {"date_from": date_from, "date_to": date_to, "sections": [],
+                "opening_cents": 0, "closing_cents": 0, "net_cents": 0,
+                "inflow_cents": 0, "outflow_cents": 0, "rows": [], "reconciled": True,
+                "activities": {"operating": 0, "investing": 0, "financing": 0}}
+    qmarks = ",".join("?" * len(cash_ids))
+    opening = conn.execute(
+        f"""SELECT COALESCE(SUM(debit_cents-credit_cents),0) v FROM v_posted_lines
+            WHERE company_id=? AND account_id IN ({qmarks}) AND entry_date < ?""",
+        (company_id, *cash_ids, date_from)).fetchone()["v"]
+    entries = conn.execute(
+        f"""SELECT DISTINCT entry_id FROM v_posted_lines
+            WHERE company_id=? AND account_id IN ({qmarks})
+              AND entry_date BETWEEN ? AND ?""",
+        (company_id, *cash_ids, date_from, date_to)).fetchall()
+    entry_ids = [r["entry_id"] for r in entries]
+    buckets = {"operating": {}, "investing": {}, "financing": {}}
+    inflow = outflow = 0
+    rows = []
+    type_names = {
+        "operating": ("الأنشطة التشغيلية", "Operating activities"),
+        "investing": ("الأنشطة الاستثمارية", "Investing activities"),
+        "financing": ("الأنشطة التمويلية", "Financing activities"),
+    }
+    for eid in entry_ids:
+        lines = conn.execute(
+            """SELECT l.account_id, l.debit_cents, l.credit_cents, a.code, a.name_ar, a.name_en,
+                      e.entry_no, e.entry_date, e.entry_type, e.memo
+               FROM journal_lines l JOIN accounts a ON a.id=l.account_id
+               JOIN journal_entries e ON e.id=l.entry_id
+               WHERE l.entry_id=? ORDER BY l.line_no""", (eid,)).fetchall()
+        cash_ids_set = set(cash_ids)
+        cash_lines = [l for l in lines if l["account_id"] in cash_ids_set]
+        other = [l for l in lines if l["account_id"] not in cash_ids_set]
+        net = sum(l["debit_cents"] - l["credit_cents"] for l in cash_lines)
+        if net == 0:
+            continue
+        # classify by the biggest counter-line (an entry is normally one-sided)
+        if other:
+            biggest = max(other, key=lambda l: l["debit_cents"] + l["credit_cents"])
+            activity = _classify_counter_line(conn, company_id, biggest["account_id"])
+            label_ar = biggest["name_ar"]
+            label_en = biggest["name_en"]
+        else:
+            activity = "operating"
+            label_ar = label_en = lines[0]["memo"]
+        key = (label_en or label_ar)
+        b = buckets[activity].setdefault(key, {"name_ar": label_ar, "name_en": label_en, "amount": 0})
+        b["amount"] += net
+        if net > 0:
+            inflow += net
+        else:
+            outflow += -net
+        rows.append({"entry_no": lines[0]["entry_no"], "entry_date": lines[0]["entry_date"],
+                     "memo": lines[0]["memo"], "activity": activity,
+                     "counter_account": f"{biggest['code']} — {label_ar}" if other else "",
+                     "amount_cents": net})
+    sections = []
+    for act in ("operating", "investing", "financing"):
+        items = sorted(buckets[act].values(), key=lambda x: -abs(x["amount"]))
+        ar, en = type_names[act]
+        sections.append({
+            "key": act, "name_ar": ar, "name_en": en,
+            "lines": [{"name_ar": i["name_ar"], "name_en": i["name_en"],
+                       "amount_cents": i["amount"]} for i in items],
+            "total_cents": sum(i["amount"] for i in items),
+        })
+    net_change = sum(s["total_cents"] for s in sections)
+    closing = opening + net_change
+    return {
+        "date_from": date_from, "date_to": date_to,
+        "sections": sections,
+        "activities": {s["key"]: s["total_cents"] for s in sections},
+        "opening_cents": opening, "closing_cents": closing, "net_cents": net_change,
+        "inflow_cents": inflow, "outflow_cents": outflow,
+        "rows": rows[-40:],
+        "reconciled": closing == opening + net_change,
+    }
+
+
+def equity_changes(conn, company_id, date_from, date_to):
+    """Statement of changes in equity, built from the ledger movements."""
+    accounts = [a for a in _leaf_accounts(conn, company_id) if a["type"] == "equity"]
+    rows = []
+    for a in accounts:
+        opening = conn.execute(
+            """SELECT COALESCE(SUM(l.debit_cents-l.credit_cents),0) v FROM v_posted_lines l
+               WHERE l.company_id=? AND l.account_id=? AND l.entry_date < ?""",
+            (company_id, a["id"], date_from)).fetchone()["v"]
+        period = conn.execute(
+            """SELECT COALESCE(SUM(l.credit_cents),0) c, COALESCE(SUM(l.debit_cents),0) d
+               FROM v_posted_lines l WHERE l.company_id=? AND l.account_id=?
+                 AND l.entry_date BETWEEN ? AND ?""",
+            (company_id, a["id"], date_from, date_to)).fetchone()
+        if not opening and not (period["c"] or period["d"]):
+            continue
+        rows.append({"code": a["code"], "name_ar": a["name_ar"], "name_en": a["name_en"],
+                     "opening_cents": opening,
+                     "additions_cents": period["c"] or 0,
+                     "reductions_cents": period["d"] or 0,
+                     "closing_cents": opening + period["c"] - period["d"]})
+    fy_start, _ = _fy_bounds(conn, company_id, date_to)
+    result = income_statement(conn, company_id, fy_start, date_to)["net_profit_cents"]
+    rows.append({"code": "3900", "name_ar": "نتيجة أعمال الفترة", "name_en": "Result for the period",
+                 "opening_cents": 0, "additions_cents": max(result, 0),
+                 "reductions_cents": max(-result, 0), "closing_cents": result})
+    return {
+        "date_from": date_from, "date_to": date_to, "rows": rows,
+        "totals": {
+            "opening_cents": sum(r["opening_cents"] for r in rows),
+            "additions_cents": sum(r["additions_cents"] for r in rows),
+            "reductions_cents": sum(r["reductions_cents"] for r in rows),
+            "closing_cents": sum(r["closing_cents"] for r in rows),
+        },
+    }
+
+
+def balance_sheet_from_tb(conn, company_id, as_of):
+    """Classic balance sheet taken straight from trial-balance balances.
+
+    Accounts are grouped by their *type*, not by code prefix, so a contra
+    account (accumulated depreciation, a credit-balance asset) is shown as a
+    negative line inside assets instead of being pushed to liabilities. The P&L
+    accounts are not listed: their net effect is the current-period result shown
+    inside equity, which is what makes the two sides tie.
+    """
+    rows = [r for r in account_balances(conn, company_id, "0000-01-01", as_of)
+            if r["is_postable"] and r["closing"]]
+
+    def natural(r):
+        # assets & expenses are debit-positive, liabilities / equity / revenue credit-positive
+        return r["closing"] if r["type"] in ("asset", "expense") else -r["closing"]
+
+    assets = [{"code": r["code"], "name_ar": r["name_ar"], "name_en": r["name_en"],
+               "amount_cents": natural(r)} for r in rows if r["type"] == "asset"]
+    liabilities = [{"code": r["code"], "name_ar": r["name_ar"], "name_en": r["name_en"],
+                    "amount_cents": natural(r)} for r in rows if r["type"] == "liability"]
+    equity = [{"code": r["code"], "name_ar": r["name_ar"], "name_en": r["name_en"],
+               "amount_cents": natural(r)} for r in rows if r["type"] == "equity"]
+    revenue_cents = sum(natural(r) for r in rows if r["type"] == "revenue")
+    expense_cents = sum(natural(r) for r in rows if r["type"] == "expense")
+    profit = revenue_cents - expense_cents
+    equity = equity + [{"code": "3900", "name_ar": "نتيجة أعمال الفترة",
+                        "name_en": "Result for the period", "amount_cents": profit}]
+    assets_total = sum(a["amount_cents"] for a in assets)
+    liabilities_total = sum(l["amount_cents"] for l in liabilities)
+    equity_total = sum(e["amount_cents"] for e in equity)
+    return {
+        "as_of": as_of,
+        "assets": sorted(assets, key=lambda x: x["code"]),
+        "assets_total_cents": assets_total,
+        "liabilities": sorted(liabilities, key=lambda x: x["code"]),
+        "liabilities_total_cents": liabilities_total,
+        "equity": equity, "equity_total_cents": equity_total,
+        "revenue_cents": revenue_cents, "expense_cents": expense_cents,
+        "profit_cents": profit,
+        "balanced": assets_total == liabilities_total + equity_total,
+    }
+
+
+def general_ledger(conn, company_id, date_from, date_to):
+    """Full general ledger: every postable account with a movement in the
+    period, its opening balance, every line and a running balance."""
+    accounts = _leaf_accounts(conn, company_id)
+    out = []
+    for a in accounts:
+        ledger_data = ledger(conn, company_id, a["id"], date_from, date_to)
+        if ledger_data is None:
+            continue
+        if not ledger_data["rows"] and not ledger_data["opening_cents"]:
+            continue
+        out.append({
+            "code": a["code"], "name_ar": a["name_ar"], "name_en": a["name_en"],
+            "type": a["type"],
+            "opening_cents": ledger_data["opening_cents"],
+            "closing_cents": ledger_data["closing_cents"],
+            "debit_cents": sum(r["debit_cents"] for r in ledger_data["rows"]),
+            "credit_cents": sum(r["credit_cents"] for r in ledger_data["rows"]),
+            "lines": ledger_data["rows"],
+        })
+    return {"date_from": date_from, "date_to": date_to, "accounts": out,
+            "totals": {"debit_cents": sum(a["debit_cents"] for a in out),
+                       "credit_cents": sum(a["credit_cents"] for a in out)}}
+
+
+def journal_book(conn, company_id, date_from, date_to, limit=500):
+    entries = conn.execute(
+        """SELECT * FROM journal_entries WHERE company_id=? AND status='posted'
+             AND entry_date BETWEEN ? AND ? ORDER BY entry_date, id LIMIT ?""",
+        (company_id, date_from, date_to, limit)).fetchall()
+    out = []
+    for e in entries:
+        lines = conn.execute(
+            """SELECT l.*, a.code, a.name_ar, a.name_en FROM journal_lines l
+               JOIN accounts a ON a.id=l.account_id WHERE l.entry_id=? ORDER BY l.line_no""",
+            (e["id"],)).fetchall()
+        out.append({"id": e["id"], "entry_no": e["entry_no"], "entry_date": e["entry_date"],
+                    "entry_type": e["entry_type"], "memo": e["memo"],
+                    "total_debit_cents": e["total_debit_cents"],
+                    "lines": [dict(l) for l in lines]})
+    return {"date_from": date_from, "date_to": date_to, "entries": out}
+
+
+def debt_position(conn, company_id, date_from, date_to):
+    """Contractor / vendor dues against settlements for the period."""
+    rows = conn.execute(
+        """SELECT da.id, da.code, da.name_ar, da.name_en, da.kind, da.billing_unit,
+                  COALESCE(it.due,0) AS due, COALESCE(it.cnt,0) AS items,
+                  COALESCE(pd.paid,0) AS paid, COALESCE(pd.cnt,0) AS payments
+           FROM debt_accounts da
+           LEFT JOIN (SELECT account_id, SUM(amount_cents) due, COUNT(*) cnt FROM debt_items
+                      WHERE company_id=? AND doc_date BETWEEN ? AND ?
+                      GROUP BY account_id) it ON it.account_id=da.id
+           LEFT JOIN (SELECT account_id, SUM(amount_cents) paid, COUNT(*) cnt FROM debt_payments
+                      WHERE company_id=? AND pay_date BETWEEN ? AND ?
+                      GROUP BY account_id) pd ON pd.account_id=da.id
+           WHERE da.company_id=? ORDER BY da.code""",
+        (company_id, date_from, date_to, company_id, date_from, date_to, company_id)).fetchall()
+    out = []
+    for r in rows:
+        if not (r["due"] or r["paid"]):
+            continue
+        out.append({"code": r["code"], "name_ar": r["name_ar"], "name_en": r["name_en"],
+                    "kind": r["kind"], "unit": r["billing_unit"],
+                    "due_cents": r["due"], "paid_cents": r["paid"],
+                    "net_cents": r["due"] - r["paid"],
+                    "items": r["items"], "payments": r["payments"]})
+    return {"date_from": date_from, "date_to": date_to, "accounts": out,
+            "totals": {"due_cents": sum(o["due_cents"] for o in out),
+                       "paid_cents": sum(o["paid_cents"] for o in out),
+                       "net_cents": sum(o["net_cents"] for o in out)}}
+
+
+def statement(conn, company_id, kind, date_from, date_to):
+    """Single entry point used by the API, the exports and the assistant."""
+    if kind == "income-statement":
+        return income_statement_full(conn, company_id, date_from, date_to)
+    if kind == "balance-sheet":
+        return balance_sheet_full(conn, company_id, date_to)
+    if kind == "cash-flow":
+        return cash_flow_statement(conn, company_id, date_from, date_to)
+    if kind == "equity-changes":
+        return equity_changes(conn, company_id, date_from, date_to)
+    if kind == "trial-balance":
+        data = trial_balance(conn, company_id, date_from, date_to)
+        return {"date_from": date_from, "date_to": date_to, **data}
+    if kind == "tb-balance-sheet":
+        return balance_sheet_from_tb(conn, company_id, date_to)
+    if kind == "general-ledger":
+        return general_ledger(conn, company_id, date_from, date_to)
+    if kind == "journal":
+        return journal_book(conn, company_id, date_from, date_to)
+    if kind == "receivables-aging":
+        return aging(conn, company_id, date_to, "sales")
+    if kind == "payables-aging":
+        return aging(conn, company_id, date_to, "purchase")
+    if kind == "debt-position":
+        return debt_position(conn, company_id, date_from, date_to)
+    raise ValueError(f"unknown statement: {kind}")

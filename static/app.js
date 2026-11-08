@@ -174,6 +174,17 @@ function initials(name) {
 }
 
 /* ------------------------------ API ------------------------------ */
+/* The API prefixes messages with a machine code ("INVALID_CREDENTIALS: …",
+   "MISSING_FIELDS: …"). The code is for logs; the person reading the screen only
+   wants the sentence, in their own language. Arabic stays, English is dropped
+   when the UI is English — the server writes both, separated by " / ". */
+function cleanError(raw) {
+  let msg = String(raw || "").replace(/^[A-Z][A-Z0-9_]*:\s*/, "").trim();
+  if (APP.lang !== "ar" && msg.includes(" / ")) msg = msg.split(" / ").slice(-1)[0].trim();
+  if (APP.lang === "ar" && msg.includes(" / ")) msg = msg.split(" / ")[0].trim();
+  return msg || String(raw || "");
+}
+
 async function api(path, opts = {}) {
   const headers = { "Content-Type": "application/json" };
   if (APP.token) headers["Authorization"] = "Bearer " + APP.token;
@@ -188,8 +199,20 @@ async function api(path, opts = {}) {
     const isJson = (res.headers.get("content-type") || "").includes("json");
     const data = isJson ? await res.json() : await res.text();
     if (!res.ok) {
-      if (res.status === 401) { logoutLocal(); throw new Error(t("error.unauthenticated")); }
-      const msg = (data && data.error) || `HTTP ${res.status}`;
+      // A 401 on the sign-in call itself is a rejected credential — saying
+      // "session expired" there is confusing and hides the real cause. Every
+      // other 401 really does mean the session is gone.
+      if (res.status === 401 && !opts.noAuthRedirect) {
+        if (path.startsWith("/api/auth/login")) {
+          const msg = cleanError((data && data.error) || t("login.badCredentials"));
+          const err = new Error(msg);
+          err.status = 401;
+          throw err;
+        }
+        logoutLocal();
+        throw new Error(t("error.unauthenticated"));
+      }
+      const msg = cleanError((data && data.error) || `HTTP ${res.status}`);
       const err = new Error(msg);
       err.details = data && data.details;
       err.status = res.status;
@@ -628,7 +651,7 @@ function applyTheme() {
   // NOTE: no implicit persistence here — the stored value must mean
   // "the user picked this", otherwise the default could never change again.
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute("content", theme === "dark" ? "#0b1020" : "#0b2f6b");
+  if (meta) meta.setAttribute("content", theme === "dark" ? "#070c17" : "#12457f");
   const btn = $("#theme-btn");
   if (btn) btn.innerHTML = icon(theme === "dark" ? "sun" : "moon");
   const lbtn = $("#login-theme");
@@ -746,6 +769,14 @@ const ICONS = {
   bank: '<path d="M3 9.5 12 4l9 5.5"/><path d="M5 10v8M10 10v8M14 10v8M19 10v8"/><path d="M3 21h18"/>',
   sparkle: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/>',
   calendar: '<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/><path d="M8 14h2M14 14h2M8 17.5h2M14 17.5h2"/>',
+  statement: '<path d="M6 3h9l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v5h5"/><path d="M8.5 12h7M8.5 15.5h7M8.5 8.5h3"/>',
+  scale: '<path d="M12 3v18M7 21h10M5 7h14"/><path d="M5 7l-2.5 6a2.9 2.9 0 0 0 5 0z"/><path d="M19 7l-2.5 6a2.9 2.9 0 0 0 5 0z"/>',
+  send: '<path d="M4 12l16-8-6 16-2.5-6z"/><path d="M11.5 14L20 4"/>',
+  copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/>',
+  sparkles: '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
+  history: '<path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 8v4l3 2"/>',
+  panel: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/>',
+  wallet: '<path d="M3 7a2 2 0 0 1 2-2h13a1 1 0 0 1 1 1v2"/><rect x="3" y="7" width="18" height="12" rx="2"/><path d="M16 13h3"/>',
 };
 
 function icon(name, cls = "") {
@@ -762,6 +793,7 @@ const NAV = [
   { id: "accounts", icon: "accounts", label: "nav.accounts", perm: "accounts.view" },
   { id: "journal", icon: "journal", label: "nav.journal", perm: "journal.view" },
   { id: "reports", icon: "reports", label: "nav.reports", perm: "reports.view" },
+  { id: "statements", icon: "statement", label: "nav.statements", perm: "reports.view" },
   { section: "nav.operations" },
   { id: "sales", icon: "sales", label: "nav.sales", perm: "sales.view" },
   { id: "purchases", icon: "purchases", label: "nav.purchases", perm: "purchases.view" },
@@ -1128,21 +1160,39 @@ async function loadDemoAccounts() {
     if (!res.ok) return;                       // production / demo disabled
     const data = await res.json();
     if (!data.accounts || !data.accounts.length) return;
+    // The list is a *picker*: no password is displayed or placed in the DOM.
+    // Choosing a row asks the server to sign in as that seeded user, so the
+    // credential never reaches the browser — nor the screen.
     $("#demo-grid").innerHTML = data.accounts.map((a, i) => `
       <button type="button" class="demo-row" data-i="${i}">
         <span class="dot" style="width:26px;height:26px;border-radius:9px;display:grid;place-items:center;
               background:linear-gradient(135deg,var(--brand),var(--brand-2));color:#fff;font-size:11px;font-weight:800">
           ${ESC((a.name_ar || a.username).slice(0, 1))}</span>
-        <span class="who"><strong>${ESC(a.name_ar)}</strong><small>${ESC(a.role_name_ar || a.role)}</small></span>
-        <code>${ESC(a.password)}</code>
+        <span class="who"><strong>${ESC(a.name_ar)}</strong><small>${ESC(a.role_name_ar || a.role)} · ${ESC(a.username)}</small></span>
+        ${icon("chevron")}
       </button>`).join("");
     box.classList.remove("hidden");
-    $$(".demo-row", box).forEach(b => b.onclick = () => {
+    $$(".demo-row", box).forEach(b => b.onclick = async () => {
       const acc = data.accounts[Number(b.dataset.i)];
-      $("#login-username").value = acc.username;
-      $("#login-password").value = acc.password;
-      $("#login-password").focus();
-      $("#login-form").requestSubmit ? $("#login-form").requestSubmit() : $("#login-form").submit();
+      const err = $("#login-error");
+      err.classList.add("hidden");
+      const submit = $("#login-submit");
+      const label = submit.textContent;
+      submit.disabled = true; submit.textContent = t("login.checking");
+      try {
+        const res = await api("/api/auth/demo-login", { method: "POST", body: { username: acc.username } });
+        APP.token = res.token; APP.user = res.user;
+        localStorage.setItem("erp_token", res.token);
+        APP.lang = res.user.language || APP.lang;
+        APP.theme = res.user.theme || APP.theme;
+        applyLang(); applyTheme();
+        await bootApp();
+      } catch (e) {
+        err.textContent = e.message;
+        err.classList.remove("hidden");
+      } finally {
+        submit.disabled = false; submit.textContent = label;
+      }
     });
   } catch (e) { /* demo accounts are optional */ }
 }
@@ -1204,13 +1254,6 @@ function setupGlobalHandlers() {
   $("#scrim").onclick = closeSidebar;
   window.addEventListener("hashchange", () => render());
 
-  const pwToggle = $("#pw-toggle");
-  if (pwToggle) pwToggle.onclick = () => {
-    const inp = $("#login-password");
-    const show = inp.type === "password";
-    inp.type = show ? "text" : "password";
-    pwToggle.textContent = show ? "🙈" : "👁";
-  };
   loadDemoAccounts();
   setupShortcuts();
   const ms = $("#mobile-search");
@@ -1224,14 +1267,57 @@ function setupGlobalHandlers() {
   $("#login-form").onsubmit = async (e) => {
     e.preventDefault();
     const err = $("#login-error");
+    const submit = $("#login-submit");
+    const usernameEl = $("#login-username");
+    const passwordEl = $("#login-password");
+    const username = usernameEl.value.trim();
+    const password = passwordEl.value;
     err.classList.add("hidden");
+    if (!username || !password) {
+      err.textContent = t("login.needBoth");
+      err.classList.remove("hidden");
+      (username ? passwordEl : usernameEl).focus();
+      return;
+    }
+    const label = submit.textContent;
+    submit.disabled = true;
+    submit.textContent = t("login.checking");
     try {
-      await login($("#login-username").value.trim(), $("#login-password").value);
+      await login(username, password);
+      passwordEl.value = "";
     } catch (ex) {
       err.textContent = ex.message;
       err.classList.remove("hidden");
+      err.classList.add("shake");
+      setTimeout(() => err.classList.remove("shake"), 420);
+      passwordEl.value = "";
+      passwordEl.focus();
+    } finally {
+      submit.disabled = false;
+      submit.textContent = label;
     }
   };
+  const pwToggle = $("#pw-toggle");
+  if (pwToggle) pwToggle.onclick = () => {
+    const el = $("#login-password");
+    const show = el.type === "password";
+    el.type = show ? "text" : "password";
+    pwToggle.textContent = show ? "🙈" : "👁";
+    pwToggle.setAttribute("aria-label", show ? t("login.hidePw") : t("login.showPw"));
+    el.focus();
+  };
+  const lgTheme = $("#login-theme");
+  if (lgTheme) lgTheme.onclick = () => {
+    // Same persistence contract as the in-app toggle: this is an explicit
+    // choice, so it must survive a reload.
+    setTheme(APP.theme === "dark" ? "light" : "dark");
+  };
+  const lgLang = $("#login-lang");
+  if (lgLang) { lgLang.textContent = APP.lang === "ar" ? "EN" : "ع"; lgLang.onclick = () => {
+    APP.lang = APP.lang === "ar" ? "en" : "ar"; applyLang();
+    lgLang.textContent = APP.lang === "ar" ? "EN" : "ع";
+    lgTheme && lgTheme.click; // keep theme untouched
+  }; }
 }
 
 function changePasswordModal() {

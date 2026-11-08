@@ -32,9 +32,13 @@
     ];
     return `<details class="export-menu"><summary>${icon("download")} ${ESC(L("تصدير", "Export"))} <span class="caret">${icon("chevron")}</span></summary>
       <div class="menu">
-        ${pairs.map(([fmt, lang, label, icon, hint]) => {
+        ${/* the 4th element must not be named `icon`: destructuring it that way
+             shadows the global icon() helper for the whole callback, and every
+             icon("chart") below then threw "icon is not a function" — which is
+             what used to leave the reports page stuck on its skeleton. */""}
+        ${pairs.map(([fmt, lang, label, glyph, hint]) => {
           const url = fmt === "csv" ? `/api/reports/export?${q({})}` : `/api/reports/${fmt}?${q({ lang })}`;
-          return `<button data-export="${url}" data-name="${kind}.${fmt}"><span class="mi">${icon}</span>
+          return `<button data-export="${url}" data-name="${kind}.${fmt}"><span class="mi">${glyph}</span>
             <span class="ml">${ESC(label)}</span><span class="hint">${hint}</span></button>`;
         }).join("")}
       </div></details>`;
@@ -1806,12 +1810,17 @@
           ]))}
           ${card(t("payables.title"), `
             <div class="stat-line"><span>${ESC(t("payables.journal"))}</span><strong>${fmtMoney(T.journal_balance_cents)}</strong></div>
+            ${T.unallocated_payments_cents ? `<div class="stat-line"><span>${ESC(L("دفعات لم تُخصَّص بعد", "Unallocated payments"))}</span>
+              <strong>${fmtMoney(T.unallocated_payments_cents)}</strong></div>` : ""}
             <div class="stat-line"><span>${ESC(L("عدد الموردين المدينة", "Vendors with balance"))}</span>
               <strong>${data.vendors.filter(v => v.outstanding_cents > 0).length}</strong></div>
             <div class="stat-line"><span>${ESC(L("أقرب استحقاق", "Earliest due"))}</span>
               <strong>${(data.vendors.filter(v => v.next_due_date).sort((a, b) => a.next_due_date.localeCompare(b.next_due_date))[0] || {}).next_due_date || "—"}</strong></div>
-            <p class="field-hint" style="margin-top:8px">${ESC(L("الأرصدة مطابقة لحساب الموردين في الأستاذ العام — الدفعات لا تؤثر إلا بعد الترحيل.",
-              "Balances reconcile to the AP control account — payments only count once posted."))}</p>`)}
+            <p class="field-hint" style="margin-top:8px">${T.reconciles
+              ? ESC(L("مطابقة: رصيد الأستاذ + الدفعات غير المخصّصة = رصيد الموردين.",
+                     "Reconciled: GL balance + unallocated payments = vendor subledger."))
+              : `<span class="neg">${ESC(L("تعذّرت المطابقة — راجع الدفعات غير المخصّصة.",
+                     "Does not reconcile — review the unallocated payments."))}</span>`}</p>`)}
         </div>
         <div class="section-title"><span>${ESC(t("payables.title"))}</span><span class="line"></span></div>
         ${card("", renderTable([
@@ -2758,7 +2767,13 @@
               { key: "overdue_cents", label: t("payables.overdue"), cls: "num", render: r => r.overdue_cents ? `<span class="neg">${fmtMoney(r.overdue_cents)}</span>` : "—" },
               { key: "next_due_date", label: t("payables.nextDue"), render: r => r.next_due_date ? fmtDate(r.next_due_date) : "—" },
               { key: "journal_balance_cents", label: t("payables.journal"), cls: "num", render: r => fmtMoney(r.journal_balance_cents) },
-            ], d.vendors))}`;
+            ], d.vendors, {
+              footer: d.totals.unallocated_payments_cents
+                ? `<tr><td colspan="7">${ESC(L("دفعات لم تُخصَّص بعد (تُضاف إلى رصيد الأستاذ للمطابقة)",
+                                             "Unallocated payments (added to the GL balance for reconciliation)"))}</td>
+                   <td class="num">${fmtMoney(d.totals.unallocated_payments_cents)}</td></tr>`
+                : "",
+            }))}`;
         }
       };
       $("#r-apply").onclick = load;
@@ -2767,6 +2782,482 @@
       wireExports(view);
     }
   };
+
+
+  /* ==================================================================
+     FINANCIAL STATEMENTS — every accounting statement in one workspace
+     ==================================================================
+     Layout: a statement catalogue on the start screen, then a full-width
+     document. Each statement is rendered as a real financial statement
+     (sections, indented lines, ruled totals), not as a raw table, and every
+     statement can be exported to PDF / Excel / CSV in Arabic or English.
+     ================================================================== */
+  const STMT_CARDS = [
+    ["income-statement", "stat.income", "income-statement", "stat.netProfit"],
+    ["balance-sheet", "stat.balanceSheet", "scale", "stat.totalAssets"],
+    ["cash-flow", "stat.cashFlow", "transfer", "stat.closingCash"],
+    ["equity-changes", "stat.equity", "panel", "stat.totalEquity"],
+    ["trial-balance", "stat.trialBalance", "list", "stat.totalDebits"],
+    ["tb-balance-sheet", "stat.tbBalanceSheet", "statement", "stat.totalAssets"],
+    ["general-ledger", "stat.generalLedger", "accounts", "stat.account"],
+    ["journal", "stat.journal", "journal", "stat.entry"],
+    ["receivables-aging", "stat.receivablesAging", "receivables", "stat.due"],
+    ["payables-aging", "stat.payablesAging", "payables", "stat.due"],
+    ["debt-position", "stat.debtPosition", "debt", "stat.net"],
+  ];
+
+  const money2 = (cents) => `<span class="stmt-money ${Number(cents) < 0 ? "neg" : ""}">${fmtMoney(cents)}</span>`;
+
+  function stmtRow(label, value, opts = {}) {
+    const { level = 0, strong = false, total = false, sub = false, note = "" } = opts;
+    return `<div class="stmt-row lvl-${level} ${strong ? "strong" : ""} ${total ? "total" : ""} ${sub ? "sub" : ""}">
+      <div class="stmt-label">${note ? `<span class="stmt-note">${ESC(note)}</span>` : ""}${ESC(label)}</div>
+      <div class="stmt-value">${value}</div>
+    </div>`;
+  }
+
+  function stmtHeaderBlock(titleKey, kicker, actionsHtml) {
+    return `<div class="stmt-doc-head">
+      <div class="stmt-doc-title">
+        <span class="stmt-kicker">${ESC(kicker)}</span>
+        <h2>${ESC(t(titleKey))}</h2>
+      </div>
+      <div class="stmt-doc-actions">${actionsHtml}</div>
+    </div>`;
+  }
+
+  function stmtGroup(title, bodyHtml, totalLabel, totalCents, cls = "") {
+    return `<div class="stmt-group ${cls}">
+      <div class="stmt-group-head">${ESC(title)}</div>
+      ${bodyHtml}
+      ${totalLabel ? stmtRow(totalLabel, money2(totalCents), { total: true }) : ""}
+    </div>`;
+  }
+
+  function stmtKpis(items) {
+    return `<div class="stmt-kpis">${items.map(i => `<div class="stmt-kpi ${i.tone || ""}">
+        <span>${ESC(i.label)}</span><strong>${i.raw ? ESC(i.value) : fmtMoney(i.value)}</strong>
+        ${i.sub ? `<small>${ESC(i.sub)}</small>` : ""}</div>`).join("")}</div>`;
+  }
+
+  /** Old value → small delta chip, used for the period-over-period column. */
+  function stmtDelta(current, previous) {
+    if (previous === null || previous === undefined || previous === "" || Number(previous) === 0) {
+      return `<span class="stmt-delta flat">—</span>`;
+    }
+    const diff = Number(current) - Number(previous);
+    const pct = (diff / Math.abs(Number(previous))) * 100;
+    const cls = diff > 0 ? "up" : diff < 0 ? "down" : "flat";
+    const arrow = diff > 0 ? "▲" : diff < 0 ? "▼" : "=";
+    return `<span class="stmt-delta ${cls}" title="${fmtMoney(diff, { plain: true })}">
+      ${arrow} ${Math.abs(pct).toFixed(1)}%</span>`;
+  }
+
+  const STATEMENT_LABELS = {
+    "income-statement": "stat.income", "balance-sheet": "stat.balanceSheet",
+    "cash-flow": "stat.cashFlow", "equity-changes": "stat.equity",
+    "trial-balance": "stat.trialBalance", "tb-balance-sheet": "stat.tbBalanceSheet",
+    "general-ledger": "stat.generalLedger", "journal": "stat.journal",
+    "receivables-aging": "stat.receivablesAging", "payables-aging": "stat.payablesAging",
+    "debt-position": "stat.debtPosition",
+  };
+
+  PAGES.statements = {
+    perm: "reports.view",
+    async render(view, params) {
+      const kind = (params && params[0]) || "";
+      setTitle("nav.statements", kind && STATEMENT_LABELS[kind] ? [t(STATEMENT_LABELS[kind])] : []);
+      if (!kind || !STATEMENT_LABELS[kind]) return this.renderIndex(view);
+      return this.renderStatement(view, kind);
+    },
+
+    async renderIndex(view) {
+      const index = await api("/api/statements");
+      const groups = { primary: [], verification: [], analytic: [] };
+      (index.statements || []).forEach(s => { (groups[s.group] || groups.primary).push(s); });
+      const fy = index.fiscal_year;
+      const cardFor = (s) => {
+        const meta = STMT_CARDS.find(c => c[0] === s.id) || [s.id, s.id, "reports", "stat.period"];
+        return `<a class="stmt-card" href="#/statements/${s.id}">
+          <span class="stmt-card-ico">${icon(meta[2])}</span>
+          <span class="stmt-card-body">
+            <strong>${ESC(APP.lang === "ar" ? s.name_ar : s.name_en)}</strong>
+            <small>${ESC(APP.lang === "ar" ? s.desc_ar : s.desc_en)}</small>
+          </span>
+          <span class="stmt-card-go">${icon("chevron")}</span>
+        </a>`;
+      };
+      view.innerHTML = `${pageHead("stat.title", "stat.subtitle",
+        `<span class="chip">${icon("calendar")} ${ESC(fy ? (APP.lang === "ar" ? fy.name : fy.name) : t("stat.period"))}</span>`)}
+        ${Object.keys(groups).filter(g => groups[g].length).map(g => `
+          <div class="section-title"><span>${ESC(t("stat.group." + g))}</span><span class="line"></span></div>
+          <div class="stmt-grid">${groups[g].map(cardFor).join("")}</div>`).join("")}
+        <p class="stmt-footnote">${icon("lock")} ${ESC(t("stat.note"))}</p>`;
+    },
+
+    async renderStatement(view, kind) {
+      const from = yearStart(), to = today();
+      const isPoint = kind === "balance-sheet" || kind === "tb-balance-sheet";
+      view.innerHTML = `${pageHead("stat.title", "stat.subtitle",
+        `<a class="btn btn-sm btn-ghost" href="#/statements">${icon("grid")} ${ESC(L("كل القوائم", "All statements"))}</a>`)}
+        <div class="stmt-toolbar">
+          <div class="stmt-select">
+            <span>${ESC(t("stat.period"))}</span>
+            <select id="st-kind">
+              ${STMT_CARDS.map(c => `<option value="${c[0]}" ${c[0] === kind ? "selected" : ""}>${ESC(t(c[1]))}</option>`).join("")}
+            </select>
+          </div>
+          <div class="field" style="margin:0"><span>${ESC(t("common.from"))}</span>${dateField("st-from", from)}</div>
+          <div class="field" style="margin:0"><span>${ESC(t("common.to"))}</span>${dateField("st-to", to)}</div>
+          <label class="stmt-switch"><input type="checkbox" id="st-compare" ${kind === "income-statement" ? "checked" : ""}>
+            <span>${ESC(t("stat.compare"))}</span></label>
+          <div class="stmt-toolbar-spacer"></div>
+          <div class="stmt-exports" id="st-exports"></div>
+        </div>
+        <div id="stmt-body" class="stmt-body"><div class="skeleton"></div><div class="skeleton"></div></div>`;
+      const $from = $("#st-from"), $to = $("#st-to"), $cmp = $("#st-compare");
+      if (isPoint) { $from.closest(".field").style.display = "none"; }
+      const body = $("#stmt-body");
+
+      const load = async () => {
+        const f = dateVal($from.value) || from;
+        const t2 = dateVal($to.value) || to;
+        const params = new URLSearchParams({ from: f, to: t2 });
+        if ($cmp.checked && kind === "income-statement") params.set("compare", "1");
+        body.innerHTML = `<div class="skeleton"></div><div class="skeleton"></div>`;
+        const res = await api(`/api/statements/${kind}?${params.toString()}`);
+        $("#st-exports").innerHTML = `
+          <details class="export-menu"><summary>${icon("download")} ${ESC(L("تصدير", "Export"))} <span class="caret">${icon("chevron")}</span></summary>
+            <div class="menu">
+              <button data-stmt-export="pdf" data-lang="ar">${icon("file")} <span class="ml">PDF — عربي</span><span class="hint">A4</span></button>
+              <button data-stmt-export="pdf" data-lang="en">${icon("file")} <span class="ml">PDF — English</span><span class="hint">A4</span></button>
+              <button data-stmt-export="xlsx" data-lang="${APP.lang}">${icon("chart")} <span class="ml">Excel</span><span class="hint">XLSX</span></button>
+              <button data-stmt-export="csv">${icon("list")} <span class="ml">CSV</span><span class="hint">UTF-8</span></button>
+            </div></details>
+          <button class="btn btn-sm" onclick="window.print()">${icon("printer")} ${ESC(t("common.print"))}</button>`;
+      $$("[data-stmt-export]", view).forEach(b => b.onclick = () => {
+        const f = dateVal($from.value) || from, t2 = dateVal($to.value) || to;
+        const fmt = b.dataset.stmtExport;
+        if (fmt === "csv") {
+          downloadApi(`/api/statements/${kind}/csv?from=${f}&to=${t2}`, `${kind}-${f}_${t2}.csv`);
+        } else {
+          downloadApi(`/api/reports/${fmt}?kind=${kind}&from=${f}&to=${t2}&lang=${b.dataset.lang || APP.lang}`,
+            `${kind}-${f}_${t2}.${fmt}`);
+        }
+      });
+        body.innerHTML = this.renderDoc(res);
+        wireStmtInteractions(body);
+        wireExports(body);
+      };
+      $("#st-kind").onchange = (e) => { location.hash = "#/statements/" + e.target.value; };
+      $to.onchange = load; $from.onchange = load; $cmp.onchange = load;
+      await load();
+    },
+
+    renderDoc(res) {
+      const d = res.data || {};
+      const company = res.company || {};
+      const ar = APP.lang === "ar";
+      const period = res.kind === "balance-sheet" || res.kind === "tb-balance-sheet"
+        ? `${t("stat.asOf")} ${fmtDate(res.date_to)}`
+        : `${fmtDate(res.date_from)} — ${fmtDate(res.date_to)}`;
+      const head = stmtHeaderBlock(STATEMENT_LABELS[res.kind], t("stat.title"),
+        `<span class="stmt-company">${ESC(ar ? company.name_ar : company.name_en || company.name_ar)}</span>
+         <span class="stmt-period">${ESC(period)}</span>`);
+      const rend = this["doc_" + res.kind.replace(/-/g, "_")];
+      const inner = rend ? rend.call(this, d, res) : `<div class="empty">${ESC(t("stat.empty"))}</div>`;
+      return `<div class="stmt-doc">${head}${inner}
+        <div class="stmt-doc-foot">
+          <span>${icon("lock")} ${ESC(ar ? "مصدر الأرقام: القيود المرحّلة — " : "Source: posted journal entries — ")}${ESC(res.company && res.company.code || "")}</span>
+          <span>${ESC(t("stat.note"))}</span>
+        </div></div>`;
+    },
+
+    /* ---------------- income statement ---------------- */
+    doc_income_statement(d, res) {
+      const cmp = res.comparison && res.comparison.data;
+      const S = d.sections || {};
+      const rev = S.revenue || { lines: [], total_cents: 0 };
+      const ret = S.returns || { lines: [], total_cents: 0 };
+      const cogs = S.cost_of_sales || { lines: [], total_cents: 0 };
+      const opex = (S.operating_expenses || []);
+      const ar = (x) => (APP.lang === "ar" ? x.name_ar : (x.name_en || x.name_ar));
+      const line = (l, lvl = 1) => stmtRow(`${l.code} — ${ESC(ar(l))}`, money2(l.amount_cents), { level: lvl });
+      const opexRows = opex.map(sec => `
+        <div class="stmt-subsection">${ESC(APP.lang === "ar" ? sec.name_ar : sec.name_en)}</div>
+        ${sec.lines.map(l => line(l, 2)).join("")}
+        ${stmtRow(t("common.total") + " — " + (APP.lang === "ar" ? sec.name_ar : sec.name_en), money2(sec.total_cents), { level: 2, sub: true })}`).join("");
+      return `${stmtKpis([
+        { label: t("stat.netRevenue"), value: d.total_revenue_cents },
+        { label: t("stat.grossProfit"), value: d.gross_profit_cents, tone: d.gross_profit_cents >= 0 ? "ok" : "danger" },
+        { label: t("stat.ebit"), value: d.operating_profit_cents, tone: d.operating_profit_cents >= 0 ? "ok" : "danger" },
+        { label: t("stat.netProfit"), value: d.net_profit_cents, tone: d.net_profit_cents >= 0 ? "ok" : "danger" },
+        { label: t("stat.grossMargin"), value: (d.gross_margin_pct ?? 0) + "%", raw: true },
+        { label: t("stat.netMargin"), value: (d.net_margin_pct ?? 0) + "%", raw: true },
+      ])}
+      <div class="stmt-sheet">
+        <div class="stmt-section-head">${ESC(t("stat.revenue"))}</div>
+        ${rev.lines.map(l => line(l)).join("")}
+        ${stmtRow(t("common.total") + " — " + t("stat.revenue"), money2(rev.total_cents), { strong: true })}
+        ${ret.total_cents ? stmtRow(t("stat.returns"), money2(-ret.total_cents), { level: 1 }) : ""}
+        ${stmtRow(t("stat.netRevenue"), money2(d.total_revenue_cents), { total: true })}
+        <div class="stmt-section-head">${ESC(t("stat.cogs"))}</div>
+        ${cogs.lines.map(l => line(l)).join("")}
+        ${stmtRow(t("common.total") + " — " + t("stat.cogs"), money2(cogs.total_cents), { strong: true })}
+        ${stmtRow(t("stat.grossProfit"), money2(d.gross_profit_cents), { total: true, strong: true })}
+        <div class="stmt-section-head">${ESC(t("stat.opex"))}</div>
+        ${opexRows || `<div class="stmt-empty">${ESC(t("stat.empty"))}</div>`}
+        ${stmtRow(t("stat.opex"), money2(d.operating_expenses_cents), { total: true })}
+        ${stmtRow(t("stat.ebit"), money2(d.operating_profit_cents), { total: true, strong: true })}
+        ${stmtRow(t("stat.otherIncome"), money2(d.other_income_cents), { level: 1 })}
+        ${stmtRow(t("stat.otherExpenses"), money2(-d.other_expenses_cents), { level: 1 })}
+        ${stmtRow(t("stat.netProfit"), money2(d.net_profit_cents), { total: true, strong: true, note: "" })}
+      </div>`;
+    },
+
+    /* ---------------- classified balance sheet ---------------- */
+    doc_balance_sheet(d, res) {
+      const ar = (x) => (APP.lang === "ar" ? x.name_ar : (x.name_en || x.name_ar));
+      const group = (g, isAsset) => `
+        <div class="stmt-section-head">${ESC(ar(g))}</div>
+        ${(g.lines || []).map(l => stmtRow(`${l.code} — ${ar(l)}`, money2(l.amount_cents), { level: 1 })).join("")}
+        ${stmtRow(t("common.total") + " — " + ar(g), money2(g.total_cents), { sub: true, strong: true })}`;
+      const assets = (d.assets_groups || []).map(g => group(g, true)).join("");
+      const liabs = (d.liabilities_groups || []).map(g => group(g, false)).join("");
+      const eq = `<div class="stmt-section-head">${ESC(ar(d.equity_group))}</div>
+        ${(d.equity_group.lines || []).map(l => stmtRow(`${l.code} — ${ar(l)}`, money2(l.amount_cents), { level: 1 })).join("")}
+        ${stmtRow(t("common.total") + " — " + ar(d.equity_group), money2(d.equity_group.total_cents), { sub: true, strong: true })}`;
+      return `${stmtKpis([
+        { label: t("stat.totalAssets"), value: d.total_assets_cents },
+        { label: t("stat.totalLiabilities"), value: d.total_liabilities_cents, tone: "warn" },
+        { label: t("stat.totalEquity"), value: d.total_equity_cents, tone: "ok" },
+        { label: t("stat.workingCapital"), value: d.working_capital_cents },
+        { label: t("stat.currentRatio"), value: d.current_ratio ?? "—", raw: true },
+        { label: t("stat.debtToEquity"), value: d.debt_to_equity ?? "—", raw: true },
+      ])}
+      <div class="stmt-two-col">
+        <div class="stmt-sheet">${assets}
+          ${stmtRow(t("stat.totalAssets"), money2(d.total_assets_cents), { total: true, strong: true })}</div>
+        <div class="stmt-sheet">${liabs}${eq}
+          ${stmtRow(t("stat.totalLE"), money2(d.total_liabilities_equity_cents ?? (d.total_liabilities_cents + d.total_equity_cents)), { total: true, strong: true })}
+        </div>
+      </div>
+      <div class="stmt-check ${d.balanced ? "ok" : "bad"}">
+        ${icon(d.balanced ? "check" : "alert")}
+        ${ESC(d.balanced ? (APP.lang === "ar" ? "الميزانية متوازنة: الأصول = الالتزامات + حقوق الملكية" : "Balanced: assets = liabilities + equity")
+                         : (APP.lang === "ar" ? "الميزانية غير متوازنة — راجع القيود" : "Not balanced — review the entries"))}
+      </div>`;
+    },
+
+    /* ---------------- cash flow ---------------- */
+    doc_cash_flow(d) {
+      const ar = (x) => (APP.lang === "ar" ? x.name_ar : (x.name_en || x.name_ar));
+      return `${stmtKpis([
+        { label: t("stat.operating"), value: d.activities.operating, tone: d.activities.operating >= 0 ? "ok" : "danger" },
+        { label: t("stat.investing"), value: d.activities.investing },
+        { label: t("stat.financing"), value: d.activities.financing },
+        { label: t("stat.openingCash"), value: d.opening_cents },
+        { label: t("stat.netChange"), value: d.net_cents, tone: d.net_cents >= 0 ? "ok" : "danger" },
+        { label: t("stat.closingCash"), value: d.closing_cents },
+      ])}
+      <div class="stmt-sheet">
+        ${(d.sections || []).map(s => `
+          <div class="stmt-section-head">${ESC(ar(s))}</div>
+          ${(s.lines || []).length
+            ? s.lines.map(l => stmtRow(ar(l), money2(l.amount_cents), { level: 1 })).join("")
+            : `<div class="stmt-empty">${ESC(t("stat.empty"))}</div>`}
+          ${stmtRow(t("common.total") + " — " + ar(s), money2(s.total_cents), { sub: true, strong: true })}
+        `).join("")}
+        ${stmtRow(t("stat.netChange"), money2(d.net_cents), { total: true })}
+        ${stmtRow(t("stat.openingCash"), money2(d.opening_cents), { level: 1 })}
+        ${stmtRow(t("stat.closingCash"), money2(d.closing_cents), { total: true, strong: true })}
+      </div>
+      ${d.reconciled ? `<div class="stmt-check ok">${icon("check")} ${ESC(APP.lang === "ar"
+        ? "مطابِق: النقدية أول الفترة + صافي التغير = النقدية آخر الفترة (ويطابق أرصدة البنوك والصناديق)"
+        : "Reconciles: opening cash + net change = closing cash (and matches the bank/cash balances)")}</div>` : ""}
+      ${(d.rows || []).length ? `<details class="stmt-details"><summary>${ESC(L("تفاصيل الحركات", "Movement detail"))}</summary>
+        ${renderTable([
+          { key: "entry_date", label: t("common.date"), render: r => fmtDate(r.entry_date) },
+          { key: "entry_no", label: t("stat.entry") },
+          { key: "memo", label: t("common.description"), cls: "wrap" },
+          { key: "activity", label: t("stat.activity"), render: r => `<span class="pill">${ESC(t("stat." + r.activity))}</span>` },
+          { key: "counter_account", label: t("stat.counterAccount"), cls: "wrap" },
+          { key: "amount_cents", label: t("common.amount"), cls: "num", render: r => money2(r.amount_cents) },
+        ], d.rows, { compact: true })}</details>` : ""}`;
+    },
+
+    /* ---------------- equity changes ---------------- */
+    doc_equity_changes(d) {
+      const ar = (x) => (APP.lang === "ar" ? x.name_ar : (x.name_en || x.name_ar));
+      return `${stmtKpis([
+        { label: t("stat.openingBalance"), value: d.totals.opening_cents },
+        { label: t("stat.additions"), value: d.totals.additions_cents, tone: "ok" },
+        { label: t("stat.reductions"), value: d.totals.reductions_cents, tone: "danger" },
+        { label: t("stat.closingBalance"), value: d.totals.closing_cents },
+      ])}
+      <div class="stmt-sheet">
+        ${renderTable([
+          { key: "code", label: t("common.code") },
+          { key: "name_ar", label: t("stat.account"), cls: "wrap", render: r => ESC(ar(r)) },
+          { key: "opening_cents", label: t("stat.openingBalance"), cls: "num", render: r => money2(r.opening_cents) },
+          { key: "additions_cents", label: t("stat.additions"), cls: "num", render: r => money2(r.additions_cents) },
+          { key: "reductions_cents", label: t("stat.reductions"), cls: "num", render: r => money2(-r.reductions_cents) },
+          { key: "closing_cents", label: t("stat.closingBalance"), cls: "num", render: r => money2(r.closing_cents) },
+        ], d.rows, {
+          footer: `<tr><td colspan="2">${ESC(t("common.total"))}</td>
+            <td class="num">${money2(d.totals.opening_cents)}</td>
+            <td class="num">${money2(d.totals.additions_cents)}</td>
+            <td class="num">${money2(-d.totals.reductions_cents)}</td>
+            <td class="num">${money2(d.totals.closing_cents)}</td></tr>`
+        })}
+      </div>`;
+    },
+
+    /* ---------------- trial balance ---------------- */
+    doc_trial_balance(d) {
+      return `${stmtKpis([
+        { label: t("stat.totalDebits"), value: d.totals.period_debit },
+        { label: t("stat.totalCredits"), value: d.totals.period_credit },
+        { label: t("stat.balanced"), value: d.balanced ? (APP.lang === "ar" ? "نعم" : "Yes") : (APP.lang === "ar" ? "لا" : "No"),
+          raw: true, tone: d.balanced ? "ok" : "danger" },
+        { label: t("common.accounts") || t("stat.account"), value: d.rows.length, raw: true },
+      ])}
+      <div class="stmt-sheet">
+        ${renderTable([
+          { key: "code", label: t("common.code") },
+          { key: "name_ar", label: t("stat.account"), cls: "wrap", render: r => ESC(APP.lang === "ar" ? r.name_ar : (r.name_en || r.name_ar)) },
+          { key: "opening", label: t("reports.opening"), cls: "num", render: r => money2(r.opening) },
+          { key: "period_debit", label: t("reports.periodDebit"), cls: "num", render: r => money2(r.period_debit) },
+          { key: "period_credit", label: t("reports.periodCredit"), cls: "num", render: r => money2(r.period_credit) },
+          { key: "closing", label: t("reports.closing"), cls: "num", render: r => money2(r.closing) },
+        ], d.rows, {
+          footer: `<tr><td colspan="2">${ESC(t("common.total"))}</td>
+            <td class="num">${money2(d.totals.opening_net)}</td>
+            <td class="num">${money2(d.totals.period_debit)}</td>
+            <td class="num">${money2(d.totals.period_credit)}</td>
+            <td class="num">${money2(d.totals.closing_net)}</td></tr>`
+        })}
+      </div>`;
+    },
+
+    /* ---------------- balance sheet from trial balance ---------------- */
+    doc_tb_balance_sheet(d) {
+      const col = (rows, label, total) => `<div class="stmt-sheet">
+        <div class="stmt-section-head">${ESC(label)}</div>
+        ${rows.map(l => stmtRow(`${l.code} — ${ESC(APP.lang === "ar" ? l.name_ar : (l.name_en || l.name_ar))}`, money2(l.amount_cents), { level: 1 })).join("")}
+        ${stmtRow(t("common.total"), money2(total), { total: true, strong: true })}
+      </div>`;
+      return `${stmtKpis([
+        { label: t("stat.totalAssets"), value: d.assets_total_cents },
+        { label: t("stat.totalLiabilities"), value: d.liabilities_total_cents, tone: "warn" },
+        { label: t("stat.totalEquity"), value: d.equity_total_cents, tone: "ok" },
+        { label: t("stat.netProfit"), value: d.profit_cents, tone: d.profit_cents >= 0 ? "ok" : "danger" },
+      ])}
+      <div class="stmt-two-col">
+        ${col(d.assets, APP.lang === "ar" ? "الأصول (مدين)" : "Assets (debit)", d.assets_total_cents)}
+        <div>
+          ${col(d.liabilities, APP.lang === "ar" ? "الالتزامات (دائن)" : "Liabilities (credit)", d.liabilities_total_cents)}
+          ${col(d.equity, APP.lang === "ar" ? "حقوق الملكية (دائن)" : "Equity (credit)", d.equity_total_cents)}
+        </div>
+      </div>
+      <div class="stmt-check ${d.balanced ? "ok" : "bad"}">${icon(d.balanced ? "check" : "alert")}
+        ${ESC(d.balanced ? (APP.lang === "ar" ? "الطرفان متساويان" : "Both sides agree") : (APP.lang === "ar" ? "الطرفان غير متساويين" : "Both sides do not agree"))}
+      </div>`;
+    },
+
+    /* ---------------- general ledger ---------------- */
+    doc_general_ledger(d) {
+      return `${stmtKpis([
+        { label: t("stat.totalDebits"), value: d.totals.debit_cents },
+        { label: t("stat.totalCredits"), value: d.totals.credit_cents },
+        { label: t("stat.account"), value: d.accounts.length, raw: true },
+      ])}
+      <div class="stmt-sheet stmt-accounts">
+        ${d.accounts.map(a => `<details class="stmt-acc" ${d.accounts.length <= 3 ? "open" : ""}>
+          <summary>
+            <span class="stmt-acc-code">${ESC(a.code)}</span>
+            <span class="stmt-acc-name">${ESC(APP.lang === "ar" ? a.name_ar : (a.name_en || a.name_ar))}</span>
+            <span class="stmt-acc-bal">${money2(a.closing_cents)}</span>
+            <span class="stmt-acc-meta">${ESC(t("reports.periodDebit"))} ${fmtMoney(a.debit_cents, { plain: true })} · ${ESC(t("reports.periodCredit"))} ${fmtMoney(a.credit_cents, { plain: true })}</span>
+          </summary>
+          ${renderTable([
+            { key: "entry_date", label: t("common.date"), render: r => fmtDate(r.entry_date) },
+            { key: "entry_no", label: t("stat.entry") },
+            { key: "description", label: t("common.description"), cls: "wrap" },
+            { key: "debit_cents", label: t("common.debit"), cls: "num", render: r => r.debit_cents ? money2(r.debit_cents) : "—" },
+            { key: "credit_cents", label: t("common.credit"), cls: "num", render: r => r.credit_cents ? money2(r.credit_cents) : "—" },
+            { key: "running_cents", label: t("reports.closing"), cls: "num", render: r => money2(r.running_cents) },
+          ], a.lines, { compact: true, empty: t("stat.empty") })}
+        </details>`).join("")}
+      </div>`;
+    },
+
+    /* ---------------- journal ---------------- */
+    doc_journal(d) {
+      return `<div class="stmt-sheet">
+        ${renderTable([
+          { key: "entry_date", label: t("common.date"), render: r => fmtDate(r.entry_date) },
+          { key: "entry_no", label: t("stat.entry"), render: r => `<a href="#/journal/${r.id}">${ESC(r.entry_no)}</a>` },
+          { key: "memo", label: t("common.description"), cls: "wrap" },
+          { key: "lines", label: L("عدد البنود", "Lines"), cls: "num", render: r => r.lines.length },
+          { key: "total_debit_cents", label: t("common.amount"), cls: "num", render: r => money2(r.total_debit_cents) },
+        ], d.entries, { compact: true, empty: t("stat.empty") })}
+      </div>`;
+    },
+
+    /* ---------------- aging ---------------- */
+    doc_receivables_aging(d) { return this.doc_aging(d, "sales"); },
+    doc_payables_aging(d) { return this.doc_aging(d, "purchase"); },
+    doc_aging(d, kind) {
+      const buckets = d.buckets || {};
+      return `${stmtKpis(Object.keys(buckets).map(b => ({
+        label: t("reports.bucket." + b), value: buckets[b],
+        tone: b === "over_90" ? "danger" : b === "current" ? "ok" : "" })))}
+      <div class="stmt-sheet">
+        ${renderTable([
+          { key: "invoice_no", label: L("الفاتورة", "Invoice") },
+          { key: "party_ar", label: kind === "sales" ? t("common.customer") : t("common.vendor"), cls: "wrap" },
+          { key: "invoice_date", label: t("common.date"), render: r => fmtDate(r.invoice_date) },
+          { key: "due_date", label: t("common.dueDate"), render: r => fmtDate(r.due_date) },
+          { key: "total_cents", label: t("common.total"), cls: "num", render: r => money2(r.total_cents) },
+          { key: "remaining_cents", label: t("common.remaining"), cls: "num", render: r => money2(r.remaining_cents) },
+          { key: "days_overdue", label: t("reports.daysOverdue"), cls: "num", render: r => r.days_overdue > 0 ? `<span class="neg">${r.days_overdue}</span>` : "—" },
+          { key: "bucket", label: t("payables.aging"), render: r => `<span class="badge ${r.bucket === "current" ? "green" : r.bucket === "over_90" ? "red" : "amber"}">${ESC(t("reports.bucket." + r.bucket))}</span>` },
+        ], d.items || [], { empty: t("stat.empty") })}
+      </div>`;
+    },
+
+    /* ---------------- contractor debt ---------------- */
+    doc_debt_position(d) {
+      return `${stmtKpis([
+        { label: t("stat.due"), value: d.totals.due_cents, tone: "warn" },
+        { label: t("stat.paid"), value: d.totals.paid_cents, tone: "ok" },
+        { label: t("stat.net"), value: d.totals.net_cents, tone: "danger" },
+        { label: t("stat.account"), value: d.accounts.length, raw: true },
+      ])}
+      <div class="stmt-sheet">
+        ${renderTable([
+          { key: "code", label: t("common.code") },
+          { key: "name_ar", label: t("stat.account"), cls: "wrap", render: r => ESC(APP.lang === "ar" ? r.name_ar : (r.name_en || r.name_ar)) },
+          { key: "unit", label: L("الوحدة", "Unit") },
+          { key: "due_cents", label: t("stat.due"), cls: "num", render: r => money2(r.due_cents) },
+          { key: "paid_cents", label: t("stat.paid"), cls: "num", render: r => money2(r.paid_cents) },
+          { key: "net_cents", label: t("stat.net"), cls: "num", render: r => money2(r.net_cents) },
+        ], d.accounts, {
+          footer: `<tr><td colspan="3">${ESC(t("common.total"))}</td>
+            <td class="num">${money2(d.totals.due_cents)}</td>
+            <td class="num">${money2(d.totals.paid_cents)}</td>
+            <td class="num">${money2(d.totals.net_cents)}</td></tr>`,
+          empty: t("stat.empty")
+        })}
+      </div>`;
+    },
+  };
+
+  function wireStmtInteractions(root) {
+    // keep <details> states usable and make the sheet keyboard-navigable
+    $$(".stmt-acc summary", root).forEach(s => s.setAttribute("tabindex", "0"));
+  }
 
   /* ==================================================================
      USERS
@@ -2889,51 +3380,161 @@
   /* ==================================================================
      AI ASSISTANT
      ================================================================== */
+  /* ==================================================================
+     AI ASSISTANT — answers about every part of the ERP
+     ==================================================================
+     The answer payload is structured (headline · KPI cards · bullets ·
+     deep links · follow-up questions), so the same server answer renders as
+     a rich, scannable message instead of one long paragraph of text.
+     ================================================================== */
+  const ASSIST_SUGGESTIONS = {
+    ar: ["ملخص الأداء", "ما صافي الربح هذا العام؟", "اعرض المركز المالي", "السيولة المتاحة",
+         "أعمار ديون العملاء", "مديونية الموردين", "أكبر بنود المصروفات", "الموازنة مقابل الفعلي",
+         "موقف ضريبة القيمة المضافة", "الرواتب", "المخزون", "المديونية والمقاولون",
+         "القيود المعلّقة", "الفترات المالية", "الأصول والإهلاك", "مؤشرات الأداء"],
+    en: ["Performance summary", "What is the net profit this year?", "Show the balance sheet",
+         "Available liquidity", "Receivables aging", "Vendor payables", "Largest expense lines",
+         "Budget vs actual", "VAT position", "Payroll", "Inventory", "Contractor debt",
+         "Pending entries", "Fiscal periods", "Assets & depreciation", "KPI ratios"],
+  };
+
+  function assistantCard(c) {
+    if (c.raw) {
+      return `<div class="ai-card ${c.tone || ""}"><span>${ESC(APP.lang === "ar" ? c.label_ar : (c.label_en || c.label_ar))}</span>
+        <strong>${ESC(String(c.value ?? "—"))}</strong></div>`;
+    }
+    return `<div class="ai-card ${c.tone || ""}"><span>${ESC(APP.lang === "ar" ? c.label_ar : (c.label_en || c.label_ar))}</span>
+      <strong>${fmtMoney(c.value)}</strong></div>`;
+  }
+
+  function assistantMessage(res) {
+    const ar = APP.lang === "ar";
+    const cards = (res.cards || []).length
+      ? `<div class="ai-cards">${res.cards.map(assistantCard).join("")}</div>` : "";
+    const refs = (res.refs || []).length
+      ? `<div class="ai-refs">${res.refs.map(r => `<a class="ai-ref" href="${ESC(r.hash)}">
+            ${icon(r.kind === "page" ? "grid" : "statement")}
+            <span>${ESC(ar ? r.label_ar : (r.label_en || r.label_ar))}</span></a>`).join("")}</div>` : "";
+    const isEn = APP.lang !== "ar";
+    const headline = isEn && res.headline_en ? res.headline_en : res.headline;
+    const answerText = isEn && res.answer_en ? res.answer_en : (res.answer || "");
+    const body = String(answerText).split("\n").map(line => {
+      const t2 = line.trim();
+      if (!t2) return "<div class=\"ai-gap\"></div>";
+      if (t2.startsWith("•")) return `<div class="ai-bullet"><i></i><span>${ESC(t2.replace(/^•\s*/, ""))}</span></div>`;
+      if (/^[-—]{3,}$/.test(t2)) return "<hr class=\"ai-rule\">";
+      return `<p>${ESC(t2)}</p>`;
+    }).join("");
+    const head = headline ? `<div class="ai-headline">${ESC(headline)}</div>` : "";
+    return `<div class="msg bot ai-msg">
+      <div class="ai-msg-head">
+        <span class="ai-avatar">${icon("sparkle")}</span>
+        <span class="ai-who">${ESC(t("assistant.title"))}</span>
+        <span class="ai-source">${ESC(t("assistant.source"))}: ${ESC(res.source || "ledger")}</span>
+      </div>
+      ${head}${cards}
+      <div class="ai-text">${body}</div>
+      ${refs}
+    </div>`;
+  }
+
   PAGES.assistant = {
     perm: "ai.use",
     async render(view) {
       setTitle("nav.assistant");
-      const suggestions = APP.lang === "ar"
-        ? ["ما إجمالي مديونية الموردين؟", "ما صافي الربح هذا العام؟", "ما هي السيولة المتاحة؟", "أكبر بنود المصروفات؟", "أعمار ديون العملاء؟", "ملخص الأداء"]
-        : ["What are total vendor payables?", "What is the net profit this year?", "What is the available liquidity?", "Largest expense lines?", "Receivables aging?", "Performance summary"];
-      view.innerHTML = `${pageHead("assistant.title", "assistant.subtitle", `<span class="badge violet">${icon("sparkle")} ${ESC(L("تحليلات من القيود المرحّلة", "Analytics from posted entries"))}</span>`)}
-        <div class="split">
-          ${card("", `<div class="assistant" id="chat">
-            <div class="msg bot">${ESC(L("مرحبًا. اسألني عن الأرباح، المصروفات، السيولة، أو مديونية الموردين. كل إجابة مبنية على بياناتك الفعلية وضمن صلاحياتك.",
-              "Hello. Ask me about profit, expenses, liquidity or vendor payables. Every answer is computed from your actual data within your permissions."))}</div>
-            <div class="filters" style="margin:0">
-              <input id="chat-input" placeholder="${ESC(t("assistant.placeholder"))}" style="flex:1"/>
-              <button class="btn btn-primary" id="chat-send">${ESC(t("assistant.send"))}</button>
+      const ar = APP.lang === "ar";
+      const chips = ASSIST_SUGGESTIONS[ar ? "ar" : "en"];
+      view.innerHTML = `${pageHead("assistant.title", "assistant.subtitle",
+        `<span class="badge violet">${icon("sparkle")} ${ESC(L("من القيود المرحّلة فقط", "Posted entries only"))}</span>`)}
+        <div class="ai-shell">
+          <aside class="ai-side">
+            ${card(L("اسأل عن أي جزء", "Ask about any module"), `
+              <div class="chip-row ai-chips">
+                ${chips.map(s => `<button class="chip" data-q="${ESC(s)}">${ESC(s)}</button>`).join("")}
+              </div>
+              <p class="field-hint" style="margin-top:12px">${ESC(t("assistant.disclaimer"))}</p>`)}
+            ${card(L("ما يمكنني رؤيته", "What I can see"), `
+              <div class="ai-scope">
+                ${[["wallet", "الخزينة والبنوك", "Cash & banks", "#/banks"],
+                   ["receivables", "العملاء والتحصيل", "Customers & collection", "#/receivables"],
+                   ["payables", "الموردون والمديونية", "Vendors & payables", "#/payables"],
+                   ["inventory", "المخزون", "Inventory", "#/inventory"],
+                   ["payroll", "الرواتب", "Payroll", "#/payroll"],
+                   ["scale", "القوائم المالية", "Financial statements", "#/statements"]]
+                  .filter(() => true)
+                  .map(([ic, arL, enL, href]) => `<a class="ai-scope-item" href="${href}">
+                    ${icon(ic)}<span>${ESC(ar ? arL : enL)}</span>${icon("chevron")}</a>`).join("")}
+              </div>
+              <p class="field-hint" style="margin-top:10px">${ESC(L("كل إجابة محدودة بصلاحياتك على الخادم.", "Every answer is limited by your server-side permissions."))}</p>`)}
+          </aside>
+          <section class="ai-main">
+            <div class="ai-thread" id="chat">
+              <div class="msg bot ai-msg ai-welcome">
+                <div class="ai-msg-head">
+                  <span class="ai-avatar">${icon("sparkle")}</span>
+                  <span class="ai-who">${ESC(t("assistant.title"))}</span>
+                </div>
+                <div class="ai-headline">${ESC(L("أهلًا بك. اسألني عن أي جزء من النظام.",
+                  "Welcome. Ask me about any part of the system."))}</div>
+                <div class="ai-text"><p>${ESC(L(
+                  "الأرباح والإيرادات والمصروفات، السيولة والبنوك، العملاء والموردون وأعمار الديون، المخزون، الرواتب، الأصول، الموازنة، المديونية، ضريبة القيمة المضافة، القيود والفترات، أو أي قائمة من القوائم المالية.",
+                  "Profit, revenue and expenses; cash and banks; customers, vendors and aging; inventory; payroll; assets; budgets; contractor debt; VAT; entries and periods; or any financial statement."))}</p></div>
+              </div>
             </div>
-            <p class="field-hint">${ESC(t("assistant.disclaimer"))}</p>
-          </div>`)}
-          <div>
-            ${card(t("assistant.suggestions"), `<div class="chip-row" style="flex-direction:column;align-items:stretch">
-              ${suggestions.map(s => `<button class="chip" data-q="${ESC(s)}" style="text-align:start">${ESC(s)}</button>`).join("")}
-            </div>`)}
-          </div>
+            <form class="ai-composer" id="chat-form" autocomplete="off">
+              <textarea id="chat-input" rows="1" placeholder="${ESC(t("assistant.placeholder"))}"></textarea>
+              <button class="btn btn-primary ai-send" type="submit" title="${ESC(t("assistant.send"))}">
+                ${icon("send")}<span>${ESC(t("assistant.send"))}</span></button>
+            </form>
+          </section>
         </div>`;
       const chat = $("#chat");
       const input = $("#chat-input");
+      const form = $("#chat-form");
+      const scroll = () => { chat.scrollTop = chat.scrollHeight; };
+      const busy = { value: false };
+
       const send = async (text) => {
         const q = (text || input.value || "").trim();
-        if (!q) return;
-        chat.insertAdjacentHTML("beforeend", `<div class="msg user">${ESC(q)}</div>`);
+        if (!q || busy.value) return;
+        busy.value = true;
+        chat.insertAdjacentHTML("beforeend", `<div class="msg user ai-user">${ESC(q)}</div>`);
         input.value = "";
+        input.style.height = "auto";
         const loadingId = "ld" + Date.now();
-        chat.insertAdjacentHTML("beforeend", `<div class="msg bot" id="${loadingId}">${ESC(t("common.loading"))}</div>`);
+        chat.insertAdjacentHTML("beforeend",
+          `<div class="msg bot ai-msg ai-loading" id="${loadingId}">
+             <div class="ai-typing"><i></i><i></i><i></i></div>
+             <span>${ESC(L("أقرأ من الدفاتر…", "Reading the ledger…"))}</span></div>`);
+        scroll();
         try {
           const res = await api("/api/assistant/ask", { method: "POST", body: { question: q } });
-          document.getElementById(loadingId).outerHTML =
-            `<div class="msg bot">${ESC(res.answer)}<span class="src">${ESC(t("assistant.source"))}: ${ESC(res.source)}</span></div>`;
+          document.getElementById(loadingId).outerHTML = assistantMessage(res);
+          if ((res.suggestions || []).length) {
+            chat.insertAdjacentHTML("beforeend", `<div class="ai-followups">
+              ${res.suggestions.map(s => `<button class="chip" data-q="${ESC(s)}">${ESC(s)}</button>`).join("")}</div>`);
+            wireChips(chat);
+          }
         } catch (e) {
-          document.getElementById(loadingId).outerHTML = `<div class="msg bot">${icon("alert")} ${ESC(e.message)}</div>`;
+          document.getElementById(loadingId).outerHTML =
+            `<div class="msg bot ai-msg ai-error">${icon("alert")} ${ESC(e.message)}</div>`;
         }
-        chat.scrollIntoView({ block: "end" });
+        busy.value = false;
+        scroll();
       };
-      $("#chat-send").onclick = () => send();
-      input.onkeydown = (e) => { if (e.key === "Enter") send(); };
-      $$("[data-q]", view).forEach(b => b.onclick = () => send(b.dataset.q));
+      const wireChips = (root) => {
+        $$("[data-q]", root).forEach(b => b.onclick = () => send(b.dataset.q));
+      };
+      wireChips(view);
+      form.onsubmit = (e) => { e.preventDefault(); send(); };
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+      });
+      input.addEventListener("input", () => {
+        input.style.height = "auto";
+        input.style.height = Math.min(input.scrollHeight, 160) + "px";
+      });
+      input.focus();
     }
   };
 })();

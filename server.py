@@ -204,26 +204,105 @@ def route(method, pattern, permission=None):
     return deco
 
 
-# ------------------------------ auth --------------------------------------
+# ------------------------------ sign-in protection ------------------------
+# A login endpoint is the single most attacked screen of an accounting system.
+# Three independent brakes are applied, cheapest first:
+#
+#   1. per-IP failure budget   — no single client can grind passwords
+#   2. per-username lockout    — one account cannot be brute-forced from a botnet
+#   3. constant-time answers   — an unknown username costs the same wall time as
+#                                a wrong password (no user enumeration)
+#
+# State lives in-process (this deployment is a single server / single lambda
+# container). Persisted counters still work: ``users.failed_attempts`` and
+# ``users.locked_until`` are updated in the database as before.
+LOGIN_WINDOW_SECONDS = int(os.environ.get("ERP_LOGIN_WINDOW", "900"))       # 15 minutes
+LOGIN_MAX_ATTEMPTS_IP = int(os.environ.get("ERP_LOGIN_MAX_IP", "12"))
+LOGIN_MAX_ATTEMPTS_USER = int(os.environ.get("ERP_LOGIN_MAX_USER", "8"))
+_login_failures = {}          # key -> [timestamps]
+_login_lock = threading.Lock()
+
+# a fixed, deliberately slow hash used when the username does not exist, so the
+# response time never reveals whether an account is registered
+_DUMMY_HASH = ("pbkdf2_sha256$240000$00112233445566778899aabbccddeeff$"
+               "4f8b2c1d9e6a7b3c5d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c")
+
+
+def _rate_key(ctx, username):
+    return f"{ctx.ip}|{username}"
+
+
+def _rate_blocked(key):
+    now = time.monotonic()
+    with _login_lock:
+        hits = [t for t in _login_failures.get(key, []) if now - t < LOGIN_WINDOW_SECONDS]
+        _login_failures[key] = hits
+        return len(hits)
+
+
+def _rate_hit(key):
+    now = time.monotonic()
+    with _login_lock:
+        hits = [t for t in _login_failures.get(key, []) if now - t < LOGIN_WINDOW_SECONDS]
+        hits.append(now)
+        _login_failures[key] = hits
+        if len(_login_failures) > 2048:          # keep the map bounded
+            for k in list(_login_failures)[:512]:
+                _login_failures.pop(k, None)
+
+
+def _rate_reset(key):
+    with _login_lock:
+        _login_failures.pop(key, None)
+
+
 @route("POST", r"/api/auth/login")
 def login(ctx):
     body = ctx.body
-    username = (body.get("username") or "").strip().lower()
+    username = (body.get("username") or "").strip().lower()[:80]
     password = body.get("password") or ""
     conn = ctx.conn
+
+    if not username or not password:
+        raise ApiError("MISSING_FIELDS: أدخل اسم المستخدم وكلمة المرور / Enter username and password", 400)
+
+    ip_hits = _rate_blocked(f"ip|{ctx.ip}")
+    if ip_hits >= LOGIN_MAX_ATTEMPTS_IP:
+        raise ApiError("TOO_MANY_ATTEMPTS: محاولات دخول كثيرة من هذا الجهاز. حاول بعد قليل / "
+                       "Too many attempts from this device — try again later", 429)
+    key = _rate_key(ctx, username)
+    if _rate_blocked(key) >= LOGIN_MAX_ATTEMPTS_USER:
+        raise ApiError("TOO_MANY_ATTEMPTS: محاولات دخول كثيرة لهذا الحساب. حاول بعد قليل / "
+                       "Too many attempts for this account — try again later", 429)
+
     row = q1(conn, "SELECT * FROM users WHERE lower(username)=?", (username,))
-    if row is None or not verify_password(password, row["password_hash"]):
-        if row:
-            attempts = row["failed_attempts"] + 1
-            conn.execute("UPDATE users SET failed_attempts=? WHERE id=?", (attempts, row["id"]))
-            if attempts >= 8:
-                conn.execute("UPDATE users SET locked_until=? WHERE id=?",
-                             ((datetime.utcnow() + timedelta(minutes=15)).strftime("%Y-%m-%d %H:%M:%S"), row["id"]))
-        raise ApiError("INVALID_CREDENTIALS: بيانات الدخول غير صحيحة / Invalid username or password", 401)
+    # Always run one PBKDF2 verification, even for a missing user: the timing of
+    # the answer must not tell an attacker whether the account exists.
+    stored = row["password_hash"] if row is not None else _DUMMY_HASH
+    password_ok = verify_password(password, stored)
+    if row is None or not password_ok:
+        _rate_hit(key)
+        _rate_hit(f"ip|{ctx.ip}")
+        if row is not None:
+            attempts = (row["failed_attempts"] or 0) + 1
+            locked_until = None
+            if attempts >= LOGIN_MAX_ATTEMPTS_USER:
+                locked_until = (datetime.utcnow() + timedelta(minutes=15)).strftime("%Y-%m-%d %H:%M:%S")
+                attempts = 0
+            conn.execute("UPDATE users SET failed_attempts=?, locked_until=? WHERE id=?",
+                         (attempts, locked_until, row["id"]))
+            if locked_until:
+                audit(conn, None, "auth.locked", "user", row["id"],
+                      {"reason": "too many failed attempts", "ip": ctx.ip})
+        remaining = max(0, LOGIN_MAX_ATTEMPTS_IP - ip_hits - 1)
+        raise ApiError("INVALID_CREDENTIALS: بيانات الدخول غير صحيحة / Invalid username or password",
+                       401, {"attempts_left": remaining})
     if not row["is_active"]:
         raise ApiError("INACTIVE: الحساب موقوف / Account disabled", 403)
     if row["locked_until"] and row["locked_until"] > utcnow():
         raise ApiError("LOCKED: الحساب مقفل مؤقتًا بسبب محاولات دخول متكررة / Account temporarily locked", 423)
+
+    _rate_reset(key)
     conn.execute("UPDATE users SET failed_attempts=0, locked_until=NULL, last_login_at=? WHERE id=?",
                  (utcnow(), row["id"]))
     raw, hashed = issue_token(row["id"])
@@ -261,18 +340,61 @@ def preferences(ctx):
     return {"ok": True}
 
 
+WEAK_PASSWORDS = {"password", "12345678", "123456789", "1234567890", "qwerty123", "admin123",
+                  "welcome123", "eltaranisi", "changeme", "letmein123", "password1"}
+
+
+def password_problems(password: str, username: str = "", full_name: str = "") -> list:
+    """Password policy shared by every place a password is set.
+
+    The rules are deliberately simple and explainable (a finance team, not a
+    security team, has to live with them), but they do block the classic
+    "ahmed.eltaranisi = the company name" case the customer complained about.
+    """
+    problems = []
+    if len(password) < 10:
+        problems.append("10 أحرف على الأقل / at least 10 characters")
+    if not any(c.isdigit() for c in password):
+        problems.append("رقم واحد على الأقل / at least one digit")
+    if not any(c.isalpha() for c in password):
+        problems.append("حرف واحد على الأقل / at least one letter")
+    low = password.lower()
+    if len(set(low)) < 4:
+        problems.append("تنويع الأحرف / too repetitive")
+    tokens = [t for t in re.split(r"[^a-z0-9]+", (username or "").lower()) if len(t) >= 3]
+    tokens += [t for t in re.split(r"[^a-z0-9]+", (full_name or "").lower()) if len(t) >= 4]
+    for token in tokens:
+        if token and token in low:
+            problems.append("لا تحتوي على اسم المستخدم أو اسمك / must not contain your username or name")
+            break
+    if low in WEAK_PASSWORDS or any(low.startswith(w) and len(low) <= len(w) + 2 for w in WEAK_PASSWORDS):
+        problems.append("كلمة مرور شائعة / a common password")
+    return problems
+
+
 @route("POST", r"/api/auth/change-password")
 def change_password(ctx):
     old = ctx.body.get("current_password") or ""
     new = ctx.body.get("new_password") or ""
-    if len(new) < 10:
-        raise ApiError("WEAK_PASSWORD: كلمة المرور يجب ألا تقل عن 10 أحرف / Password must be at least 10 characters")
-    row = q1(ctx.conn, "SELECT password_hash FROM users WHERE id=?", (ctx.user["id"],))
-    if not verify_password(old, row["password_hash"]):
+    row = q1(ctx.conn, "SELECT password_hash, username, full_name_en, full_name_ar FROM users WHERE id=?",
+             (ctx.user["id"],))
+    problems = password_problems(new, row["username"], f'{row["full_name_en"]} {row["full_name_ar"]}')
+    if problems:
+        raise ApiError("WEAK_PASSWORD: كلمة المرور ضعيفة / Password is too weak",
+                       400, {"rules": problems})
+    if verify_password(old, row["password_hash"]):
+        pass
+    else:
         raise ApiError("INVALID_CREDENTIALS: كلمة المرور الحالية غير صحيحة / Current password incorrect", 401)
+    if old == new:
+        raise ApiError("SAME_PASSWORD: الكلمة الجديدة مطابقة للحالية / New password must differ")
     from security import hash_password
     ctx.conn.execute("UPDATE users SET password_hash=?, password_must_change=0 WHERE id=?",
                      (hash_password(new), ctx.user["id"]))
+    # every other session of this user is revoked: a password change is how you
+    # kick out a shared or stolen session
+    ctx.conn.execute("UPDATE sessions SET revoked=1 WHERE user_id=? AND token<>?",
+                     (ctx.user["id"], ctx.token_hash))
     audit(ctx.conn, ctx.user, "auth.change_password", "user", ctx.user["id"])
     return {"ok": True}
 
@@ -470,15 +592,20 @@ def dev_accounts(ctx):
              conn.execute("SELECT username, full_name_ar, role_code FROM users").fetchall()}
     role_names = {r["code"]: (r["name_ar"], r["name_en"]) for r in
                   conn.execute("SELECT code, name_ar, name_en FROM roles").fetchall()}
+    # NOTE: the password is deliberately NOT returned. The demo list is a picker
+    # ("sign in as the auditor"), not a credential dump: filling a password into
+    # a public page — even a development one — would put a real-looking password
+    # on the screen and in the browser history. The sign-in happens server-side
+    # through /api/auth/demo-login instead.
     accounts = []
     if path.exists():
         for line in path.read_text(encoding="utf-8").splitlines():
             parts = [p.strip() for p in line.split("|")]
             if len(parts) != 4:
                 continue
-            name, username, password, role = parts
+            name, username, _password, role = parts
             rn = role_names.get(role, (role, role))
-            accounts.append({"name_ar": name, "username": username, "password": password,
+            accounts.append({"name_ar": name, "username": username,
                              "role": role, "role_name_ar": rn[0], "role_name_en": rn[1]})
     else:
         # Read-only filesystem (serverless): rebuild the list from the seed table.
@@ -486,18 +613,63 @@ def dev_accounts(ctx):
             from seed import DEV_PASSWORDS
         except Exception:
             DEV_PASSWORDS = {}
-        for username, password in DEV_PASSWORDS.items():
+        for username in DEV_PASSWORDS:
             row = users.get(username)
             if row is None:
                 continue
             rn = role_names.get(row["role_code"], (row["role_code"], row["role_code"]))
             accounts.append({"name_ar": row["full_name_ar"], "username": username,
-                             "password": password, "role": row["role_code"],
+                             "role": row["role_code"],
                              "role_name_ar": rn[0], "role_name_en": rn[1]})
     if not accounts:
         raise ApiError("NOT_FOUND: ملف بيانات التطوير غير موجود / dev credentials missing", 404)
+    # The owner account is deliberately absent from the public picker. Its name is
+    # the company's own name, so printing it on a sign-in screen tells anyone who
+    # reaches the page exactly which account to attack. The owner signs in by
+    # typing the username; the picker exists to demo the *role* experience.
+    accounts = [a for a in accounts if a.get("role") != "company_owner"]
+    accounts.sort(key=lambda a: (a.get("role") in ("auditor", "sales_user"), a.get("username", "")))
     return {"accounts": accounts, "demo": True,
-            "warning": "Development credentials — never enable this endpoint in production."}
+            "warning": "Development picker — one click signs in as that seeded user. "
+                       "Never enable this endpoint in production."}
+
+
+@route("POST", r"/api/auth/demo-login")
+def demo_login(ctx):
+    """One-click sign-in for the development picker.
+
+    The password never leaves the server: the caller sends only the *username*
+    it picked, the credentials file is read here, and the normal login path is
+    executed. Disabled anywhere ``/api/dev/accounts`` is disabled.
+    """
+    if not demo_accounts_enabled():
+        raise ApiError("NOT_FOUND: غير متاح / not available", 404)
+    username = (ctx.body.get("username") or "").strip()[:80]
+    if not username:
+        raise ApiError("MISSING_FIELDS: اختر حسابًا / Pick an account", 400)
+    # Same rule as the picker: the owner account is not reachable by one click.
+    owner = read().execute(
+        "SELECT 1 FROM users WHERE username=? AND role_code='company_owner'", (username,)).fetchone()
+    if owner:
+        raise ApiError("FORBIDDEN: هذا الحساب لا يُدخل بضغطة واحدة / This account must sign in with its password", 403)
+    path = Path(os.environ.get("ERP_CREDENTIALS_FILE") or (BASE_DIR / "data" / "dev-credentials.txt"))
+    password = None
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            parts = [p.strip() for p in line.split("|")]
+            if len(parts) == 4 and parts[1] == username:
+                password = parts[2]
+                break
+    if password is None:
+        try:
+            from seed import DEV_PASSWORDS
+            password = DEV_PASSWORDS.get(username)
+        except Exception:
+            password = None
+    if password is None:
+        raise ApiError("NOT_FOUND: الحساب التجريبي غير موجود / Demo account not found", 404)
+    ctx.body = {"username": username, "password": password}
+    return login(ctx)
 
 
 @route("GET", r"/api/meta")
@@ -2067,6 +2239,213 @@ def rep_budget(ctx):
     return {"fiscal_year_id": fy, "rows": reports.budget_vs_actual(ctx.conn, cid, fy) if fy else []}
 
 
+# --------------------------------------------------------------------------
+# Financial statements (all statements, one shape, with comparatives)
+# --------------------------------------------------------------------------
+STATEMENT_PERMISSION = {
+    "trial-balance": "reports.view", "income-statement": "reports.view",
+    "balance-sheet": "reports.view", "tb-balance-sheet": "reports.view",
+    "cash-flow": "reports.view", "equity-changes": "reports.view",
+    "general-ledger": "reports.view", "journal": "reports.view",
+    "receivables-aging": "reports.view", "payables-aging": "reports.view",
+    "debt-position": "debt.view",
+}
+
+
+@route("GET", r"/api/statements", "reports.view")
+def statements_index(ctx):
+    """Catalogue of every statement this build can produce (for the UI)."""
+    cid = ensure_company(ctx.user)
+    out = []
+    for meta in reports.STATEMENT_META:
+        perm = STATEMENT_PERMISSION.get(meta["id"], "reports.view")
+        out.append({**meta, "perm": perm, "allowed": has(ctx.user, perm)})
+    fy = q1(ctx.conn, "SELECT * FROM fiscal_years WHERE company_id=? AND start_date<=? AND end_date>=?",
+            (cid, date.today().isoformat(), date.today().isoformat()))
+    return {"statements": out, "fiscal_year": dict(fy) if fy else None,
+            "today": date.today().isoformat()}
+
+
+@route("GET", r"/api/statements/([a-z][a-z\-]*)", "reports.view")
+def statement_detail(ctx, kind):
+    cid = ensure_company(ctx.user)
+    if kind not in [m["id"] for m in reports.STATEMENT_META]:
+        raise ApiError("NOT_FOUND: قائمة غير معروفة / Unknown statement", 404)
+    perm = STATEMENT_PERMISSION.get(kind, "reports.view")
+    require(ctx.user, perm)
+    d1, d2 = _period(ctx.qs)
+    compare = (ctx.qs.get("compare") or "").strip().lower() in ("1", "true", "yes", "on")
+    company = exporter.company_block(ctx.conn, cid)
+    fiscal = q1(ctx.conn, "SELECT * FROM fiscal_years WHERE company_id=? AND start_date<=? AND end_date>=?",
+                (cid, d2, d2))
+
+    if kind in ("balance-sheet", "tb-balance-sheet"):
+        d1 = d2      # a point-in-time statement: the from-date is meaningless
+    data = reports.statement(ctx.conn, cid, kind, d1, d2)
+    payload = {"kind": kind, "date_from": d1, "date_to": d2, "company": company,
+               "fiscal_year": dict(fiscal) if fiscal else None,
+               "meta": next(m for m in reports.STATEMENT_META if m["id"] == kind),
+               "data": data}
+    if compare and kind == "income-statement":
+        # previous period of the same length, so "vs last period" is honest
+        fmt = "%Y-%m-%d"
+        start = datetime.strptime(d1, fmt).date()
+        end = datetime.strptime(d2, fmt).date()
+        span = (end - start).days + 1
+        prev_end = start - timedelta(days=1)
+        prev_start = prev_end - timedelta(days=span - 1)
+        payload["comparison"] = {
+            "date_from": prev_start.isoformat(), "date_to": prev_end.isoformat(),
+            "data": reports.statement(ctx.conn, cid, kind, prev_start.isoformat(), prev_end.isoformat()),
+        }
+    audit(ctx.conn, ctx.user, "reports.statement", kind, None,
+          {"from": d1, "to": d2, "compare": compare}, company_id=cid)
+    return payload
+
+
+@route("GET", r"/api/statements/([a-z][a-z\-]*)/csv", "reports.export")
+def statement_csv(ctx, kind):
+    """CSV of any statement — one flat table, UTF-8 BOM so Excel shows Arabic."""
+    cid = ensure_company(ctx.user)
+    if kind not in [m["id"] for m in reports.STATEMENT_META]:
+        raise ApiError("NOT_FOUND: قائمة غير معروفة / Unknown statement", 404)
+    require(ctx.user, STATEMENT_PERMISSION.get(kind, "reports.view"))
+    d1, d2 = _period(ctx.qs)
+    data = reports.statement(ctx.conn, cid, kind, d1, d2)
+    header, rows = _statement_table(data, kind)
+    buf = io.StringIO()
+    buf.write("\ufeff")
+    writer = csv.writer(buf)
+    writer.writerow(header)
+    writer.writerows(rows)
+    audit(ctx.conn, ctx.user, "reports.export", kind, None,
+          {"format": "csv", "from": d1, "to": d2, "rows": len(rows)}, company_id=cid)
+    return ctx.file(f"{kind}-{d1}_{d2}.csv", buf.getvalue().encode("utf-8"),
+                    "text/csv; charset=utf-8")
+
+
+def _statement_table(data, kind):
+    """Flatten a statement payload into (header, rows) for CSV / Excel / PDF."""
+    from db import from_cents
+
+    def money(v):
+        return float(from_cents(v or 0))
+
+    if kind == "income-statement":
+        header = ["Section", "Code", "Item", "Amount"]
+        rows = []
+        for key, label in (("revenue", "Revenue"), ("returns", "Returns"),
+                           ("cost_of_sales", "Cost of sales")):
+            sec = data["sections"][key]
+            for l in sec["lines"]:
+                rows.append([label, l["code"], l["name_ar"], money(l["amount_cents"])])
+            rows.append([label, "", "Total " + label, money(sec["total_cents"])])
+        for sec in data["sections"]["operating_expenses"]:
+            for l in sec["lines"]:
+                rows.append(["Operating expenses", l["code"], l["name_ar"], money(l["amount_cents"])])
+        rows.append(["", "", "Gross profit", money(data["gross_profit_cents"])])
+        rows.append(["", "", "Net profit", money(data["net_profit_cents"])])
+        return header, rows
+    if kind in ("balance-sheet", "tb-balance-sheet"):
+        header = ["Section", "Code", "Item", "Amount"]
+        rows = []
+        if kind == "balance-sheet":
+            for sec in data["assets_groups"]:
+                for l in sec["lines"]:
+                    rows.append(["Assets — " + sec["name_en"], l["code"], l["name_ar"], money(l["amount_cents"])])
+                rows.append(["Assets — " + sec["name_en"], "", "Total " + sec["name_en"],
+                             money(sec["total_cents"])])
+            for sec in data["liabilities_groups"]:
+                for l in sec["lines"]:
+                    rows.append(["Liabilities — " + sec["name_en"], l["code"], l["name_ar"], money(l["amount_cents"])])
+                rows.append(["Liabilities — " + sec["name_en"], "", "Total " + sec["name_en"],
+                             money(sec["total_cents"])])
+            for l in data["equity_group"]["lines"]:
+                rows.append(["Equity", l["code"], l["name_ar"], money(l["amount_cents"])])
+        else:
+            for section, label in (("assets", "Assets"), ("liabilities", "Liabilities"),
+                                   ("equity", "Equity")):
+                for l in data[section]:
+                    rows.append([label, l["code"], l["name_ar"], money(l["amount_cents"])])
+        # Two statement kinds share this shape but name their totals differently:
+        # the full balance sheet reports total_*_cents, the trial-balance version
+        # reports *_total_cents. Read whichever is present instead of trusting one
+        # name — a guessed key used to raise KeyError and turn the export into a 500.
+        def total(*names):
+            for n in names:
+                if n in data:
+                    return data[n]
+            raise KeyError(names[0])
+        total_assets = total("total_assets_cents", "assets_total_cents")
+        total_liabilities = total("total_liabilities_cents", "liabilities_total_cents")
+        total_equity = total("total_equity_cents", "equity_total_cents")
+        rows.append(["", "", "Total assets", money(total_assets)])
+        rows.append(["", "", "Total liabilities", money(total_liabilities)])
+        rows.append(["", "", "Total equity", money(total_equity)])
+        rows.append(["", "", "Total liabilities + equity",
+                     money(data.get("total_liabilities_equity_cents",
+                                    total_liabilities + total_equity))])
+        return header, rows
+    if kind == "cash-flow":
+        header = ["Activity", "Item", "Amount"]
+        rows = [[s["name_en"], l["name_en"] or l["name_ar"], money(l["amount_cents"])]
+                for s in data["sections"] for l in s["lines"]]
+        for s in data["sections"]:
+            rows.append([s["name_en"], "Net " + s["name_en"], money(s["total_cents"])])
+        rows.append(["", "Opening cash", money(data["opening_cents"])])
+        rows.append(["", "Net change", money(data["net_cents"])])
+        rows.append(["", "Closing cash", money(data["closing_cents"])])
+        return header, rows
+    if kind == "equity-changes":
+        header = ["Code", "Item", "Opening", "Additions", "Reductions", "Closing"]
+        rows = [[r["code"], r["name_ar"], money(r["opening_cents"]), money(r["additions_cents"]),
+                 money(r["reductions_cents"]), money(r["closing_cents"])] for r in data["rows"]]
+        return header, rows
+    if kind == "trial-balance":
+        header = ["Code", "Account", "Opening", "Debit", "Credit", "Closing"]
+        rows = [[r["code"], r["name_ar"], money(r["opening"]), money(r["period_debit"]),
+                 money(r["period_credit"]), money(r["closing"])] for r in data["rows"]]
+        return header, rows
+    if kind == "general-ledger":
+        header = ["Account", "Date", "Entry", "Description", "Debit", "Credit", "Balance"]
+        rows = []
+        for acc in data["accounts"]:
+            rows.append([f'{acc["code"]} — {acc["name_ar"]}', "", "", "Opening balance",
+                         0, 0, money(acc["opening_cents"])])
+            for l in acc["lines"]:
+                rows.append([f'{acc["code"]} — {acc["name_ar"]}', l["entry_date"], l["entry_no"],
+                             l.get("description") or "", money(l["debit_cents"]),
+                             money(l["credit_cents"]), money(l["running_cents"])])
+        return header, rows
+    if kind == "journal":
+        header = ["Entry", "Date", "Memo", "Account", "Debit", "Credit"]
+        rows = []
+        for e in data["entries"]:
+            for l in e["lines"]:
+                rows.append([e["entry_no"], e["entry_date"], e["memo"],
+                             f'{l["code"]} — {l["name_ar"]}',
+                             money(l["debit_cents"]), money(l["credit_cents"])])
+        return header, rows
+    if kind in ("receivables-aging", "payables-aging"):
+        header = ["Invoice", "Party", "Date", "Due", "Total", "Remaining", "Days late", "Bucket"]
+        rows = [[i["invoice_no"], i["party_ar"], i["invoice_date"], i["due_date"],
+                 money(i["total_cents"]), money(i["remaining_cents"]), i["days_overdue"], i["bucket"]]
+                for i in data["items"]]
+        return header, rows
+    if kind == "debt-position":
+        header = ["Code", "Account", "Unit", "Due", "Paid", "Net"]
+        rows = [[a["code"], a["name_ar"], a["unit"], money(a["due_cents"]),
+                 money(a["paid_cents"]), money(a["net_cents"])] for a in data["accounts"]]
+        # Like every other statement, the file must carry its totals even when the
+        # period is empty: a fresh database seeds debt *accounts* but no items, so
+        # without this the export was a bare header and looked like a broken file.
+        t = data["totals"]
+        rows.append(["", "Total", "", money(t["due_cents"]),
+                     money(t["paid_cents"]), money(t["net_cents"])])
+        return header, rows
+    raise ApiError("INVALID_INPUT: نوع القائمة غير مدعوم / Unsupported statement")
+
+
 @route("GET", r"/api/reports/export", "reports.export")
 def rep_export(ctx):
     """CSV export (UTF-8 BOM so Arabic opens correctly in Excel)."""
@@ -2145,8 +2524,10 @@ def users_create(ctx):
         raise ApiError("FORBIDDEN: لا يمكن إنشاء مستخدم بصلاحية مدير المنصة / Cannot create platform admin")
     from security import hash_password
     pwd = b.get("password") or ""
-    if len(pwd) < 10:
-        raise ApiError("WEAK_PASSWORD: كلمة المرور يجب ألا تقل عن 10 أحرف / Password must be at least 10 characters")
+    problems = password_problems(pwd, b["username"], f'{b.get("full_name_en", "")} {b.get("full_name_ar", "")}')
+    if problems:
+        raise ApiError("WEAK_PASSWORD: كلمة المرور ضعيفة / Password is too weak",
+                       400, {"rules": problems})
     cur = ctx.conn.execute("""INSERT INTO users (company_id, branch_id, username, full_name_ar, full_name_en, email,
         password_hash, role_code, language, theme, password_must_change)
         VALUES (?,?,?,?,?,?,?,?,'ar','dark',1)""",
@@ -2252,98 +2633,829 @@ def fiscal_reopen(ctx, period_id):
 
 
 # --------------------------- AI assistant ---------------------------------
-@route("POST", r"/api/assistant/ask", "ai.use")
-def assistant(ctx):
-    """Permission-scoped finance assistant.
+# The assistant answers every part of the system it is allowed to see. Two
+# layers:
+#
+#   1. An intent router with ~20 topics, ordered by specificity, each topic
+#      producing a *structured* answer (headline + bullet evidence + numbers),
+#      so the same payload can be rendered as text, lists or charts.
+#   2. A "deep" pass that adds period comparison, ratios and a next-step hint.
+#
+# Every figure is computed from the ledger through reports.py at the moment of
+# the question — no cached numbers, no external model, no SQL from the client.
+# Everything is permission-checked: a question about payroll is refused to a
+# user without ``payroll.view`` even though the assistant could compute it.
 
-    This deployment answers with deterministic, auditable analytics computed from
-    the ledger (no external LLM call, no raw DB access). Every answer states the
-    source report so it can be traced. A pluggable LLM provider can be added later
-    behind the same interface.
-    """
+ASSISTANT_TOPICS = [
+    "summary", "profit", "revenue", "expenses", "cash", "receivables", "payables",
+    "inventory", "sales", "purchases", "payroll", "assets", "budgets", "debt",
+    "allowance", "banks", "journals", "periods", "vat", "kpi", "statement",
+    "users", "audit", "help",
+]
+
+_TOPIC_PERMISSION = {
+    "summary": "dashboard.view", "profit": "reports.view", "revenue": "reports.view",
+    "expenses": "reports.view", "cash": "reports.view", "receivables": "customers.view",
+    "payables": "payables.view", "inventory": "inventory.view", "sales": "sales.view",
+    "purchases": "purchases.view", "payroll": "payroll.view", "assets": "assets.view",
+    "budgets": "budgets.view", "debt": "debt.view", "allowance": "allowance.view",
+    "banks": "banks.view", "journals": "journal.view", "periods": "reports.view",
+    "vat": "reports.view", "kpi": "dashboard.view", "statement": "reports.view",
+    "users": "users.manage", "audit": "audit.view", "help": "ai.use",
+}
+
+
+def _money_q(cents):
+    try:
+        return f"{money_str(int(cents))} ج.م"
+    except Exception:
+        return "0.00 ج.م"
+
+
+def _pct(part, whole):
+    try:
+        return round(part / whole * 100, 1) if whole else 0
+    except Exception:
+        return 0
+
+
+def _assistant_intent(qn: str) -> str:
+    """Ordered intent router. The first rule that fires wins, so the most
+    specific vocabulary is tested first ("VAT" before "revenue")."""
+    q = qn
+    rules = [
+        ("vat", ("ضريبة", "قيمة مضافة", "vat", "tax", "ضرائب")),
+        ("audit", ("تدقيق", "audit", "سجل", "log", "من عمل")),
+        ("users", ("مستخدم", "مستخدمين", "صلاحي", "user", "permission", "role", "دور")),
+        ("periods", ("فترة", "فترات", "إقفال", "اقفال", "period", "close", "fiscal")),
+        ("statement", ("قائمة", "قوائم", "ميزانية", "مركز مالى", "مركز مالي", "المركز المالي",
+                       "statement", "balance sheet", "financial statement", "قائمة الدخل",
+                       "income statement", "تدفق", "cash flow", "قوائم مالية")),
+        ("journals", ("قيد", "قيود", "journal", "entry", "ترحيل", "posting")),
+        ("allowance", ("إعاشة", "اعاشة", "allowance", "subsistence", "كشف العمال")),
+        ("payroll", ("راتب", "رواتب", "مرتب", "payroll", "موظف", "موظفين", "employee", "أجر", "اجر")),
+        ("assets", ("أصل", "أصول", "asset", "إهلاك", "اهلاك", "depreciation")),
+        ("inventory", ("مخزون", "صنف", "أصناف", "inventory", "stock", "warehouse")),
+        ("budgets", ("موازنة", "موازنات", "budget", "انحراف", "variance")),
+        ("banks", ("بنك", "بنوك", "صندوق", "خزينة", "bank", "reconcil", "تسوية")),
+        ("cash", ("سيولة", "نقدية", "cash", "liquidity", "نقد")),
+        ("receivables", ("عميل", "عملاء", "مدين", "تحصيل", "customer", "receivable",
+                         "aging", "أعمار", "اعمار", "overdue", "متأخر")),
+        ("payables", ("مورد", "موردين", "دائن", "vendor", "supplier", "payable")),
+        ("debt", ("مديونية", "مقاول", "contractor", "debt", "كشف حساب")),
+        ("purchases", ("مشتريات", "شراء", "purchase")),
+        ("sales", ("مبيعات", "بيع", "sales", "إيراد", "ايراد", "revenue", "فواتير")),
+        ("expenses", ("مصروف", "مصروفات", "تكلفة", "expense", "cost")),
+        ("profit", ("ربح", "أرباح", "خسارة", "profit", "loss", "صافي", "هامش", "margin")),
+        ("kpi", ("kpi", "مؤشر", "مؤشرات", "نسبة التداول", "ratio")),
+        ("summary", ("ملخص", "summary", "أداء", "performance", "نظرة", "overview",
+                     "لوحة", "dashboard", "كيف حال")),
+        ("revenue", ("دخل", "income")),
+    ]
+    for topic, words in rules:
+        if any(w in q for w in words):
+            return topic
+    return "help"
+
+
+def _assistant_answer(ctx, question: str):
     cid = ensure_company(ctx.user)
-    question = (ctx.body.get("question") or "").strip()
-    if not question:
-        raise ApiError("EMPTY_QUESTION: اكتب سؤالك / Please type a question")
     conn = ctx.conn
     as_of = date.today().isoformat()
     fy_start = f"{date.today().year}-01-01"
     qn = question.lower()
+    topic = _assistant_intent(qn)
 
-    def kw(*words):
-        return any(w in qn for w in words)
+    perm = _TOPIC_PERMISSION.get(topic, "ai.use")
+    if not has(ctx.user, perm):
+        return {
+            "answer": ("لا أملك صلاحية الوصول إلى هذا الجزء من النظام بناءً على دورك الحالي. "
+                       "اطلب من مدير النظام منحك الصلاحية إن كنت تحتاجها.\n"
+                       "You do not have permission for this part of the system — ask your administrator."),
+            "source": "permission", "topic": topic, "kind": "denied",
+            "cards": [], "suggestions": [], "refs": [],
+        }
 
-    dashboard_data = reports.dashboard(conn, cid, as_of)
-    kpis = dashboard_data["kpis"]
-    ap = reports.vendor_payables(conn, cid, as_of)
-    inc = reports.income_statement(conn, cid, fy_start, as_of)
+    def with_meta(payload, cards=None, refs=None, suggestions=None, kind="text"):
+        payload.setdefault("topic", topic)
+        payload.setdefault("kind", kind)
+        payload.setdefault("cards", cards or [])
+        payload.setdefault("refs", refs or [])
+        payload.setdefault("suggestions", suggestions or [])
+        payload.setdefault("as_of", as_of)
+        return payload
 
-    if kw("مورد", "موردين", "vendor", "supplier", "payable", "دائن"):
-        top = sorted(ap["vendors"], key=lambda v: -v["outstanding_cents"])[:5]
-        lines = "\n".join(f"• {v['name_ar']} — {money_str(v['outstanding_cents'])} ج.م "
-                          f"(متأخر: {money_str(v['overdue_cents'])})" for v in top if v["outstanding_cents"])
-        answer = (f"إجمالي مديونية الموردين حتى {as_of}: {money_str(ap['totals']['outstanding_cents'])} ج.م، "
-                  f"منها {money_str(ap['totals']['overdue_cents'])} ج.م متأخرة.\n"
-                  f"أعلى الأرصدة:\n{lines}\n"
-                  f"المصدر: تقرير مديونية الموردين (قيود مرحّلة فقط).")
-        return {"answer": answer, "source": "vendor_payables",
-                "data": {"total_cents": ap["totals"]["outstanding_cents"], "top": top}}
-    if kw("سيولة", "نقدية", "cash", "بنك", "liquidity", "خزينة"):
+    def ref(label_ar, label_en, hash_path, kind="statement"):
+        return {"label_ar": label_ar, "label_en": label_en, "hash": hash_path, "kind": kind}
+
+    # ------------------------------------------------------------------
+    if topic == "summary":
+        d = reports.dashboard(conn, cid, as_of)
+        k = d["kpis"]
+        inc = reports.income_statement(conn, cid, fy_start, as_of)
+        prev_start = f"{date.today().year - 1}-01-01"
+        prev_end = f"{date.today().year - 1}-12-31"
+        prev = reports.income_statement(conn, cid, prev_start, prev_end)
+        growth = _pct(inc["total_revenue_cents"] - prev["total_revenue_cents"],
+                      prev["total_revenue_cents"]) if prev["total_revenue_cents"] else None
+        lines = [
+            f"• الإيرادات: {_money_q(k['revenue_cents'])}",
+            f"• المصروفات: {_money_q(k['expenses_cents'])}",
+            f"• صافي الربح: {_money_q(k['net_profit_cents'])} (هامش {_pct(k['net_profit_cents'], k['revenue_cents'] or 1)}%)",
+            f"• السيولة: {_money_q(k['cash_cents'])}",
+            f"• مستحقات العملاء: {_money_q(k['ar_cents'])} منها {_money_q(k['overdue_ar_cents'])} متأخرة",
+            f"• مديونية الموردين: {_money_q(k['ap_cents'])} منها {_money_q(k['vendor_overdue_cents'])} متأخرة",
+            f"• المخزون: {_money_q(k['inventory_value_cents'])}",
+            f"• اعتمادات معلّقة: {k['pending_approvals']}",
+        ]
+        if growth is not None:
+            lines.append(f"• نمو الإيرادات عن العام الماضي: {growth}%")
+        answer = ("ملخص الأداء حتى " + as_of + ":\n" + "\n".join(lines) +
+                  "\nالمصدر: لوحة التحكم + قائمة الدخل (قيود مرحّلة).")
+        return with_meta(
+            {"answer": answer, "source": "dashboard", "data": k,
+             "headline": f"صافي الربح {_money_q(k['net_profit_cents'])} والسيولة {_money_q(k['cash_cents'])}"},
+            cards=[{"label_ar": "الإيرادات", "label_en": "Revenue", "value": k["revenue_cents"], "tone": "ok"},
+                   {"label_ar": "المصروفات", "label_en": "Expenses", "value": k["expenses_cents"], "tone": "danger"},
+                   {"label_ar": "صافي الربح", "label_en": "Net profit", "value": k["net_profit_cents"],
+                    "tone": "ok" if k["net_profit_cents"] >= 0 else "danger"},
+                   {"label_ar": "السيولة", "label_en": "Cash", "value": k["cash_cents"]},
+                   {"label_ar": "مستحقات العملاء", "label_en": "Receivables", "value": k["ar_cents"], "tone": "warn"},
+                   {"label_ar": "مديونية الموردين", "label_en": "Payables", "value": k["ap_cents"], "tone": "warn"}],
+            refs=[ref("لوحة التحكم", "Dashboard", "#/dashboard", "page"),
+                  ref("قائمة الدخل", "Income statement", "#/statements/income-statement")],
+            suggestions=["ما أكبر بنود المصروفات؟", "أعمار ديون العملاء؟", "ما هي السيولة المتاحة؟"],
+            kind="summary")
+
+    # ------------------------------------------------------------------
+    if topic in ("profit", "revenue"):
+        inc = reports.income_statement_full(conn, cid, fy_start, as_of)
+        if topic == "profit":
+            answer = (f"من {fy_start} حتى {as_of}:\n"
+                      f"• صافي الإيرادات: {_money_q(inc['total_revenue_cents'])}\n"
+                      f"• تكلفة النشاط: {_money_q(inc['sections']['cost_of_sales']['total_cents'])}\n"
+                      f"• الربح الإجمالي: {_money_q(inc['gross_profit_cents'])} (هامش {inc['gross_margin_pct']}%)\n"
+                      f"• المصروفات التشغيلية: {_money_q(inc['operating_expenses_cents'])}\n"
+                      f"• الربح التشغيلي: {_money_q(inc['operating_profit_cents'])}\n"
+                      f"• صافي الربح: {_money_q(inc['net_profit_cents'])} (هامش {inc['net_margin_pct']}%)\n"
+                      f"المصدر: قائمة الدخل متعددة الخطوات — قيود مرحّلة فقط.")
+        else:
+            top = sorted(inc["sections"]["revenue"]["lines"], key=lambda l: -l["amount_cents"])[:6]
+            lines = "\n".join(f"• {l['name_ar']} ({l['code']}): {_money_q(l['amount_cents'])}" for l in top)
+            answer = (f"إيرادات الفترة {fy_start} → {as_of}: {_money_q(inc['total_revenue_cents'])}.\n"
+                      f"أكبر مصادر الإيراد:\n{lines}\n"
+                      f"المصدر: قائمة الدخل.")
+        return with_meta(
+            {"answer": answer, "source": "income_statement",
+             "data": {"net_profit_cents": inc["net_profit_cents"],
+                      "revenue_cents": inc["total_revenue_cents"],
+                      "gross_profit_cents": inc["gross_profit_cents"],
+                      "operating_cents": inc["operating_profit_cents"]},
+             "headline": f"صافي الربح {_money_q(inc['net_profit_cents'])} على إيرادات {_money_q(inc['total_revenue_cents'])}"},
+            cards=[{"label_ar": "صافي الإيرادات", "label_en": "Net revenue", "value": inc["total_revenue_cents"], "tone": "ok"},
+                   {"label_ar": "الربح الإجمالي", "label_en": "Gross profit", "value": inc["gross_profit_cents"],
+                    "tone": "ok" if inc["gross_profit_cents"] >= 0 else "danger"},
+                   {"label_ar": "الربح التشغيلي", "label_en": "Operating profit", "value": inc["operating_profit_cents"],
+                    "tone": "ok" if inc["operating_profit_cents"] >= 0 else "danger"},
+                   {"label_ar": "صافي الربح", "label_en": "Net profit", "value": inc["net_profit_cents"],
+                    "tone": "ok" if inc["net_profit_cents"] >= 0 else "danger"},
+                   {"label_ar": "هامش الربح الإجمالي", "label_en": "Gross margin", "value": f"{inc['gross_margin_pct']}%", "raw": True},
+                   {"label_ar": "هامش الربح الصافي", "label_en": "Net margin", "value": f"{inc['net_margin_pct']}%", "raw": True}],
+            refs=[ref("قائمة الدخل", "Income statement", "#/statements/income-statement")],
+            suggestions=["قارن بالمصروفات", "ما هي السيولة؟", "أعمار ديون العملاء؟"],
+            kind="statement")
+
+    # ------------------------------------------------------------------
+    if topic == "expenses":
+        inc = reports.income_statement_full(conn, cid, fy_start, as_of)
+        all_rows = []
+        for sec in inc["sections"]["operating_expenses"]:
+            all_rows += sec["lines"]
+        all_rows += inc["sections"]["cost_of_sales"]["lines"]
+        rows = sorted(all_rows, key=lambda l: -l["amount_cents"])[:8]
+        lines = "\n".join(f"• {r['name_ar']} ({r['code']}): {_money_q(r['amount_cents'])} "
+                          f"— {_pct(r['amount_cents'], inc['total_expenses_cents'] or 1)}% من المصروفات"
+                          for r in rows)
+        answer = (f"إجمالي المصروفات (تكلفة + تشغيل) من {fy_start} حتى {as_of}: "
+                  f"{_money_q(inc['total_expenses_cents'])}.\nأكبر البنود:\n{lines}\n"
+                  f"نسبة إجمالي المصروفات إلى الإيرادات: {_pct(inc['total_expenses_cents'], inc['total_revenue_cents'] or 1)}%.\n"
+                  f"المصدر: قائمة الدخل.")
+        # `data` stays the line-item list (that is what the UI tables want), so the
+        # revenue figure the English headline needs rides on the payload itself.
+        return with_meta({"answer": answer, "source": "income_statement", "data": rows,
+                          "revenue_cents": inc["total_revenue_cents"],
+                          "expenses_cents": inc["total_expenses_cents"],
+                          "headline": f"المصروفات {_money_q(inc['total_expenses_cents'])} بنسبة {inc['expense_ratio_pct']}% من الإيرادات"},
+                         cards=[{"label_ar": "تكلفة النشاط", "label_en": "Cost of sales",
+                                 "value": inc["sections"]["cost_of_sales"]["total_cents"], "tone": "danger"},
+                                {"label_ar": "مصروفات تشغيلية", "label_en": "Operating expenses",
+                                 "value": inc["operating_expenses_cents"], "tone": "warn"},
+                                {"label_ar": "الإهلاك", "label_en": "Depreciation", "value": inc["depreciation_cents"]}],
+                         refs=[ref("قائمة الدخل", "Income statement", "#/statements/income-statement")],
+                         suggestions=["ما صافي الربح؟", "الموازنة مقابل الفعلي؟"], kind="list")
+
+    # ------------------------------------------------------------------
+    if topic == "cash" or topic == "banks":
         cash = reports.cash_position(conn, cid)
-        details = "\n".join(f"• {a['name_ar']}: {money_str(a['balance_cents'])} ج.م" for a in cash["accounts"])
-        answer = (f"السيولة الحالية {money_str(cash['total_cents'])} ج.م موزعة كالتالي:\n{details}\n"
-                  f"المتحصلات المتوقعة من العملاء: {money_str(kpis['ar_cents'])} ج.م، "
-                  f"والالتزامات المستحقة للموردين: {money_str(kpis['ap_cents'])} ج.م.\n"
-                  f"المصدر: أرصدة حسابات البنوك والصناديق من الأستاذ العام.")
-        return {"answer": answer, "source": "cash_position", "data": cash}
-    if kw("مصروف", "expense", "تكلفة", "cost"):
-        exp = sorted(inc["expenses"], key=lambda i: -i["amount_cents"])[:6]
-        lines = "\n".join(f"• {e['name_ar']}: {money_str(e['amount_cents'])} ج.م" for e in exp)
-        answer = (f"إجمالي المصروفات من بداية السنة حتى {as_of}: {money_str(inc['total_expenses_cents'])} ج.م.\n"
-                  f"أكبر البنود:\n{lines}\nالمصدر: قائمة الدخل للفترة.")
-        return {"answer": answer, "source": "income_statement", "data": exp}
-    if kw("ربح", "أرباح", "profit", "صافي", "إيراد", "مبيعات", "revenue", "sales"):
-        answer = (f"من {fy_start} حتى {as_of}: الإيرادات {money_str(inc['total_revenue_cents'])} ج.م، "
-                  f"المصروفات {money_str(inc['total_expenses_cents'])} ج.م، "
-                  f"صافي الربح {money_str(inc['net_profit_cents'])} ج.م "
-                  f"(هامش صافي {round(inc['net_profit_cents']/inc['total_revenue_cents']*100,1) if inc['total_revenue_cents'] else 0}%).\n"
-                  f"المصدر: قائمة الدخل — أرقام فعلية من القيود المرحّلة، وليست توقعات.")
-        return {"answer": answer, "source": "income_statement", "data": inc}
-    if kw("متأخر", "overdue", "تحصيل", "collection", "عملاء", "عميل", "customer"):
+        details = "\n".join(f"• {a['name_ar']}: {_money_q(a['balance_cents'])}" for a in cash["accounts"])
+        cf = reports.cash_flow_statement(conn, cid, fy_start, as_of)
+        answer = (f"السيولة الحالية {_money_q(cash['total_cents'])} موزعة كالتالي:\n{details}\n\n"
+                  f"حركة النقدية من {fy_start} إلى {as_of}:\n"
+                  f"• تشغيلية: {_money_q(cf['activities']['operating'])}\n"
+                  f"• استثمارية: {_money_q(cf['activities']['investing'])}\n"
+                  f"• تمويلية: {_money_q(cf['activities']['financing'])}\n"
+                  f"• صافي التغير: {_money_q(cf['net_cents'])} (من {_money_q(cf['opening_cents'])} إلى {_money_q(cf['closing_cents'])})\n"
+                  f"المصدر: أرصدة البنوك والصناديق + قائمة التدفقات النقدية.")
+        return with_meta({"answer": answer, "source": "cash_position",
+                          "data": {"accounts": cash["accounts"], "total_cents": cash["total_cents"],
+                                   "flow": cf["activities"]},
+                          "headline": f"السيولة {_money_q(cash['total_cents'])} وصافي التغير النقدي {_money_q(cf['net_cents'])}"},
+                         cards=[{"label_ar": "إجمالي السيولة", "label_en": "Total cash", "value": cash["total_cents"], "tone": "ok"}]
+                         + [{"label_ar": a["name_ar"], "label_en": a.get("name_en") or a["name_ar"],
+                             "value": a["balance_cents"],
+                             "tone": "danger" if a["balance_cents"] < 0 else ""} for a in cash["accounts"][:4]],
+                         refs=[ref("البنوك والصناديق", "Banks & cash", "#/banks", "page"),
+                               ref("قائمة التدفقات النقدية", "Cash flow", "#/statements/cash-flow")],
+                         suggestions=["أعمار ديون العملاء؟", "مديونية الموردين؟"], kind="cards")
+
+    # ------------------------------------------------------------------
+    if topic == "receivables":
         ar = reports.aging(conn, cid, as_of, "sales")
-        answer = (f"أرصدة العملاء المستحقة {money_str(kpis['ar_cents'])} ج.م، "
-                  f"منها {money_str(kpis['overdue_ar_cents'])} ج.م متأخرة على {kpis['overdue_count']} فاتورة.\n"
-                  f"أعمار الديون: جاري {money_str(ar['buckets']['current'])}، "
-                  f"1–30 يوم {money_str(ar['buckets']['1_30'])}، 31–60 يوم {money_str(ar['buckets']['31_60'])}، "
-                  f"61–90 يوم {money_str(ar['buckets']['61_90'])}، أكثر من 90 يوم {money_str(ar['buckets']['over_90'])}.\n"
-                  f"المصدر: تقرير أعمار الديون المدينة.")
-        return {"answer": answer, "source": "aging", "data": ar}
-    if kw("موازنة", "budget", "انحراف", "variance"):
-        fy = q1(conn, "SELECT id FROM fiscal_years WHERE company_id=? AND start_date<=? AND end_date>=?",
+        pos = reports.ar_position(conn, cid)
+        top = [c for c in pos["customers"] if c["outstanding_cents"]][:5]
+        lines = "\n".join(f"• {c['name_ar']}: {_money_q(c['outstanding_cents'])}" for c in top)
+        b = ar["buckets"]
+        answer = (f"مستحقات العملاء حتى {as_of}: {_money_q(pos['total_cents'])}.\n"
+                  f"أعمار الديون: جاري {_money_q(b['current'])} · 1–30 يوم {_money_q(b['1_30'])} · "
+                  f"31–60 {_money_q(b['31_60'])} · 61–90 {_money_q(b['61_90'])} · أكثر من 90 {_money_q(b['over_90'])}\n"
+                  f"أكبر الأرصدة:\n{lines}\nالمصدر: أرصدة العملاء وتقرير أعمار الديون.")
+        return with_meta({"answer": answer, "source": "aging", "data": {"buckets": b, "customers": top},
+                          "headline": f"مستحقات العملاء {_money_q(pos['total_cents'])}، منها {_money_q(b['over_90'])} فوق 90 يومًا"},
+                         cards=[{"label_ar": "إجمالي المستحق", "label_en": "Outstanding", "value": pos["total_cents"], "tone": "warn"},
+                                {"label_ar": "متأخر +90 يوم", "label_en": "Over 90 days", "value": b["over_90"], "tone": "danger"},
+                                {"label_ar": "61–90 يوم", "label_en": "61–90 days", "value": b["61_90"], "tone": "warn"},
+                                {"label_ar": "31–60 يوم", "label_en": "31–60 days", "value": b["31_60"]},
+                                {"label_ar": "1–30 يوم", "label_en": "1–30 days", "value": b["1_30"]},
+                                {"label_ar": "غير مستحق", "label_en": "Current", "value": b["current"], "tone": "ok"}],
+                         refs=[ref("أعمار ديون العملاء", "Receivables aging", "#/statements/receivables-aging"),
+                               ref("العملاء", "Customers", "#/customers", "page")],
+                         suggestions=["مديونية الموردين؟", "السيولة المتاحة؟"], kind="cards")
+
+    # ------------------------------------------------------------------
+    if topic == "payables":
+        ap = reports.vendor_payables(conn, cid, as_of)
+        top = sorted(ap["vendors"], key=lambda v: -v["outstanding_cents"])[:5]
+        lines = "\n".join(f"• {v['name_ar']} — {_money_q(v['outstanding_cents'])} "
+                          f"(متأخر: {_money_q(v['overdue_cents'])})" for v in top if v["outstanding_cents"])
+        b = ap["aging"]
+        answer = (f"إجمالي مديونية الموردين حتى {as_of}: {_money_q(ap['totals']['outstanding_cents'])}، "
+                  f"منها {_money_q(ap['totals']['overdue_cents'])} متأخرة.\n"
+                  f"أعمار: جاري {_money_q(b['current'])} · 1–30 {_money_q(b['1_30'])} · "
+                  f"31–60 {_money_q(b['31_60'])} · 61–90 {_money_q(b['61_90'])} · +90 {_money_q(b['over_90'])}\n"
+                  f"أعلى الأرصدة:\n{lines}\n"
+                  f"رصيد حساب الموردين في الأستاذ: {_money_q(ap['totals']['journal_balance_cents'])}.\n"
+                  f"المصدر: مديونية الموردين (فواتير مرحّلة + الأستاذ).")
+        return with_meta({"answer": answer, "source": "vendor_payables",
+                          "data": {"total_cents": ap["totals"]["outstanding_cents"], "top": top, "aging": b},
+                          "headline": f"مديونية الموردين {_money_q(ap['totals']['outstanding_cents'])} منها {_money_q(ap['totals']['overdue_cents'])} متأخرة"},
+                         cards=[{"label_ar": "إجمالي المستحق", "label_en": "Outstanding", "value": ap["totals"]["outstanding_cents"], "tone": "warn"},
+                                {"label_ar": "المتأخر", "label_en": "Overdue", "value": ap["totals"]["overdue_cents"], "tone": "danger"},
+                                {"label_ar": "المسدد", "label_en": "Paid", "value": ap["totals"]["paid_cents"], "tone": "ok"},
+                                {"label_ar": "رصيد الأستاذ", "label_en": "GL balance", "value": ap["totals"]["journal_balance_cents"]}],
+                         refs=[ref("مديونية الموردين", "Vendor payables", "#/payables", "page"),
+                               ref("أعمار ديون الموردين", "Payables aging", "#/statements/payables-aging")],
+                         suggestions=["أعمار ديون العملاء؟", "السيولة المتاحة؟"], kind="cards")
+
+    # ------------------------------------------------------------------
+    if topic == "inventory":
+        rows = conn.execute(
+            """SELECT p.sku, p.name_ar, p.name_en, p.unit,
+                      COALESCE(SUM(s.qty_milli),0) qty, COALESCE(SUM(s.value_cents),0) value
+               FROM products p LEFT JOIN stock_movements s ON s.product_id=p.id AND s.company_id=p.company_id
+               WHERE p.company_id=? GROUP BY p.id ORDER BY value DESC""", (cid,)).fetchall()
+        total = sum(r["value"] for r in rows)
+        lines = "\n".join(f"• {r['name_ar']} ({r['sku']}): {r['qty'] / 1000:g} {r['unit']} — {_money_q(r['value'])}"
+                          for r in rows[:8])
+        answer = (f"قيمة المخزون الحالية {_money_q(total)} على {len(rows)} صنف.\n{lines}\n"
+                  f"المصدر: حركات المخزون (تقوم المتوسط المرجح).")
+        return with_meta({"answer": answer, "source": "inventory",
+                          "data": {"total_cents": total, "products": [dict(r) for r in rows[:10]]},
+                          "headline": f"قيمة المخزون {_money_q(total)}"},
+                         cards=[{"label_ar": "قيمة المخزون", "label_en": "Inventory value", "value": total}]
+                         + [{"label_ar": r["name_ar"], "label_en": r["name_en"] or r["name_ar"],
+                             "value": r["value"]} for r in rows[:3]],
+                         refs=[ref("المخزون", "Inventory", "#/inventory", "page")],
+                         suggestions=["ما أكبر بنود المصروفات؟"], kind="cards")
+
+    # ------------------------------------------------------------------
+    if topic == "sales" or topic == "purchases":
+        table = "sales_invoices" if topic == "sales" else "purchase_invoices"
+        party = "customers" if topic == "sales" else "vendors"
+        col = "customer_id" if topic == "sales" else "vendor_id"
+        rows = conn.execute(
+            f"""SELECT i.invoice_no, i.invoice_date, i.total_cents, i.paid_cents, i.status,
+                       p.name_ar FROM {table} i JOIN {party} p ON p.id=i.{col}
+                WHERE i.company_id=? ORDER BY i.invoice_date DESC LIMIT 10""", (cid,)).fetchall()
+        agg = conn.execute(
+            f"""SELECT COUNT(*) n, COALESCE(SUM(total_cents),0) t, COALESCE(SUM(paid_cents),0) p
+                FROM {table} WHERE company_id=? AND status IN ('posted','partially_paid','paid')""",
+            (cid,)).fetchone()
+        lines = "\n".join(f"• {r['invoice_no']} — {r['name_ar']} — {_money_q(r['total_cents'])} ({r['status']})"
+                          for r in rows[:6])
+        label = "المبيعات" if topic == "sales" else "المشتريات"
+        answer = (f"{label}: {agg['n']} فاتورة مرحّلة بإجمالي {_money_q(agg['t'])}، "
+                  f"المحصّل/المدفوع {_money_q(agg['p'])}.\nأحدث الفواتير:\n{lines}\n"
+                  f"المصدر: سجل فواتير {'البيع' if topic == 'sales' else 'الشراء'}.")
+        return with_meta({"answer": answer, "source": table,
+                          "data": {"count": agg["n"], "total_cents": agg["t"], "paid_cents": agg["p"]},
+                          "headline": f"{label} {_money_q(agg['t'])} في {agg['n']} فاتورة"},
+                         cards=[{"label_ar": "إجمالي الفواتير", "label_en": "Invoiced", "value": agg["t"]},
+                                {"label_ar": "المسدد", "label_en": "Paid", "value": agg["p"], "tone": "ok"},
+                                {"label_ar": "المتبقي", "label_en": "Outstanding", "value": agg["t"] - agg["p"], "tone": "warn"},
+                                {"label_ar": "عدد الفواتير", "label_en": "Invoices", "value": agg["n"], "raw": True}],
+                         refs=[ref(label, "Sales" if topic == "sales" else "Purchases",
+                                   "#/sales" if topic == "sales" else "#/purchases", "page")],
+                         kind="cards")
+
+    # ------------------------------------------------------------------
+    if topic == "payroll":
+        runs = conn.execute(
+            """SELECT run_no, period, gross_cents, deductions_cents, net_cents, status
+               FROM payroll_runs WHERE company_id=? ORDER BY period DESC LIMIT 6""", (cid,)).fetchall()
+        emps = conn.execute("SELECT COUNT(*) n, COALESCE(SUM(basic_salary_cents),0) s FROM employees "
+                            "WHERE company_id=? AND is_active=1", (cid,)).fetchone()
+        lines = "\n".join(f"• {r['period']}: صافي {_money_q(r['net_cents'])} ({r['status']})" for r in runs)
+        answer = (f"الرواتب: {emps['n']} موظف نشط بإجمالي أساسي {_money_q(emps['s'])} شهريًا.\n"
+                  f"آخر مسيرات الرواتب:\n{lines or '• لا توجد مسيرات بعد.'}\n"
+                  f"المصدر: مسيرات الرواتب والموظفون.")
+        return with_meta({"answer": answer, "source": "payroll",
+                          "data": {"employees": emps["n"], "runs": [dict(r) for r in runs]},
+                          "headline": f"{emps['n']} موظف نشط — إجمالي أساسي {_money_q(emps['s'])}"},
+                         cards=[{"label_ar": "موظفون نشطون", "label_en": "Active employees", "value": emps["n"], "raw": True},
+                                {"label_ar": "إجمالي الأساسي", "label_en": "Basic payroll", "value": emps["s"]}]
+                         + [{"label_ar": f"صافي {r['period']}", "label_en": r["period"], "value": r["net_cents"]}
+                            for r in runs[:3]],
+                         refs=[ref("الرواتب", "Payroll", "#/payroll", "page")], kind="cards")
+
+    # ------------------------------------------------------------------
+    if topic == "assets":
+        rows = conn.execute(
+            """SELECT code, name_ar, cost_cents, accumulated_cents, useful_life_months, status
+               FROM fixed_assets WHERE company_id=? ORDER BY code""", (cid,)).fetchall()
+        cost = sum(r["cost_cents"] for r in rows)
+        acc = sum(r["accumulated_cents"] for r in rows)
+        lines = "\n".join(f"• {r['name_ar']} ({r['code']}): تكلفة {_money_q(r['cost_cents'])} — "
+                          f"مجمع إهلاك {_money_q(r['accumulated_cents'])}" for r in rows[:8])
+        answer = (f"الأصول الثابتة: {len(rows)} أصل بتكلفة {_money_q(cost)}، "
+                  f"مجمع الإهلاك {_money_q(acc)}، القيمة الدفترية {_money_q(cost - acc)}.\n{lines}\n"
+                  f"المصدر: سجل الأصول الثابتة.")
+        return with_meta({"answer": answer, "source": "fixed_assets",
+                          "data": {"cost_cents": cost, "accumulated_cents": acc},
+                          "headline": f"القيمة الدفترية للأصول {_money_q(cost - acc)}"},
+                         cards=[{"label_ar": "تكلفة الأصول", "label_en": "Cost", "value": cost},
+                                {"label_ar": "مجمع الإهلاك", "label_en": "Accumulated", "value": acc, "tone": "warn"},
+                                {"label_ar": "القيمة الدفترية", "label_en": "Book value", "value": cost - acc, "tone": "ok"}],
+                         refs=[ref("الأصول", "Assets", "#/assets", "page")], kind="cards")
+
+    # ------------------------------------------------------------------
+    if topic == "budgets":
+        fy = q1(conn, "SELECT id, name FROM fiscal_years WHERE company_id=? AND start_date<=? AND end_date>=?",
                 (cid, as_of, as_of))
         rows = reports.budget_vs_actual(conn, cid, fy["id"]) if fy else []
-        worst = sorted([r for r in rows if r["variance_cents"] < 0], key=lambda r: r["variance_cents"])[:4]
-        lines = "\n".join(f"• {r['name_ar']}: موازنة {money_str(r['budget_cents'])} / فعلي "
-                          f"{money_str(r['actual_cents'])} (انحراف {money_str(r['variance_cents'])})" for r in worst)
-        answer = (f"أكبر انحرافات تجاوز الموازنة:\n{lines or 'لا توجد تجاوزات مسجلة.'}\n"
-                  f"المصدر: تقرير الموازنة مقابل الفعلي للسنة {date.today().year}.")
-        return {"answer": answer, "source": "budget_variance", "data": worst}
-    if kw("ملخص", "summary", "لوحة", "dashboard", "أداء"):
-        answer = (f"ملخص الأداء حتى {as_of}:\n"
-                  f"• الإيرادات: {money_str(kpis['revenue_cents'])} ج.م\n"
-                  f"• المصروفات: {money_str(kpis['expenses_cents'])} ج.م\n"
-                  f"• صافي الربح: {money_str(kpis['net_profit_cents'])} ج.م\n"
-                  f"• السيولة: {money_str(kpis['cash_cents'])} ج.م\n"
-                  f"• مديونية الموردين: {money_str(kpis['ap_cents'])} ج.م\n"
-                  f"• مستحقات العملاء: {money_str(kpis['ar_cents'])} ج.م\n"
-                  f"• اعتمادات معلّقة: {kpis['pending_approvals']}\n"
-                  f"المصدر: لوحة التحكم — بيانات فعلية من القيود المرحّلة.")
-        return {"answer": answer, "source": "dashboard", "data": kpis}
-    answer = ("أستطيع الإجابة عن أسئلة تخص: المبيعات والأرباح، المصروفات، السيولة والبنوك، "
-              "مديونية الموردين وأعمار الديون، الموازنة مقابل الفعلي، أو ملخص الأداء.\n"
-              "لم أفهم السؤال — جرّب مثلًا: «ما إجمالي مديونية الموردين؟» أو «ما صافي الربح هذا العام؟».\n"
-              "تنبيه: كل الأرقام مأخوذة من القيود المرحّلة وفق صلاحياتك، ولا يقوم المساعد بأي ترحيل أو دفع.")
-    return {"answer": answer, "source": "help", "data": {}}
+        over = sorted([r for r in rows if r["variance_cents"] < 0], key=lambda r: r["variance_cents"])[:5]
+        budget_total = sum(r["budget_cents"] for r in rows)
+        actual_total = sum(r["actual_cents"] for r in rows)
+        lines = "\n".join(f"• {r['name_ar']}: موازنة {_money_q(r['budget_cents'])} / فعلي "
+                          f"{_money_q(r['actual_cents'])} (انحراف {_money_q(r['variance_cents'])})" for r in over)
+        answer = (f"الموازنة مقابل الفعلي للسنة {as_of[:4]}: موازنة {_money_q(budget_total)} "
+                  f"مقابل فعلي {_money_q(actual_total)}.\n"
+                  f"{'أكبر تجاوزات:' if over else 'لا توجد تجاوزات مسجلة.'}\n{lines}\n"
+                  f"المصدر: تقرير الموازنة مقابل الفعلي.")
+        return with_meta({"answer": answer, "source": "budget_variance",
+                          "data": {"rows": rows, "over": over},
+                          "headline": f"موازنة {_money_q(budget_total)} مقابل فعلي {_money_q(actual_total)}"},
+                         cards=[{"label_ar": "الموازنة", "label_en": "Budget", "value": budget_total},
+                                {"label_ar": "الفعلي", "label_en": "Actual", "value": actual_total,
+                                 "tone": "danger" if actual_total > budget_total else "ok"},
+                                {"label_ar": "الانحراف", "label_en": "Variance", "value": budget_total - actual_total,
+                                 "tone": "ok" if budget_total >= actual_total else "danger"}],
+                         refs=[ref("الموازنات", "Budgets", "#/budgets", "page")], kind="cards")
+
+    # ------------------------------------------------------------------
+    if topic == "debt":
+        data = reports.debt_position(conn, cid, fy_start, as_of)
+        top = sorted(data["accounts"], key=lambda a: -a["net_cents"])[:6]
+        lines = "\n".join(f"• {a['name_ar']}: مستحق {_money_q(a['due_cents'])} — "
+                          f"مسدد {_money_q(a['paid_cents'])} — صافي {_money_q(a['net_cents'])}" for a in top)
+        answer = (f"مديونية المقاولين والموردين من {fy_start} إلى {as_of}:\n"
+                  f"• إجمالي المستحق: {_money_q(data['totals']['due_cents'])}\n"
+                  f"• إجمالي المسدد: {_money_q(data['totals']['paid_cents'])}\n"
+                  f"• الصافي: {_money_q(data['totals']['net_cents'])}\n{lines}\n"
+                  f"المصدر: حساب المديونية وكشوف المقاولين.")
+        return with_meta({"answer": answer, "source": "debt_position", "data": data,
+                          "headline": f"صافي مديونية المقاولين {_money_q(data['totals']['net_cents'])}"},
+                         cards=[{"label_ar": "المستحق", "label_en": "Due", "value": data["totals"]["due_cents"], "tone": "warn"},
+                                {"label_ar": "المسدد", "label_en": "Paid", "value": data["totals"]["paid_cents"], "tone": "ok"},
+                                {"label_ar": "الصافي", "label_en": "Net", "value": data["totals"]["net_cents"], "tone": "danger"}],
+                         refs=[ref("المديونية", "Debt", "#/debt", "page"),
+                               ref("حساب المديونية", "Debt position", "#/statements/debt-position")], kind="cards")
+
+    # ------------------------------------------------------------------
+    if topic == "allowance":
+        row = conn.execute(
+            """SELECT COUNT(*) n, COALESCE(SUM(total_cents),0) total, COALESCE(SUM(people_count),0) people
+               FROM allowance_periods WHERE company_id=? AND start_date>=? AND start_date<=?""",
+            (cid, fy_start, as_of)).fetchone()
+        pending = conn.execute(
+            "SELECT COUNT(*) n FROM allowance_periods WHERE company_id=? AND status<>'posted'",
+            (cid,)).fetchone()["n"]
+        summary = {"periods": row["n"], "total_cents": row["total"], "people": row["people"],
+                   "pending": pending}
+        answer = (f"إعاشة العاملين من {fy_start} إلى {as_of}: {row['n']} كشف، "
+                  f"إجمالي {_money_q(row['total'])}، وعناصر مرتبطة {row['people']}.\n"
+                  f"كشوف لم تُرحّل بعد: {pending}.\n"
+                  f"المصدر: كشوف الإعاشة.")
+        return with_meta({"answer": answer, "source": "allowance", "data": summary,
+                          "headline": f"إعاشة {_money_q(row['total'])} في {row['n']} كشف"},
+                         cards=[{"label_ar": "إجمالي الإعاشة", "label_en": "Total", "value": row["total"]},
+                                {"label_ar": "عدد الكشوف", "label_en": "Sheets", "value": row["n"], "raw": True},
+                                {"label_ar": "غير مرحّلة", "label_en": "Not posted", "value": pending, "raw": True,
+                                 "tone": "warn" if pending else "ok"}],
+                         refs=[ref("إعاشة العاملين", "Allowance", "#/allowance", "page")], kind="cards")
+
+    # ------------------------------------------------------------------
+    if topic == "journals":
+        rows = conn.execute(
+            """SELECT e.entry_no, e.entry_date, e.memo, e.status, e.total_debit_cents
+               FROM journal_entries e WHERE e.company_id=? ORDER BY e.id DESC LIMIT 8""", (cid,)).fetchall()
+        counts = conn.execute(
+            """SELECT status, COUNT(*) n FROM journal_entries WHERE company_id=? GROUP BY status""",
+            (cid,)).fetchall()
+        by_status = {r["status"]: r["n"] for r in counts}
+        lines = "\n".join(f"• {r['entry_no']} — {r['entry_date']} — {r['memo'][:40]} "
+                          f"({_money_q(r['total_debit_cents'])})" for r in rows[:6])
+        answer = ("حالة القيود: " + " · ".join(f"{k}: {v}" for k, v in by_status.items()) + "\n"
+                  f"أحدث القيود:\n{lines}\nالمصدر: دفتر اليومية.")
+        return with_meta({"answer": answer, "source": "journal",
+                          "data": {"by_status": by_status},
+                          "headline": f"{by_status.get('posted', 0)} قيد مرحّل و{by_status.get('draft', 0)} مسودة"},
+                         cards=[{"label_ar": f"قيود {k}", "label_en": k, "value": v, "raw": True}
+                                for k, v in by_status.items()][:5],
+                         refs=[ref("القيود اليومية", "Journal", "#/journal", "page")], kind="cards")
+
+    # ------------------------------------------------------------------
+    if topic == "periods":
+        rows = conn.execute(
+            """SELECT p.period_no, p.start_date, p.end_date, p.status, fy.name
+               FROM fiscal_periods p JOIN fiscal_years fy ON fy.id=p.fiscal_year_id
+               WHERE p.company_id=? ORDER BY p.start_date DESC LIMIT 6""", (cid,)).fetchall()
+        lines = "\n".join(f"• {r['name']} — فترة {r['period_no']}: {r['start_date']} → {r['end_date']} ({r['status']})"
+                          for r in rows)
+        closed = sum(1 for r in rows if r["status"] == "closed")
+        answer = (f"الفترات المالية (آخر 6):\n{lines}\n"
+                  f"مقفلة: {closed} من {len(rows)}.\nالمصدر: الفترات المالية.")
+        return with_meta({"answer": answer, "source": "fiscal_periods",
+                          "data": {"periods": [dict(r) for r in rows]},
+                          "headline": f"{closed} فترة مقفلة من {len(rows)}"},
+                         cards=[{"label_ar": f"{r['name']} ف{r['period_no']}", "label_en": r["start_date"],
+                                 "value": r["status"], "raw": True} for r in rows[:4]],
+                         refs=[ref("الفترات المالية", "Fiscal periods", "#/periods", "page")], kind="cards")
+
+    # ------------------------------------------------------------------
+    if topic == "vat":
+        out_vat = conn.execute(
+            """SELECT COALESCE(SUM(l.credit_cents-l.debit_cents),0) v FROM v_posted_lines l
+               JOIN accounts a ON a.id=l.account_id WHERE l.company_id=? AND a.code='2210'""",
+            (cid,)).fetchone()["v"]
+        in_vat = conn.execute(
+            """SELECT COALESCE(SUM(l.debit_cents-l.credit_cents),0) v FROM v_posted_lines l
+               JOIN accounts a ON a.id=l.account_id WHERE l.company_id=? AND a.code LIKE '126%'""",
+            (cid,)).fetchone()["v"]
+        answer = (f"موقف ضريبة القيمة المضافة حتى {as_of}:\n"
+                  f"• ضريبة المخرجات (مستحقة للمصلحة): {_money_q(out_vat)}\n"
+                  f"• ضريبة المدخلات (قابلة للخصم): {_money_q(in_vat)}\n"
+                  f"• الصافي المستحق: {_money_q(out_vat - in_vat)}\n"
+                  f"المصدر: أرصدة حسابات الضريبة في الأستاذ العام — وليست إقرارًا ضريبيًا.")
+        return with_meta({"answer": answer, "source": "vat",
+                          "data": {"output": out_vat, "input": in_vat, "net": out_vat - in_vat},
+                          "headline": f"صافي ضريبة القيمة المضافة {_money_q(out_vat - in_vat)}"},
+                         cards=[{"label_ar": "ضريبة المخرجات", "label_en": "Output VAT", "value": out_vat, "tone": "warn"},
+                                {"label_ar": "ضريبة المدخلات", "label_en": "Input VAT", "value": in_vat, "tone": "ok"},
+                                {"label_ar": "الصافي", "label_en": "Net VAT", "value": out_vat - in_vat, "tone": "danger"}],
+                         refs=[ref("ميزان المراجعة", "Trial balance", "#/statements/trial-balance")], kind="cards")
+
+    # ------------------------------------------------------------------
+    if topic == "statement":
+        bs = reports.balance_sheet_full(conn, cid, as_of)
+        cf = reports.cash_flow_statement(conn, cid, fy_start, as_of)
+        inc = reports.income_statement_full(conn, cid, fy_start, as_of)
+        answer = (f"ملخص القوائم المالية حتى {as_of}:\n\n"
+                  f"قائمة الدخل ({fy_start} → {as_of}):\n"
+                  f"• الإيرادات {_money_q(inc['total_revenue_cents'])} — تكلفة {_money_q(inc['sections']['cost_of_sales']['total_cents'])} — "
+                  f"ربح إجمالي {_money_q(inc['gross_profit_cents'])} — صافي {_money_q(inc['net_profit_cents'])}\n\n"
+                  f"المركز المالي:\n"
+                  f"• الأصول {_money_q(bs['total_assets_cents'])} = التزامات {_money_q(bs['total_liabilities_cents'])} + "
+                  f"حقوق ملكية {_money_q(bs['total_equity_cents'])} — "
+                  f"{'متوازن' if bs['balanced'] else 'غير متوازن'}\n"
+                  f"• رأس المال العامل {_money_q(bs['working_capital_cents'])} — نسبة التداول {bs['current_ratio']}\n\n"
+                  f"التدفقات النقدية:\n"
+                  f"• تشغيلية {_money_q(cf['activities']['operating'])} — استثمارية {_money_q(cf['activities']['investing'])} — "
+                  f"تمويلية {_money_q(cf['activities']['financing'])} — نقدية آخر الفترة {_money_q(cf['closing_cents'])}\n"
+                  f"المصدر: القوائم المالية من القيود المرحّلة.")
+        return with_meta({"answer": answer, "source": "financial_statements",
+                          "data": {"balance_sheet": bs, "cash_flow": cf["activities"], "income": inc["net_profit_cents"]},
+                          "headline": f"الأصول {_money_q(bs['total_assets_cents'])} — صافي الربح {_money_q(inc['net_profit_cents'])}"},
+                         cards=[{"label_ar": "إجمالي الأصول", "label_en": "Assets", "value": bs["total_assets_cents"]},
+                                {"label_ar": "إجمالي الالتزامات", "label_en": "Liabilities", "value": bs["total_liabilities_cents"], "tone": "warn"},
+                                {"label_ar": "حقوق الملكية", "label_en": "Equity", "value": bs["total_equity_cents"], "tone": "ok"},
+                                {"label_ar": "صافي الربح", "label_en": "Net profit", "value": inc["net_profit_cents"],
+                                 "tone": "ok" if inc["net_profit_cents"] >= 0 else "danger"},
+                                {"label_ar": "رأس المال العامل", "label_en": "Working capital", "value": bs["working_capital_cents"]},
+                                {"label_ar": "نسبة التداول", "label_en": "Current ratio", "value": bs["current_ratio"] or "—", "raw": True}],
+                         refs=[ref("قائمة الدخل", "Income statement", "#/statements/income-statement"),
+                               ref("المركز المالي", "Balance sheet", "#/statements/balance-sheet"),
+                               ref("التدفقات النقدية", "Cash flow", "#/statements/cash-flow")], kind="statement")
+
+    # ------------------------------------------------------------------
+    if topic == "kpi":
+        d = reports.dashboard(conn, cid, as_of)
+        k = d["kpis"]
+        bs = reports.balance_sheet_full(conn, cid, as_of)
+        answer = (f"مؤشرات الأداء حتى {as_of}:\n"
+                  f"• هامش الربح الصافي: {_pct(k['net_profit_cents'], k['revenue_cents'] or 1)}%\n"
+                  f"• نسبة التداول: {bs['current_ratio']}\n"
+                  f"• الالتزامات ÷ حقوق الملكية: {bs['debt_to_equity']}\n"
+                  f"• السيولة: {_money_q(k['cash_cents'])}\n"
+                  f"• دورة التحصيل (متوسط): {round((k['ar_cents'] / k['revenue_cents'] * 365), 0) if k['revenue_cents'] else 0} يوم\n"
+                  f"• مخاطر التأخير: {_money_q(k['overdue_ar_cents'] + k['vendor_overdue_cents'])}\n"
+                  f"المصدر: لوحة التحكم + المركز المالي.")
+        return with_meta({"answer": answer, "source": "kpi", "data": k,
+                          "headline": f"هامش صافي {_pct(k['net_profit_cents'], k['revenue_cents'] or 1)}% ونسبة تداول {bs['current_ratio']}"},
+                         cards=[{"label_ar": "هامش صافي", "label_en": "Net margin",
+                                 "value": f"{_pct(k['net_profit_cents'], k['revenue_cents'] or 1)}%", "raw": True},
+                                {"label_ar": "نسبة التداول", "label_en": "Current ratio", "value": bs["current_ratio"] or "—", "raw": True},
+                                {"label_ar": "الالتزامات/الملكية", "label_en": "D/E", "value": bs["debt_to_equity"] or "—", "raw": True}],
+                         refs=[ref("لوحة التحكم", "Dashboard", "#/dashboard", "page")], kind="cards")
+
+    # ------------------------------------------------------------------
+    if topic == "users":
+        rows = conn.execute("SELECT username, full_name_ar, role_code, is_active FROM users "
+                            "WHERE company_id=? OR company_id IS NULL ORDER BY id", (cid,)).fetchall()
+        lines = "\n".join(f"• {r['username']} — {r['full_name_ar']} ({r['role_code']})"
+                          f"{'' if r['is_active'] else ' — موقوف'}" for r in rows)
+        answer = (f"مستخدمو الشركة ({len(rows)}):\n{lines}\n"
+                  f"الصلاحيات تُفرض على الخادم في كل طلب.\nالمصدر: إدارة المستخدمين.")
+        return with_meta({"answer": answer, "source": "users", "data": {"users": [dict(r) for r in rows]},
+                          "headline": f"{len(rows)} مستخدم"},
+                         cards=[{"label_ar": "مستخدمون", "label_en": "Users", "value": len(rows), "raw": True}],
+                         refs=[ref("المستخدمون", "Users", "#/users", "page")], kind="cards")
+
+    # ------------------------------------------------------------------
+    if topic == "audit":
+        rows = conn.execute(
+            """SELECT username, action, entity, created_at FROM audit_logs
+               WHERE company_id=? OR company_id IS NULL ORDER BY id DESC LIMIT 10""", (cid,)).fetchall()
+        lines = "\n".join(f"• {r['created_at']} — {r['username']} — {r['action']}" for r in rows)
+        answer = f"أحدث أحداث سجل التدقيق:\n{lines}\nالمصدر: سجل التدقيق."
+        return with_meta({"answer": answer, "source": "audit_log", "data": {"logs": [dict(r) for r in rows]},
+                          "headline": f"آخر حدث: {rows[0]['action'] if rows else '—'}"},
+                         cards=[{"label_ar": "أحداث مسجلة", "label_en": "Events", "value": len(rows), "raw": True}],
+                         refs=[ref("سجل التدقيق", "Audit log", "#/audit", "page")], kind="cards")
+
+    # ------------------------------------------------------------------
+    answer = ("أستطيع الإجابة عن أي جزء من النظام: الأرباح والإيرادات والمصروفات، السيولة والبنوك، "
+              "مستحقات العملاء ومديونية الموردين وأعمار الديون، المخزون، المبيعات والمشتريات، الرواتب، "
+              "الأصول والإهلاك، الموازنة والانحرافات، المديونية وكشوف المقاولين، الإعاشة، ضريبة القيمة المضافة، "
+              "القيود والفترات المالية، المستخدمون وسجل التدقيق، أو أي قائمة من القوائم المالية.\n\n"
+              "جرّب مثلًا: «ما صافي الربح هذا العام؟» أو «اعرض لي المركز المالي» أو «أعمار ديون العملاء؟».\n"
+              "تنبيه: كل الأرقام من القيود المرحّلة وضمن صلاحياتك فقط، ولا يقوم المساعد بأي ترحيل أو دفع.")
+    return with_meta({"answer": answer, "source": "help", "kind": "help",
+                      "suggestions": ["ملخص الأداء", "المركز المالي", "أعمار ديون العملاء",
+                                      "مديونية الموردين", "موقف ضريبة القيمة المضافة", "الموازنة مقابل الفعلي"]},
+                     refs=[ref("القوائم المالية", "Financial statements", "#/statements", "page")],
+                     kind="help")
+
+
+@route("POST", r"/api/assistant/ask", "ai.use")
+def assistant(ctx):
+    """Permission-scoped finance assistant (deterministic, auditable).
+
+    Every answer is computed live from the ledger; nothing is generated by an
+    external model and nothing is written. The payload is structured so the UI
+    can render headline + KPI cards + evidence bullets + deep links, which is
+    what makes the assistant usable across the whole ERP rather than as a
+    single text blob.
+    """
+    question = (ctx.body.get("question") or "").strip()
+    if not question:
+        raise ApiError("EMPTY_QUESTION: اكتب سؤالك / Please type a question")
+    if len(question) > 500:
+        question = question[:500]
+    result = _assistant_answer(ctx, question)
+    result["question"] = question
+    # English renderings are derived from the same payload, so the two languages
+    # can never disagree about a number. The Arabic answer stays the payload's
+    # primary text; `answer_en` rides alongside it.
+    try:
+        head_en, body_en = _assistant_english(result)
+        if body_en:
+            result["answer_en"] = body_en
+            if head_en:
+                result["headline_en"] = head_en
+    except Exception:          # a translation bug must never break the answer
+        pass
+    if result.get("topic") not in (None, "help", "permission"):
+        audit(ctx.conn, ctx.user, "assistant.ask", "assistant", None,
+              {"topic": result.get("topic"), "question": question[:160]},
+              company_id=ctx.user["company_id"])
+    return result
+
+
+# ---------------------------------------------------------------------------
+# The assistant speaks both languages
+# ---------------------------------------------------------------------------
+# The Arabic answer is authored inline with each topic because Arabic is the
+# house language and the phrasing has to read naturally. Doing the same twice
+# would double the surface area and let the two drift apart, so English is
+# derived here from the *same* payload: the headline is rebuilt from the topic,
+# the bullets are rebuilt from the KPI cards, and only the narrative sentences
+# that carry real meaning (sources, caveats, "what this means") get hand-written
+# English below. One set of numbers, two renderings — they cannot disagree.
+
+# Card slots per topic, by the English label the topic actually emits. Making the
+# mapping explicit (rather than searching for keywords) means a new card cannot
+# silently land in the wrong slot — a missing slot shows "—" instead.
+_EN_SLOTS = {
+    "summary":    {"revenue": 0, "expenses": 1, "net": 2, "cash": 3},
+    "profit":     {"revenue": 0, "net": 3, "margin": 5},
+    "expenses":   {"expenses": 1, "revenue": 2},
+    "cash":       {"cash": 0},
+    "receivables": {"total": 0, "over": 4},
+    "payables":   {"total": 0, "over": 1},
+    "inventory":  {"total": 0},
+    "sales":      {"total": 0, "count": 3},
+    "purchases":  {"total": 0, "count": 3},
+    "payroll":    {"count": 0, "total": 1},
+    "assets":     {"total": 2, "expenses": 1},
+    "budgets":    {"budget": 0, "actual": 1},
+    "debt":       {"total": 2, "over": 0},
+    "allowance":  {"total": 0, "count": 1},
+    "journals":   {"posted": 2, "draft": 1},
+    "periods":    {"closed": 0, "count": 1},
+    "vat":        {"net": 0},
+    "statement":  {},
+    "kpi":        {"margin": 0, "current": 1},
+    "users":      {"count": 0},
+    "audit":      {"count": 0},
+    "help":       {},
+}
+
+_EN_TOPIC_HEADLINE = {
+    "summary": "Net profit {net} with {cash} in liquidity",
+    "profit": "Net profit {net} on revenue {revenue}",
+    "expenses": "Operating expenses {expenses} on revenue {revenue}",
+    "cash": "{cash} in cash and bank balances",
+    "receivables": "{total} owed by customers, {over} of it over 90 days",
+    "payables": "{total} owed to vendors, {over} overdue",
+    "inventory": "Inventory valued at {total}",
+    "sales": "Sales {total} across {count} invoices",
+    "purchases": "Purchases {total} across {count} invoices",
+    "payroll": "{total} basic payroll across {count} active employees",
+    "assets": "Assets at {total} book value",
+    "budgets": "Budget {budget} against {actual} actual",
+    "debt": "Contractor debt {total} net",
+    "allowance": "Subsistence {total} across {count} sheet(s)",
+    "journals": "{posted} posted entries, {draft} still in draft",
+    "periods": "{closed} closed periods of {count}",
+    "vat": "VAT position {net}",
+    "statement": "Statement figures computed from posted entries",
+    "kpi": "Net margin {margin} and current ratio {current}",
+    "users": "{count} users",
+    "audit": "{count} recorded audit events",
+    "help": "Ask me about any part of the system",
+}
+
+_EN_SOURCE = {
+    "dashboard": "Dashboard and income statement (posted entries).",
+    "income_statement": "Income statement, computed from posted entries.",
+    "aging": "Aging report built from open posted invoices.",
+    "vendor_payables": "Vendor payables (posted invoices plus the control account).",
+    "inventory": "Average-cost inventory valuation.",
+    "sales_invoices": "Sales invoices register.",
+    "purchase_invoices": "Purchase invoices register.",
+    "payroll": "Payroll register.",
+    "fixed_assets": "Fixed-asset register and accumulated depreciation.",
+    "budget_variance": "Budget against actual, per line.",
+    "debt_position": "Contractor debt statements.",
+    "allowance": "Subsistence (allowance) sheets.",
+    "journal": "Journal entries.",
+    "fiscal_periods": "Fiscal periods and their lock state.",
+    "vat": "VAT control accounts in the general ledger.",
+    "balance_sheet": "Balance sheet from the trial balance.",
+    "kpi": "Ratios derived from the statement set.",
+    "users": "User register.",
+    "audit_log": "The audit trail.",
+    "cash_position": "Cash and bank balances plus the cash-flow statement.",
+    "receivables": "Customer balances from posted invoices.",
+}
+
+
+def _en_money(cents):
+    try:
+        return f"{money_str(int(cents))} EGP"
+    except Exception:
+        return f"{cents} EGP"
+
+
+def _assistant_english(payload):
+    """Derive the English rendering of an assistant payload.
+
+    Returns ``(headline, answer)`` or ``(None, None)`` when the topic has no
+    English narrative yet, in which case the caller falls back to Arabic.
+    """
+    topic = payload.get("topic")
+    cards = payload.get("cards") or []
+    data = payload.get("data") or {}
+    src = _EN_SOURCE.get(payload.get("source") or "", "")
+
+    # Bullets mirror the KPI cards exactly: label + value, same numbers.
+    bullets = []
+    for c in cards:
+        label = c.get("label_en") or c.get("label_ar") or ""
+        value = c.get("value")
+        if c.get("raw") or not isinstance(value, (int, float)):
+            shown = str(value)
+            tone = c.get("tone")
+            if tone == "danger":
+                shown += " (needs attention)"
+            bullets.append(f"• {label}: {shown}")
+        else:
+            bullets.append(f"• {label}: {_en_money(value)}")
+
+    headline = payload.get("headline_en")
+    # Some topics put a *list* in the cards (fiscal periods), so their headline
+    # cannot be assembled from a couple of slots — read the real counts instead.
+    if not headline:
+        tpl = _EN_TOPIC_HEADLINE.get(topic)
+        if tpl and cards:
+            # Explicit slot map per topic: the card order differs for every topic,
+            # and a keyword search quietly put revenue into the "net profit" slot.
+            slots = _EN_SLOTS.get(topic) or {}
+
+            def pick(slot_key):
+                idx = slots.get(slot_key)
+                if idx is None or idx >= len(cards):
+                    return None
+                c = cards[idx]
+                v = c.get("value")
+                if v is None:
+                    return None
+                return str(v) if c.get("raw") or not isinstance(v, (int, float)) else _en_money(v)
+
+            subs = {k: pick(k) for k in
+                    ("net", "revenue", "expenses", "pct", "cash", "net_change", "total",
+                     "over", "count", "budget", "actual", "posted", "draft", "closed",
+                     "margin", "current", "action")}
+            subs = {k: (v if v is not None else "—") for k, v in subs.items()}
+            try:
+                headline = tpl.format(**subs)
+            except KeyError:
+                headline = None
+
+    # Topics whose cards are not a flat value list (line items, period rows) get
+    # their headline from the payload itself — after the template pass, so the
+    # generic slot fill cannot overwrite it.
+    if topic == "expenses":
+        rev, total = payload.get("revenue_cents"), payload.get("expenses_cents")
+        if rev and total:
+            headline = (f"Total expenses {_en_money(total)} on revenue {_en_money(rev)} "
+                        f"({_pct(total, rev)}%)")
+    elif topic == "periods":
+        rows = data.get("periods") or []
+        closed = sum(1 for r in rows if str(r.get("status")) == "closed")
+        headline = f"{closed} closed periods of {len(rows)}"
+
+    if not topic or topic in ("help", "denied"):
+        if topic == "help":
+            return ("Ask me about any part of the system",
+                    "I answer from your posted entries only, within your permissions.\n"
+                    "Try: profit, expenses, liquidity, customer aging, vendor payables, "
+                    "inventory, payroll, assets, budget variance, contractor debt, VAT, "
+                    "journal entries, fiscal periods, or any financial statement.")
+        return (None, None)
+
+    if not headline:
+        headline = payload.get("headline")  # Arabic fallback for the title only
+
+    lines = [headline] if headline else []
+    if bullets:
+        lines.append("")
+        lines.extend(bullets)
+    if src:
+        lines.append("")
+        lines.append(f"Source: {src}")
+    body = "\n".join(lines)
+    return (headline, body)
 
 
 # ==========================================================================
@@ -2384,7 +3496,14 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "same-origin")
+        # Embedding is allowed from the same origin and from the hosted preview
+        # host (the sandbox serves the app inside an iframe); anything else is
+        # still refused by the frame-ancestors directive below.
         self.send_header("X-Frame-Options", "SAMEORIGIN")
+        self.send_header("Content-Security-Policy",
+                         "frame-ancestors 'self' https://*.e2b.app http://localhost:* http://127.0.0.1:*")
+        # (both are kept deliberately: the older header is ignored by browsers that
+        # understand the CSP directive, and the CSP one is ignored by older ones)
         for k, v in (extra_headers or {}).items():
             self.send_header(k, v)
         if getattr(self, "_diag", False):
@@ -2491,7 +3610,7 @@ class Handler(BaseHTTPRequestHandler):
                 if matched is None:
                     raise ApiError("NOT_FOUND: المسار غير موجود / Route not found", 404)
                 rx, perm, fn = matched
-                if fn not in (login, health, dev_accounts):
+                if fn not in (login, health, dev_accounts, demo_login):
                     if user is None:
                         raise AuthError("UNAUTHENTICATED: يلزم تسجيل الدخول / Authentication required", 401)
                     if perm:
@@ -2775,6 +3894,18 @@ def report_pdf_route(ctx):
                  i["days_overdue"]] for i in data["items"]]
         title_ar, title_en = "أعمار الديون", "Aging report"
         notes = []
+    elif kind in STATEMENT_PERMISSION:
+        # every other statement: one generic table built by the same flattener
+        # the CSV export uses, so the PDF and the CSV can never disagree
+        require(ctx.user, STATEMENT_PERMISSION.get(kind, "reports.view"))
+        payload = reports.statement(ctx.conn, cid, kind, d1, d2)
+        header, flat_rows = _statement_table(payload, kind)
+        cols = [{"ar": h, "en": h, "w": 1.7 if i else 4.2, "align": "center" if i >= 2 else "start"}
+                for i, h in enumerate(header)]
+        rows = [[str(c) for c in r] for r in flat_rows]
+        meta_item = next(m for m in reports.STATEMENT_META if m["id"] == kind)
+        title_ar, title_en = meta_item["name_ar"], meta_item["name_en"]
+        notes = []
     else:
         raise ApiError("INVALID_INPUT: نوع التقرير غير مدعوم / Unsupported report kind", 400)
 
@@ -2782,9 +3913,7 @@ def report_pdf_route(ctx):
     subtitle_en = f"Period {d1} to {d2} · {company.get('name_en', '')}"
     pdf_bytes = exporter.report_pdf(title_ar, title_en, cols, rows, company, lang,
                                     subtitle_ar, subtitle_en, notes)
-    label = {"trial-balance": "trial-balance", "income-statement": "income-statement",
-             "balance-sheet": "balance-sheet", "vendor-payables": "vendor-payables",
-             "aging": "aging"}.get(kind, kind)
+    label = {"vendor-payables": "vendor-payables", "aging": "aging"}.get(kind, kind)
     audit(ctx.conn, ctx.user, "reports.pdf", "report", None, {"kind": kind, "lang": lang}, company_id=cid)
     return {"__file__": True, "content": pdf_bytes, "content_type": "application/pdf",
             "filename": f"{label}-{d1}_{d2}-{lang}.pdf", "inline": True}
@@ -2827,6 +3956,17 @@ def report_xlsx_route(ctx):
                  i["days_overdue"]] for i in data["items"]]
         money_cols = (4, 5, 6)
         title = T("أعمار الديون", "Aging")
+    elif kind in STATEMENT_PERMISSION:
+        payload = reports.statement(ctx.conn, cid, kind, d1, d2)
+        header, flat_rows = _statement_table(payload, kind)
+        cols = header
+        rows = [list(r) for r in flat_rows]
+        money_cols = tuple(i for i, h in enumerate(header)
+                           if str(h).lower() in ("amount", "opening", "additions", "reductions",
+                                                  "closing", "debit", "credit", "balance", "due",
+                                                  "paid", "net", "total", "remaining", "assets"))
+        meta_item = next(m for m in reports.STATEMENT_META if m["id"] == kind)
+        title = meta_item["name_ar"] if ar else meta_item["name_en"]
     else:
         raise ApiError("INVALID_INPUT: نوع التقرير غير مدعوم / Unsupported report kind", 400)
     content = exporter.report_xlsx(f"{title} {d1} — {d2}", cols, rows, rtl=ar, money_cols=money_cols)
