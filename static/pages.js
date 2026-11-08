@@ -32,9 +32,13 @@
     ];
     return `<details class="export-menu"><summary>${icon("download")} ${ESC(L("تصدير", "Export"))} <span class="caret">${icon("chevron")}</span></summary>
       <div class="menu">
-        ${pairs.map(([fmt, lang, label, icon, hint]) => {
+        ${/* the 4th element must not be named `icon`: destructuring it that way
+             shadows the global icon() helper for the whole callback, and every
+             icon("chart") below then threw "icon is not a function" — which is
+             what used to leave the reports page stuck on its skeleton. */""}
+        ${pairs.map(([fmt, lang, label, glyph, hint]) => {
           const url = fmt === "csv" ? `/api/reports/export?${q({})}` : `/api/reports/${fmt}?${q({ lang })}`;
-          return `<button data-export="${url}" data-name="${kind}.${fmt}"><span class="mi">${icon}</span>
+          return `<button data-export="${url}" data-name="${kind}.${fmt}"><span class="mi">${glyph}</span>
             <span class="ml">${ESC(label)}</span><span class="hint">${hint}</span></button>`;
         }).join("")}
       </div></details>`;
@@ -1806,12 +1810,17 @@
           ]))}
           ${card(t("payables.title"), `
             <div class="stat-line"><span>${ESC(t("payables.journal"))}</span><strong>${fmtMoney(T.journal_balance_cents)}</strong></div>
+            ${T.unallocated_payments_cents ? `<div class="stat-line"><span>${ESC(L("دفعات لم تُخصَّص بعد", "Unallocated payments"))}</span>
+              <strong>${fmtMoney(T.unallocated_payments_cents)}</strong></div>` : ""}
             <div class="stat-line"><span>${ESC(L("عدد الموردين المدينة", "Vendors with balance"))}</span>
               <strong>${data.vendors.filter(v => v.outstanding_cents > 0).length}</strong></div>
             <div class="stat-line"><span>${ESC(L("أقرب استحقاق", "Earliest due"))}</span>
               <strong>${(data.vendors.filter(v => v.next_due_date).sort((a, b) => a.next_due_date.localeCompare(b.next_due_date))[0] || {}).next_due_date || "—"}</strong></div>
-            <p class="field-hint" style="margin-top:8px">${ESC(L("الأرصدة مطابقة لحساب الموردين في الأستاذ العام — الدفعات لا تؤثر إلا بعد الترحيل.",
-              "Balances reconcile to the AP control account — payments only count once posted."))}</p>`)}
+            <p class="field-hint" style="margin-top:8px">${T.reconciles
+              ? ESC(L("مطابقة: رصيد الأستاذ + الدفعات غير المخصّصة = رصيد الموردين.",
+                     "Reconciled: GL balance + unallocated payments = vendor subledger."))
+              : `<span class="neg">${ESC(L("تعذّرت المطابقة — راجع الدفعات غير المخصّصة.",
+                     "Does not reconcile — review the unallocated payments."))}</span>`}</p>`)}
         </div>
         <div class="section-title"><span>${ESC(t("payables.title"))}</span><span class="line"></span></div>
         ${card("", renderTable([
@@ -2758,7 +2767,13 @@
               { key: "overdue_cents", label: t("payables.overdue"), cls: "num", render: r => r.overdue_cents ? `<span class="neg">${fmtMoney(r.overdue_cents)}</span>` : "—" },
               { key: "next_due_date", label: t("payables.nextDue"), render: r => r.next_due_date ? fmtDate(r.next_due_date) : "—" },
               { key: "journal_balance_cents", label: t("payables.journal"), cls: "num", render: r => fmtMoney(r.journal_balance_cents) },
-            ], d.vendors))}`;
+            ], d.vendors, {
+              footer: d.totals.unallocated_payments_cents
+                ? `<tr><td colspan="7">${ESC(L("دفعات لم تُخصَّص بعد (تُضاف إلى رصيد الأستاذ للمطابقة)",
+                                             "Unallocated payments (added to the GL balance for reconciliation)"))}</td>
+                   <td class="num">${fmtMoney(d.totals.unallocated_payments_cents)}</td></tr>`
+                : "",
+            }))}`;
         }
       };
       $("#r-apply").onclick = load;

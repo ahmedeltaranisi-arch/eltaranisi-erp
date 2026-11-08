@@ -270,6 +270,23 @@ def vendor_payables(conn, company_id, as_of):
         "overdue_cents": sum(o["overdue_cents"] for o in out),
         "journal_balance_cents": sum(o["journal_balance_cents"] for o in out),
     }
+    # Money paid to a vendor that has not been placed against an invoice still
+    # debits the control account, but no invoice is reduced — so the invoice
+    # subledger still shows it while the ledger does not. The identity is
+    #
+    #     outstanding = journal balance + unallocated payments
+    #
+    # and without this line the two sides never agree, so the difference looks
+    # like a bug when it is really an open item waiting to be allocated.
+    unalloc = conn.execute(
+        """SELECT COALESCE(SUM(p.amount_cents - p.allocated_cents), 0) AS c
+           FROM payments p
+           WHERE p.company_id=? AND p.party_type='vendor' AND p.status='posted'
+             AND p.amount_cents > p.allocated_cents""",
+        (company_id,)).fetchone()["c"]
+    totals["unallocated_payments_cents"] = unalloc
+    totals["reconciles"] = (totals["journal_balance_cents"] + unalloc
+                            == totals["outstanding_cents"])
     return {"as_of": as_of, "vendors": out, "totals": totals,
             "aging": aging_data["buckets"], "invoices": aging_data["items"]}
 
