@@ -2367,11 +2367,24 @@ def _statement_table(data, kind):
                                    ("equity", "Equity")):
                 for l in data[section]:
                     rows.append([label, l["code"], l["name_ar"], money(l["amount_cents"])])
-        rows.append(["", "", "Total assets", money(data["assets_total_cents"])])
-        rows.append(["", "", "Total liabilities", money(data["liabilities_total_cents"])])
-        rows.append(["", "", "Total equity", money(data["equity_total_cents"])])
+        # Two statement kinds share this shape but name their totals differently:
+        # the full balance sheet reports total_*_cents, the trial-balance version
+        # reports *_total_cents. Read whichever is present instead of trusting one
+        # name — a guessed key used to raise KeyError and turn the export into a 500.
+        def total(*names):
+            for n in names:
+                if n in data:
+                    return data[n]
+            raise KeyError(names[0])
+        total_assets = total("total_assets_cents", "assets_total_cents")
+        total_liabilities = total("total_liabilities_cents", "liabilities_total_cents")
+        total_equity = total("total_equity_cents", "equity_total_cents")
+        rows.append(["", "", "Total assets", money(total_assets)])
+        rows.append(["", "", "Total liabilities", money(total_liabilities)])
+        rows.append(["", "", "Total equity", money(total_equity)])
         rows.append(["", "", "Total liabilities + equity",
-                     money(data["liabilities_total_cents"] + data["equity_total_cents"])])
+                     money(data.get("total_liabilities_equity_cents",
+                                    total_liabilities + total_equity))])
         return header, rows
     if kind == "cash-flow":
         header = ["Activity", "Item", "Amount"]
@@ -3477,7 +3490,14 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "same-origin")
+        # Embedding is allowed from the same origin and from the hosted preview
+        # host (the sandbox serves the app inside an iframe); anything else is
+        # still refused by the frame-ancestors directive below.
         self.send_header("X-Frame-Options", "SAMEORIGIN")
+        self.send_header("Content-Security-Policy",
+                         "frame-ancestors 'self' https://*.e2b.app http://localhost:* http://127.0.0.1:*")
+        # (both are kept deliberately: the older header is ignored by browsers that
+        # understand the CSP directive, and the CSP one is ignored by older ones)
         for k, v in (extra_headers or {}).items():
             self.send_header(k, v)
         if getattr(self, "_diag", False):
