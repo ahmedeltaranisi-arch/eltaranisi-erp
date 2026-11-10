@@ -1709,13 +1709,14 @@ html, body { max-width: 100%; overflow-x: clip; }
 .stmt-empty { padding: 10px 26px; color: var(--text-3); font-size: 12.5px; font-style: italic; }
 .stmt-money { font-variant-numeric: tabular-nums; }
 .stmt-check {
-  display: flex; align-items: center; gap: 9px; margin: 0 24px 20px; padding: 10px 14px;
+  display: flex; align-items: center; gap: 9px; margin: 16px 24px 20px; padding: 10px 14px;
   border-radius: var(--r-sm); font-size: 12.5px; font-weight: 600;
 }
 .stmt-check .ico-svg { width: 16px; height: 16px; flex: none; }
 .stmt-check.ok { background: color-mix(in srgb, var(--ok) 10%, transparent); color: var(--ok); }
 .stmt-check.bad { background: color-mix(in srgb, var(--danger) 10%, transparent); color: var(--danger); }
 .stmt-details { margin: 0 24px 22px; }
+.stmt-check + .stmt-details { margin-top: 0; }   /* .stmt-check already carries its 20px */
 .stmt-details > summary, .stmt-acc > summary {
   cursor: pointer; font-size: 12.5px; font-weight: 700; color: var(--text-2);
   padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface-2);
@@ -3111,7 +3112,7 @@ table.data td code, table.data td .mono { font-size: 12.2px; }
 .stmt-kpis {
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 12px;
-  padding: 18px 24px 6px;
+  padding: 18px 24px 14px;
 }
 .stmt-kpi { padding: 13px 15px; min-width: 0; }
 .stmt-kpi span {
@@ -3135,7 +3136,7 @@ table.data td code, table.data td .mono { font-size: 12.2px; }
 .stmt-kpi .money .num { margin: 0; }
 
 @media (max-width: 900px) {
-  .stmt-kpis { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; padding: 14px 16px 4px; }
+  .stmt-kpis { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; padding: 14px 16px 12px; }
   .stmt-kpi strong { font-size: 14.5px; }
 }
 @media (max-width: 560px) {
@@ -3213,30 +3214,37 @@ td.num, th.num,
 .stmt-toolbar-spacer { flex: 1 1 12px; }
 
 /* ==================================================================
-   Vertical rhythm — stacked cards need air between them.
+   Vertical rhythm — one rule for every page.
 
-   On بيانات الإعاشة (and every other page that stacks panels) the cards were
-   welded edge to edge: `.content` carried no vertical rhythm, and no rule in
-   the sheet gave `.card` any margin at all, so a KPI strip, a notice and a
-   table card read as one continuous slab with three borders inside it.
+   Pages stack independent panels in #view: KPI strips, notices, tables,
+   statement documents, toolbars. Nothing in this sheet gave those panels a
+   bottom or top margin, so whenever two landed next to each other they shared
+   an edge — on بيانات الإعاشة, and equally on القوائم المالية where the panels
+   are `.stmt-*` rather than `.card`.
 
-   The gap is attached to the card and scoped to cards that are direct children
-   of the page view. It is deliberately NOT applied to cards inside `.grid` or
-   `.split`: those are grid items whose spacing already comes from `gap`, and a
-   margin there would push the second cell down and break the row. Modals never
-   render a card, so they are not covered.
+   Rather than list every panel class (and miss the next one someone adds), the
+   rhythm is declared as a zero-specificity fallback on the stack itself:
 
-   A heading (`.page-head`) already carries its own bottom margin and the whole
-   thing collapses, so the title block keeps its spacing untouched and only
-   genuinely touching panels gain the gap. The `:not(:first-child)` guard keeps
-   a card that opens a page flush with the top edge, where there is nothing
-   above it to be separated from.
+     :where(.content > * + *) { margin-top: 12px }
+
+   `:where()` contributes no specificity, so this ONLY applies where no other
+   rule has already decided the spacing. Everything that was deliberately
+   spaced keeps its own value untouched:
+     .page-head   margin-bottom 20px   → collapses, still 20px
+     .section-title margin 24px 0 12px → collapses, still 24px / 12px
+     .stmt-body   gap 16px             → grid gap, unaffected
+     inline style="margin-top:18px"    → wins outright
+   and panels that had nothing now get the 12px they were missing.
+
+   Grid and flex children are untouched: the selector only matches direct
+   children of #view, so `.grid > .card` cells never receive a margin and the
+   KPI rows stay perfectly level.
    ================================================================== */
-.content > .card:not(:first-child) { margin-top: 12px; }
+:where(.content > * + *) { margin-top: 12px; }
 @media (max-width: 640px) {
-  .content > .card:not(:first-child) { margin-top: 10px; }
+  :where(.content > * + *) { margin-top: 10px; }
 }
 /* printing a document keeps the panels tight — paper has its own rhythm */
 @media print {
-  .content > .card:not(:first-child) { margin-top: 0; }
+  :where(.content > * + *) { margin-top: 0 !important; }
 }
