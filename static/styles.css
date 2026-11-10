@@ -3211,3 +3211,32 @@ td.num, th.num,
 .stmt-toolbar .field > span,
 .stmt-select > span { font-size: 11.5px; letter-spacing: .02em; }
 .stmt-toolbar-spacer { flex: 1 1 12px; }
+
+/* ==================================================================
+   Vertical rhythm — stacked cards need air between them.
+
+   On بيانات الإعاشة (and every other page that stacks panels) the cards were
+   welded edge to edge: `.content` carried no vertical rhythm, and no rule in
+   the sheet gave `.card` any margin at all, so a KPI strip, a notice and a
+   table card read as one continuous slab with three borders inside it.
+
+   The gap is attached to the card and scoped to cards that are direct children
+   of the page view. It is deliberately NOT applied to cards inside `.grid` or
+   `.split`: those are grid items whose spacing already comes from `gap`, and a
+   margin there would push the second cell down and break the row. Modals never
+   render a card, so they are not covered.
+
+   A heading (`.page-head`) already carries its own bottom margin and the whole
+   thing collapses, so the title block keeps its spacing untouched and only
+   genuinely touching panels gain the gap. The `:not(:first-child)` guard keeps
+   a card that opens a page flush with the top edge, where there is nothing
+   above it to be separated from.
+   ================================================================== */
+.content > .card:not(:first-child) { margin-top: 12px; }
+@media (max-width: 640px) {
+  .content > .card:not(:first-child) { margin-top: 10px; }
+}
+/* printing a document keeps the panels tight — paper has its own rhythm */
+@media print {
+  .content > .card:not(:first-child) { margin-top: 0; }
+}
