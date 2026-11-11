@@ -3248,3 +3248,187 @@ td.num, th.num,
 @media print {
   :where(.content > * + *) { margin-top: 0 !important; }
 }
+
+/* ==================================================================
+   REPORTS & FINANCIAL STATEMENTS — page chrome
+
+   The page used to be: seven flat tabs in one undifferentiated row, a strip
+   of two date inputs welded to the KPI band below it, and a bare <div> holding
+   the report. Three separate problems:
+
+   1. Seven tabs read as noise and wrapped badly on a laptop. They are grouped
+      by what an accountant is actually doing: core statements, ledgers, then
+      partner balances.
+   2. The filter strip carried `margin-bottom: 0`, so the date panel and the
+      KPI cards that followed shared an edge — two bordered surfaces welded.
+   3. There was no period control. Every visit started at 1 Jan and you typed
+      two dates to look at last month.
+
+   Layout: a grouped nav (no box), then ONE bordered control bar holding the
+   period presets, the date range and the export action, then the report body.
+   ================================================================== */
+
+.rpt-nav {
+  display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: flex-end;
+  margin-bottom: 14px;
+}
+.rpt-nav-group { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.rpt-nav-label {
+  font-size: 10.5px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--text-3); padding-inline-start: 2px;
+}
+.rpt-nav-tabs {
+  display: flex; gap: 4px; padding: 4px; border-radius: 12px;
+  background: var(--surface-2); border: 1px solid var(--border);
+}
+.rpt-tab {
+  border: 0; background: none; font-family: inherit; cursor: pointer;
+  padding: 8px 13px; border-radius: 9px; font-size: 12.8px; font-weight: 700;
+  color: var(--text-2); white-space: nowrap;
+  transition: background .15s var(--ease), color .15s var(--ease);
+}
+.rpt-tab:hover { background: var(--surface-3); color: var(--text); }
+.rpt-tab.active {
+  background: var(--surface); color: var(--brand);
+  box-shadow: var(--shadow-sm);
+  border: 1px solid color-mix(in srgb, var(--brand) 32%, var(--border));
+  padding: 7px 12px;   /* absorb the 1px border so the row never jumps */
+}
+[data-theme="dark"] .rpt-tab.active { background: color-mix(in srgb, var(--brand) 16%, var(--surface)); }
+
+/* ---- the control bar: presets, dates, export ---- */
+.rpt-bar {
+  display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: flex-end;
+  padding: 12px 14px; margin-bottom: 16px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r-md); box-shadow: var(--shadow-sm);
+}
+.rpt-periods {
+  display: inline-flex; gap: 2px; padding: 3px; border-radius: 10px;
+  background: var(--surface-2); border: 1px solid var(--border);
+}
+.rpt-period {
+  border: 0; background: none; font-family: inherit; cursor: pointer;
+  padding: 7px 12px; border-radius: 8px; font-size: 12.3px; font-weight: 700;
+  color: var(--text-2); white-space: nowrap;
+  transition: background .15s var(--ease), color .15s var(--ease);
+}
+.rpt-period:hover { color: var(--text); background: var(--surface-3); }
+.rpt-period.active {
+  background: color-mix(in srgb, var(--brand) 14%, var(--surface));
+  color: var(--brand); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand) 30%, transparent);
+}
+.rpt-dates { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+.rpt-dates .field { margin: 0; min-width: 152px; }
+.rpt-dates .field > span { font-size: 11.5px; font-weight: 700; color: var(--text-3); letter-spacing: .02em; }
+.rpt-bar-end { margin-inline-start: auto; display: flex; align-items: center; gap: 8px; }
+/* the export control is an action, make it look like one */
+.rpt-bar-end .export-menu summary {
+  border-color: var(--border-strong);
+  background: var(--surface-2);
+  font-weight: 700;
+}
+.rpt-bar-end .export-menu summary:hover { background: var(--surface-3); }
+
+/* ---- the report body ---- */
+.rpt-body { display: block; }
+.rpt-body > * + * { margin-top: 14px; }
+.rpt-body > .skeleton + .skeleton { margin-top: 10px; }
+
+/* ---- KPI bands ----
+   One shared rhythm for every report: equal columns, tall enough that the
+   figure never fights the icon, and a hard floor on the value size so money
+   like 1,122,159.00 stays on one line instead of shrinking to fit. */
+.rpt-kpis { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+.rpt-kpis-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.rpt-kpis-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.rpt-kpis-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.rpt-kpis .kpi { padding: 14px 16px; gap: 12px; align-items: center; }
+.rpt-kpis .kpi .kpi-value { font-size: clamp(14px, 1.05vw, 17px); letter-spacing: -.02em; }
+.rpt-kpis .kpi .kpi-ico { width: 34px; height: 34px; flex-basis: 34px; border-radius: 10px; }
+.rpt-kpis .kpi .kpi-ico .ico-svg { width: 16px; height: 16px; }
+.rpt-kpis .kpi .kpi-label { font-size: 11.5px; }
+/* the decorative blob fights a 5-up band */
+.rpt-kpis .kpi::after { display: none; }
+
+@media (max-width: 1240px) {
+  .rpt-kpis-5 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .rpt-kpis-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 900px) {
+  .rpt-kpis-3, .rpt-kpis-5 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .rpt-nav { gap: 10px; }
+  .rpt-nav-group { width: 100%; }
+  .rpt-nav-tabs { overflow-x: auto; scrollbar-width: none; }
+  .rpt-nav-tabs::-webkit-scrollbar { display: none; }
+  .rpt-bar { padding: 11px 12px; }
+  .rpt-dates { width: 100%; }
+  .rpt-dates .field { flex: 1 1 140px; }
+  .rpt-bar-end { margin-inline-start: 0; width: 100%; }
+  .rpt-bar-end > * { flex: 1 1 auto; }
+  .rpt-bar-end .export-menu { display: block; width: 100%; }
+  .rpt-bar-end .export-menu summary { width: 100%; justify-content: center; }
+}
+@media (max-width: 560px) {
+  .rpt-kpis-3, .rpt-kpis-4, .rpt-kpis-5 { grid-template-columns: 1fr; }
+  .rpt-periods { width: 100%; }
+  .rpt-period { flex: 1 1 auto; padding: 7px 8px; font-size: 11.6px; }
+  .rpt-tab { padding: 7px 11px; font-size: 12.2px; }
+}
+@media print {
+  .rpt-nav, .rpt-bar { display: none !important; }
+  .rpt-body > * + * { margin-top: 0; }
+}
+
+/* ==================================================================
+   Empty state — a real "nothing here yet", not a grey whisper.
+
+   `renderTable()` prints `.empty` inside the card body. With 46px of padding
+   and a 32px faded glyph it read as an accident on a page that is otherwise
+   full of figures: the reader can't tell "no data" from "failed to load".
+   ================================================================== */
+.card-body .empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; padding: 54px 20px; text-align: center;
+}
+.card-body .empty .big {
+  width: 54px; height: 54px; border-radius: 16px; margin: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--surface-3); color: var(--text-3); opacity: 1;
+  border: 1px solid var(--border);
+}
+.card-body .empty .big .ico-svg { width: 24px; height: 24px; opacity: .75; }
+.card-body .empty { font-size: 13.5px; font-weight: 600; color: var(--text-2); }
+
+/* ---- statement panels shared by the income statement and balance sheet ---- */
+.rpt-sheet-2 { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.rpt-sheet-3 { display: grid; gap: 14px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.rpt-sheet-2 .card, .rpt-sheet-3 .card { min-width: 0; }
+/* a totals line closes the panel instead of looking like another row */
+.stat-line.stat-total {
+  border-bottom: 0; border-top: 2px solid var(--border-strong);
+  margin-top: 4px; padding-top: 10px;
+}
+.stat-line.stat-total strong { font-weight: 800; }
+
+/* the balance-sheet reconcile strip: same visual language as .stmt-check */
+.rpt-check {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-top: 14px; padding: 12px 15px; border-radius: var(--r-sm);
+  font-size: 12.8px; font-weight: 600; border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text-2);
+}
+.rpt-check strong { margin-inline-start: auto; font-variant-numeric: tabular-nums; color: var(--text); }
+.rpt-check .ico-svg { width: 16px; height: 16px; flex: none; }
+.rpt-check.ok { background: color-mix(in srgb, var(--ok) 10%, transparent); border-color: color-mix(in srgb, var(--ok) 30%, transparent); color: var(--ok); }
+.rpt-check.ok strong { color: var(--ok); }
+.rpt-check.bad { background: color-mix(in srgb, var(--danger) 10%, transparent); border-color: color-mix(in srgb, var(--danger) 30%, transparent); color: var(--danger); }
+.rpt-check.bad strong { color: var(--danger); }
+
+@media (max-width: 1100px) {
+  .rpt-sheet-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 780px) {
+  .rpt-sheet-2, .rpt-sheet-3 { grid-template-columns: 1fr; }
+  .rpt-check strong { margin-inline-start: 0; width: 100%; }
+}
