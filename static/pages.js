@@ -2677,26 +2677,110 @@
       setTitle("nav.reports");
       const tab = new URLSearchParams((location.hash.split("?")[1] || "")).get("tab") || "trial-balance";
       const from = yearStart(), to = today();
-      const tabs = [
-        ["trial-balance", "reports.trialBalance"],
-        ["income-statement", "reports.incomeStatement"],
-        ["balance-sheet", "reports.balanceSheet"],
-        ["cash-flow", "reports.cashFlow"],
-        ["aging-ar", "reports.agingAR"],
-        ["aging-ap", "reports.agingAP"],
-        ["vendor-payables", "reports.vendorPayables"],
+
+      /* Seven flat tabs read as one undifferentiated row and wrap badly on a
+         laptop. Group them the way an accountant thinks: the three primary
+         statements, then the ledgers, then the partner-facing balances. */
+      const TAB_GROUPS = [
+        {
+          key: "statements",
+          label: L("القوائم الأساسية", "Core statements"),
+          tabs: [
+            ["income-statement", "reports.incomeStatement"],
+            ["balance-sheet", "reports.balanceSheet"],
+            ["cash-flow", "reports.cashFlow"],
+          ],
+        },
+        {
+          key: "ledgers",
+          label: L("الدفاتر والميزان", "Ledgers & trial balance"),
+          tabs: [
+            ["trial-balance", "reports.trialBalance"],
+          ],
+        },
+        {
+          key: "balances",
+          label: L("الأعمار والأرصدة", "Aging & balances"),
+          tabs: [
+            ["aging-ar", "reports.agingAR"],
+            ["aging-ap", "reports.agingAP"],
+            ["vendor-payables", "reports.vendorPayables"],
+          ],
+        },
       ];
+
+      /* A window/period switcher beats typing two dates every time. */
+      const PERIODS = [
+        ["ytd", L("من بداية العام", "Year to date")],
+        ["month", L("هذا الشهر", "This month")],
+        ["quarter", L("هذا الربع", "This quarter")],
+        ["year", L("السنة المالية", "Fiscal year")],
+      ];
+
       view.innerHTML = `${pageHead("reports.title", "reports.subtitle", printBtn())}
-        <div class="tabs">${tabs.map(([k, l]) => `<button class="tab ${tab === k ? "active" : ""}" data-tab="${k}">${ESC(t(l))}</button>`).join("")}</div>
-        <div class="filters">
-          <div class="field"><span>${ESC(t("common.from"))}</span>${dateField("r-from", from)}</div>
-          <div class="field"><span>${ESC(t("common.to"))}</span>${dateField("r-to", to)}</div>
-          <button class="btn btn-sm btn-primary" id="r-apply">${ESC(t("common.filter"))}</button>
-          <div style="flex:1"></div>
-          <span id="r-export"></span>
+        <div class="rpt-nav">
+          ${TAB_GROUPS.map(g => `
+            <div class="rpt-nav-group">
+              <span class="rpt-nav-label">${ESC(g.label)}</span>
+              <div class="rpt-nav-tabs">
+                ${g.tabs.map(([k, l]) => `<button class="rpt-tab ${tab === k ? "active" : ""}" data-tab="${k}">${ESC(t(l))}</button>`).join("")}
+              </div>
+            </div>`).join("")}
         </div>
-        <div id="report-body"><div class="skeleton"></div></div>`;
+
+        <div class="rpt-bar">
+          <div class="rpt-periods" role="group" aria-label="${ESC(L("الفترة", "Period"))}">
+            ${PERIODS.map(([k, l]) => `<button class="rpt-period" data-period="${k}">${ESC(l)}</button>`).join("")}
+          </div>
+          <div class="rpt-dates">
+            <div class="field"><span>${ESC(t("common.from"))}</span>${dateField("r-from", from)}</div>
+            <div class="field"><span>${ESC(t("common.to"))}</span>${dateField("r-to", to)}</div>
+            <button class="btn btn-primary btn-sm" id="r-apply">${icon("check")} ${ESC(t("common.filter"))}</button>
+          </div>
+          <div class="rpt-bar-end"><span id="r-export"></span></div>
+        </div>
+
+        <div id="report-body" class="rpt-body"><div class="skeleton"></div><div class="skeleton"></div></div>`;
       $$("[data-tab]", view).forEach(b => b.onclick = () => { location.hash = `#/reports?tab=${b.dataset.tab}`; });
+
+      /* Period presets write into the two date fields, then reload.
+         The fields are TEXT inputs showing DD/MM/YYYY (see dateField/isoToDmy),
+         not <input type="date">. Writing a raw ISO string here made every
+         preset produce an invalid date that dateVal() could not parse. */
+      const setRange = (key) => {
+        const now = new Date();
+        // local calendar date, not toISOString(): that shifts across midnight
+        const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+        let a = new Date(now.getFullYear(), 0, 1);
+        if (key === "month") a = new Date(now.getFullYear(), now.getMonth(), 1);
+        else if (key === "quarter") a = new Date(now.getFullYear(), Math.floor(now.getMonth() / 3) * 3, 1);
+        else if (key === "year") a = new Date(now.getFullYear(), 0, 1);
+        $("#r-from").value = isoToDmy(iso(a));
+        $("#r-to").value = isoToDmy(iso(now));
+        $$(".rpt-period", view).forEach(b => b.classList.toggle("active", b.dataset.period === key));
+      };
+      /* registered before `load` exists; by the time a preset can be clicked the
+         whole render has finished, so the reference resolves fine */
+      $$(".rpt-period", view).forEach(b => b.onclick = () => { setRange(b.dataset.period); load(); });
+
+      /* Mark whichever preset matches the range the page opened with. Computing
+         it beats hardcoding index 0: a deep link can carry any dates. */
+      (function markPreset() {
+        const now = new Date();
+        const f = dateVal($("#r-from").value);
+        const firstOf = m => `${now.getFullYear()}-${String(m + 1).padStart(2, "0")}-01`;
+        const starts = {
+          month: firstOf(now.getMonth()),
+          quarter: firstOf(Math.floor(now.getMonth() / 3) * 3),
+          year: `${now.getFullYear()}-01-01`,
+          ytd: `${now.getFullYear()}-01-01`,
+        };
+        const hit = Object.keys(starts).find(k => starts[k] === f);
+        if (hit) {
+          const btn = $(`.rpt-period[data-period="${hit}"]`, view);
+          if (btn) btn.classList.add("active");
+        }
+      })();
 
       const body = $("#report-body");
       const load = async () => {
@@ -2723,12 +2807,13 @@
           $("#r-export").innerHTML = reportExports("income-statement", { from: f, to: t2 });
           const d = await api(`/api/reports/income-statement?from=${f}&to=${t2}`);
           const line = (i) => `<div class="stat-line"><span>${ESC(i.code)} — ${ESC(APP.lang === "ar" ? i.name_ar : i.name_en)}</span><strong>${fmtMoney(i.amount_cents)}</strong></div>`;
-          body.innerHTML = `<div class="grid cols-2">
-            ${card(t("reports.revenue"), d.revenue.map(line).join("") + `<div class="stat-line" style="border-top:2px solid var(--border-strong)"><strong>${ESC(t("common.total"))}</strong><strong>${fmtMoney(d.total_revenue_cents)}</strong></div>`)}
-            ${card(t("reports.expenses"), d.expenses.map(line).join("") + `<div class="stat-line" style="border-top:2px solid var(--border-strong)"><strong>${ESC(t("common.total"))}</strong><strong>${fmtMoney(d.total_expenses_cents)}</strong></div>`)}
+          const total = (cents) => `<div class="stat-line stat-total"><strong>${ESC(t("common.total"))}</strong><strong>${fmtMoney(cents)}</strong></div>`;
+          body.innerHTML = `<div class="rpt-sheet-2">
+            ${card(t("reports.revenue"), d.revenue.map(line).join("") + total(d.total_revenue_cents))}
+            ${card(t("reports.expenses"), d.expenses.map(line).join("") + total(d.total_expenses_cents))}
           </div>
-          <div class="grid cols-3" style="margin-top:16px">
-            ${kpi({ label: t("reports.grossProfit"), value: d.gross_profit_cents, icon: icon("assets") })}
+          <div class="rpt-kpis rpt-kpis-3">
+            ${kpi({ label: t("reports.grossProfit"), value: d.gross_profit_cents, icon: icon("assets"), tone: d.gross_profit_cents >= 0 ? "ok" : "danger" })}
             ${kpi({ label: t("reports.profit"), value: d.net_profit_cents, icon: icon("arrowUp"), tone: d.net_profit_cents >= 0 ? "ok" : "danger" })}
             ${kpi({ label: L("هامش صافي الربح", "Net margin"), value: d.total_revenue_cents ? ((d.net_profit_cents / d.total_revenue_cents) * 100).toFixed(1) + "%" : "—", icon: icon("percent"), raw: true })}
           </div>`;
@@ -2736,20 +2821,24 @@
           $("#r-export").innerHTML = reportExports("balance-sheet", { as_of: t2 });
           const d = await api(`/api/reports/balance-sheet?as_of=${t2}`);
           const line = (i) => `<div class="stat-line"><span>${ESC(i.code)} — ${ESC(APP.lang === "ar" ? i.name_ar : i.name_en)}</span><strong>${fmtMoney(i.amount_cents)}</strong></div>`;
-          body.innerHTML = `<div class="grid cols-3">
-            ${card(t("reports.assets"), d.assets.map(line).join("") + `<div class="stat-line"><strong>${ESC(t("common.total"))}</strong><strong>${fmtMoney(d.total_assets_cents)}</strong></div>`)}
-            ${card(t("reports.liabilities"), d.liabilities.map(line).join("") + `<div class="stat-line"><strong>${ESC(t("common.total"))}</strong><strong>${fmtMoney(d.total_liabilities_cents)}</strong></div>`)}
-            ${card(t("reports.equity"), d.equity.map(line).join("") + `<div class="stat-line"><strong>${ESC(t("common.total"))}</strong><strong>${fmtMoney(d.total_equity_cents)}</strong></div>`)}
+          const total = (cents) => `<div class="stat-line stat-total"><strong>${ESC(t("common.total"))}</strong><strong>${fmtMoney(cents)}</strong></div>`;
+          body.innerHTML = `<div class="rpt-sheet-3">
+            ${card(t("reports.assets"), d.assets.map(line).join("") + total(d.total_assets_cents))}
+            ${card(t("reports.liabilities"), d.liabilities.map(line).join("") + total(d.total_liabilities_cents))}
+            ${card(t("reports.equity"), d.equity.map(line).join("") + total(d.total_equity_cents))}
           </div>
-          <p class="field-hint" style="margin-top:10px">${ESC(L("تحقق التوازن: الأصول = الالتزامات + حقوق الملكية", "Balance check: assets = liabilities + equity"))}:
-            <span class="badge ${d.balanced ? "green" : "red"}">${d.balanced ? icon("check","ico-sm") : icon("close","ico-sm")}</span></p>`;
+          <div class="rpt-check ${d.balanced ? "ok" : "bad"}">
+            ${d.balanced ? icon("check") : icon("close")}
+            <span>${ESC(L("تحقق التوازن: الأصول = الالتزامات + حقوق الملكية", "Balance check: assets = liabilities + equity"))}</span>
+            <strong>${fmtMoney(d.total_assets_cents)} ${d.balanced ? "=" : "≠"} ${fmtMoney(d.total_liabilities_cents + d.total_equity_cents)}</strong>
+          </div>`;
         } else if (tab === "cash-flow") {
           $("#r-export").innerHTML = "";
           const d = await api(`/api/reports/cash-flow?from=${f}&to=${t2}`);
-          body.innerHTML = `<div class="grid cols-3">
+          body.innerHTML = `<div class="rpt-kpis">
             ${kpi({ label: t("reports.inflow"), value: d.inflow_cents, icon: icon("arrowUp"), tone: "ok" })}
             ${kpi({ label: t("reports.outflow"), value: d.outflow_cents, icon: icon("arrowDown"), tone: "danger" })}
-            ${kpi({ label: t("reports.netCash"), value: d.net_cents, icon: icon("assets") })}
+            ${kpi({ label: t("reports.netCash"), value: d.net_cents, icon: icon("assets"), tone: d.net_cents < 0 ? "danger" : "ok" })}
           </div>
           ${card(t("reports.cashFlow"), renderTable([
             { key: "entry_date", label: t("common.date") },
@@ -2762,12 +2851,20 @@
           const kind = tab === "aging-ar" ? "sales" : "purchase";
           $("#r-export").innerHTML = reportExports("aging", { as_of: t2, type: kind });
           const d = await api(`/api/reports/aging?as_of=${t2}&kind=${kind}`);
-          body.innerHTML = `<div class="grid cols-5" style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px">
-              ${Object.keys(d.buckets).map(b => `<div class="card kpi ${b === "over_90" ? "danger" : b === "current" ? "ok" : ""}">
+          /* Buckets in chronological order. Object key order put "current"
+             last, so in the RTL grid the eye read the columns backwards:
+             مستحق → متأخر → … → غير مستحق. */
+          const BUCKET_ORDER = ["current", "1_30", "31_60", "61_90", "over_90"];
+          const bucketTone = b => b === "over_90" ? "danger" : b === "61_90" ? "warn" : b === "current" ? "ok" : "";
+          const bucketRow = BUCKET_ORDER.filter(b => b in d.buckets);
+          body.innerHTML = `<div class="rpt-kpis rpt-kpis-5">
+              ${bucketRow.map(b => `<div class="card kpi ${bucketTone(b)}" data-bucket="${b}">
+                  <div class="kpi-ico">${icon(b === "current" ? "check" : b === "over_90" ? "alert" : "calendar")}</div>
                   <div><div class="kpi-label">${ESC(t("reports.bucket." + b))}</div>
-                  <div class="kpi-value" style="font-size:17px">${fmtMoney(d.buckets[b])}</div></div></div>`).join("")}
+                  <div class="kpi-value">${fmtMoney(d.buckets[b])}</div></div></div>`).join("")}
             </div>
-            ${card(t("payables.invoices"), renderTable([
+            ${card(kind === "sales" ? L("فواتير العملاء المستحقة", "Outstanding customer invoices")
+                                    : L("فواتير الموردين المستحقة", "Outstanding vendor invoices"), renderTable([
               { key: "invoice_no", label: L("الرمز التعريفي", "Reference ID") },
               { key: "party_ar", label: kind === "sales" ? t("common.customer") : t("common.vendor") },
               { key: "invoice_date", label: t("common.date") },
@@ -2780,7 +2877,7 @@
         } else if (tab === "vendor-payables") {
           $("#r-export").innerHTML = reportExports("vendor-payables", { as_of: t2 });
           const d = await api(`/api/reports/vendor-payables?as_of=${t2}`);
-          body.innerHTML = `<div class="grid cols-4">
+          body.innerHTML = `<div class="rpt-kpis rpt-kpis-4">
               ${kpi({ label: t("payables.outstanding"), value: d.totals.outstanding_cents, icon: icon("reports"), tone: "warn" })}
               ${kpi({ label: t("payables.overdue"), value: d.totals.overdue_cents, icon: icon("alert"), tone: "danger" })}
               ${kpi({ label: t("payables.invoiced"), value: d.totals.invoiced_cents, icon: icon("grid") })}
