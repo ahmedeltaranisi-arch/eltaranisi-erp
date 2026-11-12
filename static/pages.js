@@ -179,22 +179,22 @@
             ${field("co-bank", L("بيانات البنك (تظهر أسفل الفاتورة)", "Bank details (invoice footer)"), st.bank_details)}
             ${field("co-terms", L("شروط السداد", "Payment terms"), st.invoice_terms)}
             ${field("co-footer", L("نص تذييل الفاتورة", "Invoice footer text"), st.invoice_footer)}
-            <div class="doc-toolbar" style="margin-top:6px">
+            <div class="doc-toolbar stack-xs">
               ${d.can_edit ? `<button class="btn btn-primary" id="co-save">${ESC(t("common.save"))}</button>` : ""}
               <button class="btn" data-export="/api/reports/pdf?kind=vendor-payables" data-name="sample.pdf">${icon("file")} ${ESC(L("معاينة ترويسة التقارير", "Preview report header"))}</button>
             </div>
-            <p class="field-hint" style="margin-top:10px">${ESC(L(
+            <p class="field-hint stack-sm">${ESC(L(
               "هذه البيانات تُستخدم في رأس الفاتورة الضريبية وملفات PDF/Excel وفي مستند الجاتوزية.",
               "These values appear on tax invoices, PDF/Excel exports and the e-invoice document."))}</p>`)}
         </div>
         ${can("settings.manage") ? card(L("قاعدة البيانات والنسخ الاحتياطي", "Database & backups"), `
           <div id="db-info" class="small" style="line-height:1.9">${ESC(L("جارٍ قراءة حالة قاعدة البيانات…", "Reading database status…"))}</div>
-          <div class="doc-toolbar" style="margin-top:10px">
+          <div class="doc-toolbar stack-sm">
             <button class="btn" id="db-backup">${icon("download")} ${ESC(L("تنزيل نسخة احتياطية", "Download backup"))}</button>
             <button class="btn" id="db-integrity">${icon("check")} ${ESC(L("فحص سلامة الدفاتر", "Check the books"))}</button>
           </div>
-          <div id="db-integrity-out" class="small" style="margin-top:8px"></div>
-          <p class="field-hint" style="margin-top:10px">${ESC(L(
+          <div id="db-integrity-out" class="small stack-sm"></div>
+          <p class="field-hint stack-sm">${ESC(L(
             "قاعدة البيانات السحابية على Cloudflare D1 تُحفظ خارج السيرفر، فتبقى البيانات بعد تسجيل الخروج وإعادة التشغيل. النسخة الاحتياطية تُنزَّل كملف يمكن استرجاعه بأمر واحد.",
             "The Cloudflare D1 cloud database lives outside the server, so data survives logout and restarts. The backup downloads as a file that can be restored with one command."))}</p>`) : ""}
         ${card(L("معاينة رأس الفاتورة", "Invoice header preview"), `
@@ -267,7 +267,7 @@
                   sub: `${ESC(t("common.total"))}: ${pct(k.net_profit_cents, k.revenue_cents || 1)}` })}
           ${kpi({ label: t("dash.cash"), value: k.cash_cents, icon: icon("banks") })}
         </div>
-        <div class="grid cols-4" style="margin-top:16px">
+        <div class="grid cols-4 stack">
           ${kpi({ label: t("dash.ap"), value: k.ap_cents, icon: icon("reports"), tone: "warn",
                   sub: `${ESC(t("payables.overdue"))}: ${fmtMoney(k.vendor_overdue_cents)}` })}
           ${kpi({ label: t("dash.ar"), value: k.ar_cents, icon: icon("chart"),
@@ -277,10 +277,10 @@
                   sub: `<a href="#/journal?status=review">${ESC(t("common.viewAll"))}</a>` })}
         </div>
 
-        <div class="split" style="margin-top:18px">
+        <div class="split stack">
           ${card(t("dash.series"), `
             ${barChart(d.series)}
-            <div class="legend" style="margin-top:8px">
+            <div class="legend stack-sm">
               <div><i style="background:var(--brand)"></i>${ESC(t("dash.revenue"))}</div>
               <div><i style="background:var(--accent)"></i>${ESC(t("dash.expenses"))}</div>
             </div>`, "", "")}
@@ -291,7 +291,7 @@
               <span><strong>${ESC(t("common.total"))}</strong></span><strong>${fmtMoney(k.cash_cents)}</strong></div>`)}
         </div>
 
-        <div class="split" style="margin-top:18px">
+        <div class="split stack">
           ${card(t("dash.topVendors"), renderTable([
             { key: "name_ar", label: t("common.vendor"), cls: "wrap", render: r => `<div>${ESC(APP.lang === "ar" ? r.name_ar : r.name_en)}<br><small class="muted">${ESC(r.code)}</small></div>` },
             { key: "outstanding_cents", label: t("payables.outstanding"), cls: "num", render: r => fmtMoney(r.outstanding_cents) },
@@ -306,7 +306,7 @@
           ], d.recent_entries, { compact: true }), `<a class="btn btn-sm btn-ghost" href="#/journal">${ESC(t("common.viewAll"))}</a>`)}
         </div>
 
-        <div class="split" style="margin-top:18px">
+        <div class="split stack">
           ${card(t("dash.arAging"), doughnut([
             { label: t("reports.bucket.current"), value: d.ar_aging.current },
             { label: t("reports.bucket.1_30"), value: d.ar_aging["1_30"] },
@@ -508,7 +508,7 @@
       actions.push(printBtn());
 
       view.innerHTML = `${pageHead("journal.details", "journal.subtitle", actions.join(""))}
-        <div class="grid cols-4" style="margin-bottom:16px">
+        <div class="grid cols-4 stack-bottom">
           ${kpi({ label: t("common.amount"), value: total, icon: icon("assets") })}
           ${kpi({ label: t("common.status"), value: statusBadge(e.status), icon: icon("pie"), raw: true })}
           ${kpi({ label: t("common.date"), value: fmtDate(e.entry_date), icon: icon("list"), raw: true })}
@@ -526,7 +526,7 @@
               <td class="num">${fmtMoney(data.lines.reduce((s, l) => s + l.debit_cents, 0))}</td>
               <td class="num">${fmtMoney(data.lines.reduce((s, l) => s + l.credit_cents, 0))}</td></tr>`
         }))}
-        <div class="split" style="margin-top:16px">
+        <div class="split stack">
             ${card(t("common.details"), `
               <div class="stat-line"><span>${ESC(t("journal.memo"))}</span><strong style="text-align:end">${ESC(e.memo)}</strong></div>
               <div class="stat-line"><span>${ESC(t("journal.createdBy"))}</span><strong>${e.created_by || "—"}</strong></div>
@@ -542,7 +542,7 @@
               <div class="stat-line"><span>2. ${ESC(t("status.review"))}</span><strong>${["review", "approved", "posted", "reversed"].includes(e.status) ? icon("check", "ico-sm") : "—"}</strong></div>
               <div class="stat-line"><span>3. ${ESC(t("status.approved"))}</span><strong>${["approved", "posted", "reversed"].includes(e.status) ? icon("check", "ico-sm") : "—"}</strong></div>
               <div class="stat-line"><span>4. ${ESC(t("status.posted"))}</span><strong>${["posted", "reversed"].includes(e.status) ? icon("check", "ico-sm") : "—"}</strong></div>
-              <p class="field-hint" style="margin-top:10px">${ESC(L("القيود التي تتجاوز 200,000 ج.م تحتاج اعتماد المدير المالي، ولا يمكن للمنشئ اعتماد قيده.",
+              <p class="field-hint stack-sm">${ESC(L("القيود التي تتجاوز 200,000 ج.م تحتاج اعتماد المدير المالي، ولا يمكن للمنشئ اعتماد قيده.",
                 "Entries above EGP 200,000 require Financial Manager approval; creators cannot approve their own entries."))}</p>
             `)}
         </div>`;
@@ -837,7 +837,7 @@
     if (can("sales.delete")) actions.push(deleteButton(`/api/sales-invoices/${id}`, `فاتورة المبيعات ${inv.invoice_no}`, `sales invoice ${inv.invoice_no}`, { delBack: "#/sales" }));
     actions.push(docToolbar("sales", id));
     view.innerHTML = `${pageHead(inv.invoice_no, "sales.subtitle", actions.join(""))}
-      <div class="grid cols-4" style="margin-bottom:16px">
+      <div class="grid cols-4 stack-bottom">
         ${kpi({ label: t("common.total"), value: inv.total_cents, icon: icon("assets") })}
         ${kpi({ label: t("common.paid"), value: inv.paid_cents, icon: icon("check"), tone: "ok" })}
         ${kpi({ label: t("common.remaining"), value: inv.total_cents - inv.paid_cents, icon: icon("pie"), tone: "warn" })}
@@ -857,7 +857,7 @@
             <td class="num" data-label="${ESC(t("common.tax"))}">${fmtMoney(inv.tax_cents)}</td>
             <td class="num" data-label="${ESC(t("common.total"))}">${fmtMoney(inv.total_cents)}</td></tr>`
       }))}
-      <div class="split" style="margin-top:16px">
+      <div class="split stack">
           ${card(t("common.details"), `
             <div class="stat-line"><span>${ESC(t("common.customer"))}</span><strong>${ESC(APP.lang === "ar" ? inv.customer_ar : inv.customer_en)}</strong></div>
             <div class="stat-line"><span>${ESC(t("sales.invoiceDate"))}</span><strong>${fmtDate(inv.invoice_date)}</strong></div>
@@ -1112,7 +1112,7 @@
     if (can("purchases.delete")) actions.push(deleteButton(`/api/purchase-invoices/${id}`, `فاتورة المشتريات ${inv.invoice_no}`, `purchase invoice ${inv.invoice_no}`, { delBack: "#/purchases" }));
     actions.push(docToolbar("purchase", id));
     view.innerHTML = `${pageHead(inv.invoice_no, "purchases.subtitle", actions.join(""))}
-      <div class="grid cols-4" style="margin-bottom:16px">
+      <div class="grid cols-4 stack-bottom">
         ${kpi({ label: t("common.total"), value: inv.total_cents, icon: icon("assets") })}
         ${kpi({ label: t("common.paid"), value: inv.paid_cents, icon: icon("check"), tone: "ok" })}
         ${kpi({ label: t("common.remaining"), value: inv.total_cents - inv.paid_cents, icon: icon("pie"), tone: "warn" })}
@@ -1131,7 +1131,7 @@
             <td class="num">${fmtMoney(inv.subtotal_cents)}</td><td class="num">${fmtMoney(inv.tax_cents)}</td>
             <td class="num">${fmtMoney(inv.total_cents)}</td></tr>`
       }))}
-      <div style="margin-top:16px">
+      <div class="stack">
         ${card(t("common.details"), `
           <div class="stat-line"><span>${ESC(t("common.vendor"))}</span><strong>${ESC(APP.lang === "ar" ? inv.vendor_ar : inv.vendor_en)}</strong></div>
           <div class="stat-line"><span>${ESC(t("purchases.supplierRef"))}</span><strong>${ESC(inv.supplier_ref || "—")}</strong></div>
@@ -1177,7 +1177,7 @@
                     `${r.payment_type === "receipt" ? "سند التحصيل" : "سند الدفع"} ${r.payment_no}`,
                     `${r.payment_type === "receipt" ? "receipt" : "payment"} ${r.payment_no}`)
                 : "" }` },
-        ], data.payments))}`;
+        ], data.payments, { empty: t("empty.payments") }))}`;
       if (can("payments.create")) $("#new-pay").onclick = () => PAGES.payments.newVoucher("receipt");
     },
 
@@ -1284,7 +1284,7 @@
             <div class="field"><span>${ESC(t("common.amount"))} *</span><input id="pv-amount" type="number" step="0.01" min="0.01" value="${preset.amount ? preset.amount.toFixed(2) : ""}"/></div>
             <div class="field"><span>${ESC(t("common.notes"))}</span><input id="pv-notes"/></div>
           </div>
-          <div class="section-title" style="margin-top:6px"><span>${ESC(t("payments.allocate"))}</span><span class="line"></span></div>
+          <div class="section-title"><span>${ESC(t("payments.allocate"))}</span><span class="line"></span></div>
           <div class="table-wrap" style="border:1px solid var(--border);border-radius:12px;max-height:250px;overflow:auto">
             <table class="data compact" id="pv-alloc">
               <thead><tr><th></th><th>${ESC(t("common.invoice"))}</th><th>${ESC(t("common.date"))}</th>
@@ -1437,8 +1437,8 @@
           <div class="stat-line"><span>${ESC(t("debt.paid"))}</span><strong>${fmtMoney(T.paid_cents)}</strong></div>
           <div class="stat-line"><span>${ESC(t("debt.advance"))}</span><strong>${fmtMoney(T.advance_cents)}</strong></div>
           <div class="stat-line"><span>${ESC(t("debt.net"))}</span><strong>${fmtMoney(T.net_cents)}</strong></div>
-          <p class="field-hint" style="margin-top:8px">${ESC(t("debt.advanceHint"))}</p>
-          <p class="field-hint" style="margin-top:8px">${ESC(L(
+          <p class="field-hint stack-sm">${ESC(t("debt.advanceHint"))}</p>
+          <p class="field-hint stack-sm">${ESC(L(
             "كل سطر مستحق يُرحَّل تلقائيًا: مدين تكلفة الخدمة / دائن الموردون. وكل سداد: مدين الموردون / دائن الصندوق أو البنك.",
             "Every due line posts automatically: Dr cost of service / Cr trade payables. Every settlement: Dr payables / Cr cash or bank."))}</p>`)}
       `;
@@ -1643,7 +1643,7 @@
           ${can("debt.delete") ? deleteButton(`/api/debt/accounts/${a.id}`, `حساب المديونية ${a.name_ar}`,
             `debt account ${a.name_en || a.name_ar}`, { delBack: "#/debt" }) : ""}
         </div>`)}
-      <div class="card" style="margin-bottom:16px">
+      <div class="card stack-bottom">
         <div class="card-body" style="display:flex;flex-wrap:wrap;gap:22px;align-items:center;justify-content:space-between">
           <div>
             <div class="small muted">${ESC(t("debt.account"))}</div>
@@ -1828,7 +1828,7 @@
           ${kpi({ label: t("payables.invoiced"), value: T.invoiced_cents, icon: icon("grid") })}
           ${kpi({ label: t("payables.paid"), value: T.paid_cents, icon: icon("check"), tone: "ok" })}
         </div>
-        <div class="split" style="margin-top:16px">
+        <div class="split stack">
           ${card(t("payables.aging"), doughnut([
             { label: t("reports.bucket.current"), value: data.aging.current },
             { label: t("reports.bucket.1_30"), value: data.aging["1_30"] },
@@ -1851,7 +1851,7 @@
                   .sort((a, b) => a.next_due_date.localeCompare(b.next_due_date))[0];
                 return soonest ? fmtDate(soonest.next_due_date) : "—";
               })()}</strong></div>
-            <p class="field-hint" style="margin-top:8px">${T.reconciles
+            <p class="field-hint stack-sm">${T.reconciles
               ? ESC(L("مطابقة: رصيد الأستاذ + الدفعات غير المخصّصة = رصيد الموردين.",
                      "Reconciled: GL balance + unallocated payments = vendor subledger."))
               : `<span class="neg">${ESC(L("تعذّرت المطابقة — راجع الدفعات غير المخصّصة.",
@@ -1878,7 +1878,7 @@
             <td class="num">${fmtMoney(T.outstanding_cents)}</td><td class="num">${fmtMoney(T.overdue_cents)}</td>
             <td colspan="3"></td></tr>`
         }))}
-        <p class="field-hint" style="margin-top:10px">${ESC(L("ملاحظة: رصيد الأستاذ لكل مورد يساوي إجمالي الفواتير ناقص المدفوعات المرحّلة، ويمكن تتبعه حتى المستند الأصلي.",
+        <p class="field-hint stack-sm">${ESC(L("ملاحظة: رصيد الأستاذ لكل مورد يساوي إجمالي الفواتير ناقص المدفوعات المرحّلة، ويمكن تتبعه حتى المستند الأصلي.",
           "Note: each vendor's GL balance equals invoiced minus posted payments and is traceable to source documents."))}</p>`;
       $$("[data-stmt]", view).forEach(b => b.onclick = () => vendorStatement(Number(b.dataset.stmt)));
     }
@@ -1891,7 +1891,7 @@
     const paid = d.payments.reduce((s, p) => s + p.amount_cents, 0);
     openModal({
       title: `${ESC(v.code)} — ${ESC(APP.lang === "ar" ? v.name_ar : v.name_en)}`, wide: true,
-      body: `<div class="grid cols-3" style="margin-bottom:14px">
+      body: `<div class="grid cols-3 stack-bottom">
           ${kpi({ label: t("payables.invoiced"), value: invoiced, icon: icon("grid") })}
           ${kpi({ label: t("payables.paid"), value: paid, icon: icon("check"), tone: "ok" })}
           ${kpi({ label: t("payables.outstanding"), value: invoiced - paid, icon: icon("reports"), tone: "warn" })}
@@ -1905,14 +1905,14 @@
           { key: "paid_cents", label: t("common.paid"), cls: "num", render: r => fmtMoney(r.paid_cents) },
           { key: "remaining", label: t("common.remaining"), cls: "num", render: r => fmtMoney(r.total_cents - r.paid_cents) },
           { key: "status", label: t("common.status"), render: r => statusBadge(r.status) },
-        ], d.invoices, { compact: true })}
+        ], d.invoices, { compact: true, empty: t("empty.invoices") })}
         <h4 style="margin:16px 0 8px">${ESC(t("nav.payments"))}</h4>
         ${renderTable([
           { key: "payment_no", label: L("الرمز التعريفي", "Reference ID") },
           { key: "payment_date", label: t("common.date") },
           { key: "reference", label: t("common.description") },
           { key: "amount_cents", label: t("common.amount"), cls: "num", render: r => fmtMoney(r.amount_cents) },
-        ], d.payments, { compact: true })}`
+        ], d.payments, { compact: true, empty: t("empty.payments") })}`
     });
   }
 
@@ -1954,8 +1954,8 @@
           { key: "due_date", label: t("common.dueDate"), render: r => ESC(fmtDate(r.due_date)) },
           { key: "remaining_cents", label: t("common.remaining"), cls: "num", render: r => fmtMoney(r.remaining_cents) },
           { key: "days_overdue", label: t("reports.daysOverdue"), cls: "num", render: r => r.days_overdue > 0 ? `<span class="neg">${r.days_overdue}</span>` : "—" },
-          { key: "bucket", label: t("payables.aging"), render: r => `<span class="badge ${r.bucket === "current" ? "green" : r.bucket === "over_90" ? "red" : "amber"}">${ESC(t("reports.bucket." + r.bucket))}</span>` },
-        ], ag.items))}`;
+          { key: "bucket", label: t("reports.bucketHeader"), render: r => `<span class="badge ${r.bucket === "current" ? "green" : r.bucket === "over_90" ? "red" : "amber"}">${ESC(t("reports.bucket." + r.bucket))}</span>` },
+        ], ag.items, { empty: t("empty.filtered") }))}`;
     }
   };
 
@@ -1994,7 +1994,7 @@
               ${can("customers.delete")
                 ? deleteButton(`/api/customers/${r.id}`, `العميل «${r.name_ar}» (${r.code})`, `customer “${r.name_en}” (${r.code})`)
                 : "" }` },
-        ], data.customers))}`;
+        ], data.customers, { empty: t("empty.customers") }))}`;
       if (can("customers.create")) $("#new-cust").onclick = () => openForm({
         title: t("customers.new"),
         fields: [
@@ -2029,7 +2029,7 @@
                   title="${ESC(L("تعديل بيانات المورد والدفعات", "Edit vendor & payments"))}"
                   aria-label="${ESC(L("تعديل", "Edit"))}">${icon("edit")}</button>` : ""}
               ${can("vendors.delete") ? deleteButton(`/api/vendors/${r.id}`, `المورد «${r.name_ar}» (${r.code})`, `vendor “${r.name_en || r.name_ar}” (${r.code})`) : ""}` },
-        ], data.vendors))}`;
+        ], data.vendors, { empty: t("empty.vendors") }))}`;
       $$("[data-stmt]", view).forEach(b => b.onclick = () => vendorStatement(Number(b.dataset.stmt)));
       if (can("vendors.create")) $("#new-vend").onclick = () => openForm({
         title: t("vendors.new"),
@@ -2102,7 +2102,7 @@
       </div>
 
       <div id="vp-pane-pay" class="hidden">
-        <div class="grid cols-3" style="margin-bottom:14px">
+        <div class="grid cols-3 stack-bottom">
           ${kpi({ label: ar ? "إجمالي المستحق" : "Outstanding", value: d.outstanding_cents || 0, icon: icon("alert"), tone: (d.outstanding_cents || 0) > 0 ? "warn" : "ok" })}
           ${kpi({ label: ar ? "إجمالي المدفوع" : "Paid to date", value: d.paid_total_cents || 0, icon: icon("coins") })}
           ${kpi({ label: ar ? "عدد الدفعات" : "Payments", value: payRows.length, icon: icon("payments"), raw: true })}
@@ -2268,7 +2268,7 @@
           { key: "unit_cost_cents", label: t("inventory.unitCost"), cls: "num", render: r => fmtMoney(r.unit_cost_cents) },
           { key: "value_cents", label: t("common.total"), cls: "num", render: r => fmtMoney(r.value_cents) },
           { key: "ref_type", label: t("common.description"), render: r => ESC(r.ref_type || r.notes || "—") },
-        ], data.movements, { compact: true }))}`;
+        ], data.movements, { compact: true, empty: t("empty.movements") }))}`;
 
       if (can("inventory.manage")) $("#new-move").onclick = async () => {
         const [prods, meta] = await Promise.all([api("/api/products"), api("/api/meta")]);
@@ -2481,7 +2481,7 @@
               ])}
               ${deleteButton(`/api/assets/${r.id}`, `الأصل «${r.name_ar}» (${r.code})`, `asset “${r.name_en}” (${r.code})`)}`
               : "" },
-        ], data.assets))}
+        ], data.assets, { empty: t("empty.assets") }))}
         <div class="section-title"><span>${ESC(t("assets.runs"))}</span><span class="line"></span></div>
         ${card("", renderTable([
           { key: "run_no", label: L("الرمز التعريفي", "Reference ID") },
@@ -2569,7 +2569,7 @@
               ])}
               ${deleteButton(`/api/employees/${r.id}`, `الموظف «${r.name_ar}» (${r.code})`, `employee “${r.name_en}” (${r.code})`)}`
               : "" },
-        ], data.employees))}
+        ], data.employees, { empty: t("empty.employees") }))}
         <div class="section-title"><span>${ESC(t("payroll.runs"))}</span><span class="line"></span></div>
         ${card("", renderTable([
           { key: "run_no", label: L("الرمز التعريفي", "Reference ID") },
@@ -2880,7 +2880,7 @@
               { key: "remaining_cents", label: t("common.remaining"), cls: "num", render: r => fmtMoney(r.remaining_cents) },
               { key: "days_overdue", label: t("reports.daysOverdue"), cls: "num", render: r => r.days_overdue > 0 ? `<span class="neg">${r.days_overdue}</span>` : "—" },
               { key: "bucket", label: t("payables.aging"), render: r => `<span class="badge ${r.bucket === "current" ? "green" : r.bucket === "over_90" ? "red" : "amber"}">${ESC(t("reports.bucket." + r.bucket))}</span>` },
-            ], d.items))}`;
+            ], d.items, { empty: t("empty.filtered") }))}`;
         } else if (tab === "vendor-payables") {
           $("#r-export").innerHTML = reportExports("vendor-payables", { as_of: t2 });
           const d = await api(`/api/reports/vendor-payables?as_of=${t2}`);
@@ -3362,7 +3362,7 @@
           { key: "total_cents", label: t("common.total"), cls: "num", render: r => money2(r.total_cents) },
           { key: "remaining_cents", label: t("common.remaining"), cls: "num", render: r => money2(r.remaining_cents) },
           { key: "days_overdue", label: t("reports.daysOverdue"), cls: "num", render: r => r.days_overdue > 0 ? `<span class="neg">${r.days_overdue}</span>` : "—" },
-          { key: "bucket", label: t("payables.aging"), render: r => `<span class="badge ${r.bucket === "current" ? "green" : r.bucket === "over_90" ? "red" : "amber"}">${ESC(t("reports.bucket." + r.bucket))}</span>` },
+          { key: "bucket", label: t("reports.bucketHeader"), render: r => `<span class="badge ${r.bucket === "current" ? "green" : r.bucket === "over_90" ? "red" : "amber"}">${ESC(t("reports.bucket." + r.bucket))}</span>` },
         ], d.items || [], { empty: t("stat.empty") })}
       </div>`;
     },
@@ -3431,7 +3431,7 @@
         openModal({
           title: `${ESC(APP.lang === "ar" ? role.name_ar : role.name_en)} — ${ESC(t("users.permissions"))}`,
           body: `<div class="chip-row">${(perms.includes("*") ? ["*"] : perms).map(p => `<span class="chip active">${ESC(p)}</span>`).join("")}</div>
-                 <p class="field-hint" style="margin-top:12px">${ESC(L("الصلاحيات تُفرض على الخادم في كل طلب، وليست إخفاءً في الواجهة فقط.",
+                 <p class="field-hint stack-sm">${ESC(L("الصلاحيات تُفرض على الخادم في كل طلب، وليست إخفاءً في الواجهة فقط.",
                    "Permissions are enforced server-side on every request — not just hidden in the UI."))}</p>`
         });
       });
@@ -3616,7 +3616,9 @@
       else if (v && typeof v === "object") shown = auditSnapshot(v) || "—";
       else if (typeof v === "boolean") shown = v ? L("نعم", "Yes") : L("لا", "No");
       else shown = humanText(v);
-      return `<span class="audit-field" title="${ESC(label)}: ${ESC(shown)}"><i>${ESC(label)}</i>${ESC(String(shown).slice(0, 40))}</span>`;
+      // The value sits in its own element so a long filename or note can be
+      // clipped with an ellipsis instead of widening the cell.
+      return `<span class="audit-field" title="${ESC(label)}: ${ESC(shown)}"><i>${ESC(label)}</i><b>${ESC(String(shown))}</b></span>`;
     }).join("")}${entries.length > 4 ? `<span class="audit-field more">+${entries.length - 4}</span>` : ""}</span>`;
   }
 
@@ -3724,7 +3726,7 @@
                   ${icon(["cash", "scale", "payables", "wallet", "receivables", "reports"][i] || "sparkle")}
                   <span>${ESC(s)}</span></button>`).join("")}
               </div>
-              <p class="field-hint" style="margin-top:11px">${ESC(t("assistant.disclaimer"))}</p>`)}
+              <p class="field-hint stack-sm">${ESC(t("assistant.disclaimer"))}</p>`)}
             ${card(L("ما أستطيع قراءته", "What I can read"), `
               <div class="ai-scope">
                 ${[["wallet", "الخزينة والبنوك", "Cash & banks", "#/banks"],
@@ -3736,7 +3738,7 @@
                   .map(([ic, arL, enL, href]) => `<a class="ai-scope-item" href="${href}">
                     ${icon(ic)}<span>${ESC(ar ? arL : enL)}</span></a>`).join("")}
               </div>
-              <p class="field-hint" style="margin-top:10px">${ESC(L("كل إجابة محدودة بصلاحياتك على الخادم.", "Every answer is limited by your server-side permissions."))}</p>`)}
+              <p class="field-hint stack-sm">${ESC(L("كل إجابة محدودة بصلاحياتك على الخادم.", "Every answer is limited by your server-side permissions."))}</p>`)}
           </aside>
           <section class="ai-main">
             <div class="ai-thread" id="chat">

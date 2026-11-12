@@ -555,6 +555,21 @@ function card(title, bodyHtml, actionsHtml = "", extra = "") {
       <div class="card-body ${bodyHtml.startsWith("<div class=\"table-wrap\"") ? "tight" : ""}">${bodyHtml}</div>
     </div>`;
 }
+/* A full-page state: something did not load, or is not allowed. It carries a
+   title, the reason, a way forward and its own actions, so a blocked or broken
+   page tells the reader what happened instead of dumping a message. */
+function stateCard({ icon: iconName = "alert", tone = "", title, message, hint, action = "" }) {
+  return `<div class="card state-card ${tone}">
+      <div class="state-inner">
+        <span class="state-ico">${icon(iconName)}</span>
+        <h2 class="state-title">${ESC(title || "")}</h2>
+        ${message ? `<p class="state-msg">${ESC(message)}</p>` : ""}
+        ${hint ? `<p class="state-hint">${ESC(hint)}</p>` : ""}
+        ${action ? `<div class="state-actions">${action}</div>` : ""}
+      </div>
+    </div>`;
+}
+
 function kpi({ label, value, sub, icon, tone = "", raw = false }) {
   const body = `<div>
         <div class="kpi-label">${ESC(label)}</div>
@@ -958,8 +973,13 @@ async function render() {
   renderBottomNav();
   const page = PAGES[name] || PAGES.dashboard;
   if (!can("platform.manage") && page.perm && !can(page.perm)) {
-    view.innerHTML = `<div class="card"><div class="empty"><span class="big">🔒</span>
-        ${ESC(t("error.forbidden"))}</div></div>`;
+    view.innerHTML = stateCard({
+      icon: "lock", tone: "",
+      title: t("error.forbiddenTitle"),
+      message: t("error.forbidden"),
+      hint: t("error.forbiddenHint"),
+      action: `<a class="btn btn-sm" href="#/dashboard">${ESC(t("error.backHome"))}</a>`,
+    });
     return;
   }
   try {
@@ -967,8 +987,19 @@ async function render() {
     if (window.wireExports) window.wireExports(view);
   } catch (e) {
     console.error(e);
-    view.innerHTML = `<div class="card"><div class="empty"><span class="big">⚠️</span>
-        ${ESC(e.message || t("toast.error"))}</div></div>`;
+    // A page that fails to load used to print the raw exception into an empty
+    // div: no title, no explanation, nothing to click. Give it a real state —
+    // what happened, what to do, and a retry that re-renders this same route.
+    view.innerHTML = stateCard({
+      icon: "alert", tone: "danger",
+      title: t("error.failedTitle"),
+      message: e.message || t("toast.error"),
+      hint: t("error.failedHint"),
+      action: `<button class="btn btn-sm btn-primary" id="err-retry">${ESC(t("error.retry"))}</button>
+               <a class="btn btn-sm" href="#/dashboard">${ESC(t("error.backHome"))}</a>`,
+    });
+    const retry = view.querySelector("#err-retry");
+    if (retry) retry.onclick = () => render();
   }
 }
 

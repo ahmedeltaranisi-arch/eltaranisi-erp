@@ -305,6 +305,24 @@ table.data.compact tbody td { padding: 7px 12px; }
 .empty { padding: 46px 20px; text-align: center; color: var(--text-3); }
 .empty .big { font-size: 32px; display: block; margin-bottom: 8px; opacity: .5; }
 
+/* full-page states (blocked / failed to load) */
+.state-card { padding: 0; }
+.state-inner {
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+  gap: 0; padding: 56px 24px 60px; max-width: 620px; margin: 0 auto;
+}
+.state-ico {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 60px; height: 60px; border-radius: 18px; margin-bottom: 18px;
+  background: color-mix(in srgb, var(--brand) 10%, transparent); color: var(--brand);
+}
+.state-ico .ico-svg { width: 26px; height: 26px; }
+.state-card.danger .state-ico { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
+.state-title { font-size: 18px; font-weight: 800; margin: 0; letter-spacing: -.01em; }
+.state-msg { margin: 8px 0 0; font-size: 13.5px; color: var(--text-2); line-height: 1.75; }
+.state-hint { margin: 6px 0 0; font-size: 12.5px; color: var(--text-3); line-height: 1.8; }
+.state-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 22px; }
+
 /* badges */
 .badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; white-space: nowrap; }
 .badge.gray { background: var(--surface-3); color: var(--text-2); }
@@ -455,15 +473,22 @@ table.data.compact tbody td { padding: 7px 12px; }
    as "من 01/01/2026 · إلى 12/11/2026" instead of a quoted JSON blob. */
 .audit-fields{ display:inline-flex; flex-wrap:wrap; gap:4px 6px; align-items:center; max-width:min(38vw,420px); }
 .audit-field{
-  display:inline-flex; align-items:baseline; gap:4px; padding:1px 7px;
+  display:inline-flex; align-items:baseline; gap:4px; padding:1px 7px; min-width:0;
   border-radius:7px; background:var(--surface-2, #f2f4f7); border:1px solid var(--line, #e4e7ec);
-  font-size:11.5px; line-height:1.7; white-space:nowrap; max-width:100%;
+  font-size:11.5px; line-height:1.7; max-width:100%;
 }
 .audit-field i{
-  font-style:normal; color:var(--muted); font-size:10.5px;
+  font-style:normal; color:var(--muted); font-size:10.5px; flex:none;
   padding-inline-end:4px; border-inline-end:1px solid var(--line, #e4e7ec); margin-inline-end:1px;
 }
-.audit-field.more{ color:var(--muted); }
+/* A value can be any length (a note, a filename, a raw snapshot field). It must
+   clip inside its own chip instead of widening the cell or spilling over the
+   column next to it — the full text stays available in the row's tooltip. */
+.audit-field > b{
+  min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  font-weight:600; color:var(--text);
+}
+.audit-field.more{ color:var(--muted); white-space:nowrap; }
 
 /* Money inside dense data tables: smaller unit so wide tables fit without clipping */
 table.data .money { font-size: 12.5px; }
@@ -619,6 +644,16 @@ h1, h2, h3, h4 { letter-spacing: -.015em; }
 .card.hoverable:hover { box-shadow: var(--shadow); transform: translateY(-1px); }
 .grid { gap: 16px; }
 .grid.kpis { grid-template-columns: repeat(auto-fit, minmax(196px, 1fr)); }
+
+/* ---------- vertical rhythm between stacked blocks ----------
+   Pages used to write their own `style="margin-top:Npx"` on every grid and
+   split, which drifted to six different values (6/8/10/11/12/16/18). These
+   classes give the gap between major blocks a single scale that matches the
+   grid gap, so the spacing looks deliberate instead of accidental. */
+.stack        { margin-top: 16px; }   /* peer of the grid gap */
+.stack-bottom { margin-bottom: 16px; }
+.stack-sm     { margin-top: 10px; }   /* inside a card, under a heading */
+.stack-xs     { margin-top: 6px; }    /* tight label/hint pairing */
 .kpi { padding: 15px 16px; border-radius: var(--r-md); background: var(--surface); }
 .kpi .kpi-ico { width: 38px; height: 38px; border-radius: 12px; font-size: 16px; flex: 0 0 38px; }
 .kpi .kpi-value { font-size: clamp(15px, 1.15vw, 19px); letter-spacing: -.02em; }
