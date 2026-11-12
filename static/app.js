@@ -702,6 +702,13 @@ function applyLang() {
   localStorage.setItem("erp_lang", APP.lang);
   $$("[data-i18n]").forEach(el => { el.textContent = t(el.dataset.i18n); });
   $$("[data-i18n-ph]").forEach(el => { el.placeholder = t(el.dataset.i18nPh); });
+  // Icon-only controls lose their text when a label is hidden, so a translated
+  // tooltip doubles as the accessible name.
+  $$("[data-i18n-title]").forEach(el => {
+    const v = t(el.dataset.i18nTitle);
+    el.title = v;
+    el.setAttribute("aria-label", v);
+  });
   const lb = $("#lang-btn"); if (lb) lb.textContent = APP.lang === "ar" ? "EN" : "ع";
   const ll = $("#login-lang"); if (ll) ll.textContent = APP.lang === "ar" ? "EN" : "ع";
 }
@@ -787,6 +794,7 @@ const ICONS = {
   check: '<path d="M20 6L9 17l-5-5"/>',
   alert: '<path d="M12 3l9 16H3z"/><path d="M12 9v4M12 17h.01"/>',
   lock: '<rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>',
+  logout: '<path d="M9 21H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>',
   refresh: '<path d="M20 11a8 8 0 1 0-.6 4"/><path d="M20 5v6h-6"/>',
   grid: '<rect x="3" y="3" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="2"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="2"/>',
   list: '<path d="M8 6h13M8 12h13M8 18h13"/><path d="M3.5 6h.01M3.5 12h.01M3.5 18h.01"/>',

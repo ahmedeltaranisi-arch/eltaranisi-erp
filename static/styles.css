@@ -116,8 +116,11 @@ code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-si
 .sidebar.collapsed .brand-text,
 .sidebar.collapsed .nav-section-title,
 .sidebar.collapsed .nav-item > span:not(.ico),
-.sidebar.collapsed .sidebar-foot .userchip div:not(.avatar),
-.sidebar.collapsed .sidebar-foot .btn { display: none; }
+.sidebar.collapsed .sidebar-foot .userchip div:not(.avatar) { display: none; }
+/* Signing out must stay possible in the rail. Hide the wording, keep the
+   control — an icon-only button with a tooltip. */
+.sidebar.collapsed .sidebar-foot .btn { padding: 0; justify-content: center; width: 34px; height: 34px; margin: 0 auto; }
+.sidebar.collapsed .sidebar-foot .btn > span { display: none; }
 .sidebar.collapsed .nav-item { justify-content: center; padding: 11px 0; gap: 0; border-radius: 12px; }
 /* The header held a 40px logo and a 38px toggle side by side inside 76px, so
    the toggle was pushed out of the bar. Stack them instead. */
@@ -809,7 +812,10 @@ table.data tbody tr:focus-within { background: color-mix(in srgb, var(--brand) 7
   .sidebar.collapsed .sidebar-head { flex-direction: row; align-items: center; gap: 12px; padding: 14px; }
   .sidebar.collapsed .nav-item { justify-content: flex-start; gap: 12px; padding: 10px 12px; }
   .sidebar.collapsed .sidebar-foot .userchip div:not(.avatar) { display: block; }
-  .sidebar.collapsed .sidebar-foot .btn { display: flex; }
+  .sidebar.collapsed .sidebar-foot .btn {
+    width: 100%; height: auto; padding: 7px 12px; justify-content: center;
+  }
+  .sidebar.collapsed .sidebar-foot .btn > span { display: inline; }
   .sidebar.collapsed .nav-item.active::after { display: block; }
   .sidebar-toggle { display: none; }
   .grid.kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
