@@ -870,8 +870,13 @@ function renderNav() {
     let allowed = !item.perm || can(item.perm);
     if (item.id === "periods") allowed = canViewPeriods();
     if (!allowed) return "";
-    return `<button class="nav-item ${current === item.id ? "active" : ""}" data-route="${item.id}">
-        <span class="ico">${icon(item.icon)}</span><span>${ESC(t(item.label))}</span></button>`;
+    // The label is hidden when the sidebar collapses, so the name has to live
+    // on the button itself — otherwise a collapsed bar is a column of
+    // unlabelled glyphs, unreadable to a person and to a screen reader.
+    const name = ESC(t(item.label));
+    return `<button class="nav-item ${current === item.id ? "active" : ""}" data-route="${item.id}"
+        title="${name}" aria-label="${name}" aria-current="${current === item.id ? "page" : "false"}">
+        <span class="ico">${icon(item.icon)}</span><span>${name}</span></button>`;
   }).join("");
   $$(".nav-item", nav).forEach(b => b.onclick = () => { location.hash = "#/" + b.dataset.route; closeSidebar(); });
 }
@@ -1281,6 +1286,21 @@ async function bootApp() {
   }
 }
 
+/* Keep the collapse button honest: the chevron must point the way the sidebar
+   will move, and its tooltip must say what the click does. The old CSS looked
+   for `.app.sidebar-collapsed`, a class nothing ever set, so the arrow never
+   turned and the button kept saying "collapse" even when collapsed. */
+function syncSidebarToggle() {
+  const btn = $("#sidebar-toggle");
+  const sb = $("#sidebar");
+  if (!btn || !sb) return;
+  const collapsed = sb.classList.contains("collapsed");
+  btn.setAttribute("aria-expanded", String(!collapsed));
+  btn.setAttribute("aria-label", t(collapsed ? "nav.expandMenu" : "nav.collapseMenu"));
+  btn.setAttribute("title", t(collapsed ? "nav.expandMenu" : "nav.collapseMenu"));
+  btn.classList.toggle("is-collapsed", collapsed);
+}
+
 function setupGlobalHandlers() {
   $("#theme-btn").onclick = () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
   $("#lang-btn").onclick = () => setLang(APP.lang === "ar" ? "en" : "ar");
@@ -1301,10 +1321,12 @@ function setupGlobalHandlers() {
   $("#sidebar-toggle").onclick = () => {
     const collapsed = $("#sidebar").classList.toggle("collapsed");
     localStorage.setItem("erp_sidebar", collapsed ? "collapsed" : "open");
+    syncSidebarToggle();
   };
   if (localStorage.getItem("erp_sidebar") === "collapsed" && window.innerWidth > 900) {
     $("#sidebar").classList.add("collapsed");
   }
+  syncSidebarToggle();
   $("#menu-btn").onclick = () => { $("#sidebar").classList.add("open"); $("#scrim").classList.remove("hidden"); };
   $("#scrim").onclick = closeSidebar;
   window.addEventListener("hashchange", () => render());
