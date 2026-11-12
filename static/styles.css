@@ -3388,6 +3388,46 @@ td.num, th.num,
 }
 .rpt-bar-end .export-menu summary:hover { background: var(--surface-3); }
 
+/* The panel must grow back over the page, not off the screen.
+   `.rpt-bar-end` sits at the far inline-START edge of the bar (that is what
+   `margin-inline-start: auto` does), so anchoring the panel by its inline-start
+   edge pinned its RIGHT side to a button on the LEFT and the menu opened
+   leftward, past the viewport — only the right half of each row survived.
+   Pin the inline-END edge here instead: the panel's outer side ties to the
+   button and it grows inward. The general rule in the menu block keeps the
+   opposite anchoring for triggers on the other side of a column. */
+.rpt-bar-end .export-menu .menu {
+  inset-inline-start: auto;
+  inset-inline-end: 0;
+}
+
+/* Rows: a fixed three-column rhythm instead of text that shifts per row. The
+   old layout let each label set its own width, so the icons and the format
+   pills never lined up and the panel edge looked ragged. */
+.rpt-bar-end .export-menu .menu button {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  min-width: 0;
+}
+.rpt-bar-end .export-menu .menu .mi {
+  display: grid; place-items: center;
+  width: 18px; font-size: 13px; line-height: 1;
+}
+.rpt-bar-end .export-menu .menu .ml {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rpt-bar-end .export-menu .menu .hint {
+  white-space: nowrap; justify-self: end;
+  font-size: 9.6px; padding: 3px 6px; border-radius: 5px;
+  background: var(--surface-2); color: var(--text-3);
+}
+.rpt-bar-end .export-menu .menu button:hover .hint {
+  background: var(--brand-soft); color: var(--brand-ink);
+}
+
 /* ---- the report body ---- */
 .rpt-body { display: block; }
 .rpt-body > * + * { margin-top: 14px; }
