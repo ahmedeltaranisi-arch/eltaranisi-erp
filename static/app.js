@@ -12,6 +12,10 @@ const APP = {
 };
 window.APP = APP;
 window.PAGES = window.PAGES || {};
+// One-time tidy-up: the sidebar no longer collapses, so the preference that
+// remembered it would otherwise sit in storage forever. Nothing reads it —
+// this just stops an abandoned key from outliving the feature.
+try { localStorage.removeItem("erp_sidebar"); } catch (e) {}
 
 /* ------------------------------ helpers ------------------------------ */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -878,9 +882,9 @@ function renderNav() {
     let allowed = !item.perm || can(item.perm);
     if (item.id === "periods") allowed = canViewPeriods();
     if (!allowed) return "";
-    // The label is hidden when the sidebar collapses, so the name has to live
-    // on the button itself — otherwise a collapsed bar is a column of
-    // unlabelled glyphs, unreadable to a person and to a screen reader.
+    // Keep the name on the button itself as well as in the label. The visible
+    // text can be clipped in a narrow sidebar, and icon-only affordances need
+    // a name for anyone using a screen reader.
     const name = ESC(t(item.label));
     return `<button class="nav-item ${current === item.id ? "active" : ""}" data-route="${item.id}"
         title="${name}" aria-label="${name}" aria-current="${current === item.id ? "page" : "false"}">
@@ -1294,21 +1298,6 @@ async function bootApp() {
   }
 }
 
-/* Keep the collapse button honest: the chevron must point the way the sidebar
-   will move, and its tooltip must say what the click does. The old CSS looked
-   for `.app.sidebar-collapsed`, a class nothing ever set, so the arrow never
-   turned and the button kept saying "collapse" even when collapsed. */
-function syncSidebarToggle() {
-  const btn = $("#sidebar-toggle");
-  const sb = $("#sidebar");
-  if (!btn || !sb) return;
-  const collapsed = sb.classList.contains("collapsed");
-  btn.setAttribute("aria-expanded", String(!collapsed));
-  btn.setAttribute("aria-label", t(collapsed ? "nav.expandMenu" : "nav.collapseMenu"));
-  btn.setAttribute("title", t(collapsed ? "nav.expandMenu" : "nav.collapseMenu"));
-  btn.classList.toggle("is-collapsed", collapsed);
-}
-
 function setupGlobalHandlers() {
   $("#theme-btn").onclick = () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
   $("#lang-btn").onclick = () => setLang(APP.lang === "ar" ? "en" : "ar");
@@ -1326,15 +1315,6 @@ function setupGlobalHandlers() {
   document.addEventListener("click", (e) => {
     if (!e.target.closest(".dropdown")) { $$(".dropdown-panel").forEach(p => p.classList.add("hidden")); }
   });
-  $("#sidebar-toggle").onclick = () => {
-    const collapsed = $("#sidebar").classList.toggle("collapsed");
-    localStorage.setItem("erp_sidebar", collapsed ? "collapsed" : "open");
-    syncSidebarToggle();
-  };
-  if (localStorage.getItem("erp_sidebar") === "collapsed" && window.innerWidth > 900) {
-    $("#sidebar").classList.add("collapsed");
-  }
-  syncSidebarToggle();
   $("#menu-btn").onclick = () => { $("#sidebar").classList.add("open"); $("#scrim").classList.remove("hidden"); };
   $("#scrim").onclick = closeSidebar;
   window.addEventListener("hashchange", () => render());
