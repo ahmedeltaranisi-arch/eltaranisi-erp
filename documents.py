@@ -29,6 +29,32 @@ ACC = {
 }
 
 
+def _dmy(value) -> str:
+    """Dates written into a human-readable JE description are shown d/m/Y.
+
+    These descriptions are read by accountants on screen and in print, so an
+    ISO string ("2026-01-01 — 2026-01-31") is the wrong presentation there.
+    Storage and API payloads keep ISO; only the prose description is formatted.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, date):
+        return value.strftime("%d/%m/%Y")
+    text = str(value).strip()
+    try:
+        return date.fromisoformat(text[:10]).strftime("%d/%m/%Y")
+    except ValueError:
+        return text
+
+
+def _my(period) -> str:
+    """Payroll periods are stored "YYYY-MM"; descriptions show "MM/YYYY"."""
+    text = str(period or "").strip()
+    if len(text) >= 7 and text[4] == "-":
+        return f"{text[5:7]}/{text[0:4]}"
+    return text
+
+
 def _qty(qty_milli: int, price_cents: int) -> int:
     return int((Decimal(qty_milli) * Decimal(price_cents) / Decimal(1000)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
@@ -426,9 +452,9 @@ def depreciation_run(conn, user, company_id, period_start: str, period_end: str)
     exp_acc = account_id_by_code(conn, company_id, ACC["dep_expense"])
     accum_acc = account_id_by_code(conn, company_id, ACC["accum_dep"])
     je_lines = [{"account_id": exp_acc, "debit_cents": total, "credit_cents": 0,
-                 "description": f"إهلاك دوري {period_start} — {period_end}"},
+                 "description": f"إهلاك دوري {_dmy(period_start)} — {_dmy(period_end)}"},
                 {"account_id": accum_acc, "debit_cents": 0, "credit_cents": total,
-                 "description": f"مجمع إهلاك {period_start} — {period_end}"}]
+                 "description": f"مجمع إهلاك {_dmy(period_start)} — {_dmy(period_end)}"}]
     je_id = accounting.auto_post_entry(
         conn, user, company_id=company_id, entry_date=period_end,
         memo=f"إهلاك دوري {run_no}", lines=je_lines, entry_type="depreciation",
@@ -468,15 +494,15 @@ def payroll_run(conn, user, company_id, period: str) -> dict:
     run_id = cur.lastrowid
     je_lines = [
         {"account_id": account_id_by_code(conn, company_id, ACC["salary_expense"]),
-         "debit_cents": gross, "credit_cents": 0, "description": f"مسير رواتب {period}"},
+         "debit_cents": gross, "credit_cents": 0, "description": f"مسير رواتب {_my(period)}"},
         {"account_id": account_id_by_code(conn, company_id, ACC["deductions_payable"]),
-         "debit_cents": 0, "credit_cents": deductions, "description": f"استقطاعات {period}"},
+         "debit_cents": 0, "credit_cents": deductions, "description": f"استقطاعات {_my(period)}"},
         {"account_id": account_id_by_code(conn, company_id, ACC["payroll_payable"]),
-         "debit_cents": 0, "credit_cents": net, "description": f"صافي الرواتب {period}"},
+         "debit_cents": 0, "credit_cents": net, "description": f"صافي الرواتب {_my(period)}"},
     ]
     je_id = accounting.auto_post_entry(
         conn, user, company_id=company_id, entry_date=period + "-28",
-        memo=f"مسير رواتب {period}", lines=je_lines, entry_type="payroll",
+        memo=f"مسير رواتب {_my(period)}", lines=je_lines, entry_type="payroll",
         source_type="payroll_run", source_id=run_id, idempotency_key=f"payroll:{run_id}")
     for e, g, d, n in lines:
         conn.execute(

@@ -74,6 +74,30 @@ function fmtDate(d) {
   return isoToDmy(String(d).slice(0, 10)) || String(d).slice(0, 10);
 }
 
+/* Timestamps carry a clock as well as a date ("2026-11-12 09:31:44"). Showing
+   the raw ISO string reads as machine output, so the date is localised and the
+   clock is kept — still LTR because a time must not be re-ordered by RTL. */
+function fmtDateTime(d) {
+  if (!d) return "—";
+  const s = String(d).trim();
+  const m = s.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/);
+  if (!m) return fmtDate(s);
+  return `${fmtDate(m[1])} — ${m[2]}`;
+}
+
+/* Free-text descriptions written by the server can embed ISO dates (a
+   depreciation memo such as "accumulated depreciation 2026-01-01 — 2026-01-31").
+   Those are prose the user reads, not data fields, so any ISO date inside them
+   is rewritten to the local short form while everything else is untouched.
+   Entries posted before this rule existed are corrected too. */
+function humanText(value) {
+  if (value === null || value === undefined) return "";
+  return String(value).replace(/\b(\d{4})-(\d{2})-(\d{2})\b/g, (all, y, m, d) => {
+    const out = isoToDmy(`${y}-${m}-${d}`);
+    return out || all;
+  });
+}
+
 /* --- date inputs: typing mask, validation and a native calendar popup ------ */
 (function wireDateInputs() {
   if (typeof document === "undefined" || !document.addEventListener) return;
