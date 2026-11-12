@@ -77,6 +77,21 @@ class DeliveryTest(unittest.TestCase):
         self.assertEqual(body, b"")
         self.assertEqual(hdrs2.get("etag"), etag)
 
+    def test_assets_are_revalidated_not_served_stale(self):
+        """A shipped fix must reach the browser on the next load.
+
+        Static filenames are not fingerprinted, so any freshness window is a
+        window where the browser happily renders the previous deploy. We were
+        serving `stale-while-revalidate=86400`, which kept a fixed stylesheet
+        looking broken for a day.
+        """
+        for asset in ("/styles.css", "/app.js", "/i18n.js", "/pages.js"):
+            _, hdrs, _ = self.req(asset, {"Accept-Encoding": "gzip"})
+            cc = hdrs.get("cache-control", "")
+            self.assertEqual(cc, "no-cache", f"{asset} may be served stale: {cc!r}")
+            self.assertNotIn("stale-while-revalidate", cc)
+            self.assertTrue(hdrs.get("etag"), f"{asset} needs an ETag to revalidate cheaply")
+
     def test_html_is_never_cached_hard(self):
         _, hdrs, _ = self.req("/index.html", {"Accept-Encoding": "gzip"})
         self.assertEqual(hdrs.get("cache-control"), "no-cache")

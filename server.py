@@ -3779,15 +3779,16 @@ class Handler(BaseHTTPRequestHandler):
         if ctype.startswith("text/") or ctype in ("application/javascript", "application/json"):
             ctype += "; charset=utf-8"
         asset = static_asset(target)
-        # The shell (index.html) must always be fresh so a deploy is picked up
-        # immediately; assets never change without a new deploy, so the browser
-        # keeps them for a week and revalidates cheaply afterwards.
-        # A short window plus stale-while-revalidate: while the cached copy is
-        # stale the browser still renders instantly and refreshes in the
-        # background, so a deploy is picked up without ever blocking a load.
-        # (Filenames are not hashed, so a long max-age would pin old code.)
-        cache = ("no-cache" if target.name == "index.html"
-                 else "public, max-age=300, stale-while-revalidate=86400")
+        # Nothing here is fingerprinted — /app.js and /styles.css keep the same
+        # name across deploys — so a cached copy is indistinguishable from the
+        # current one until it is revalidated. `stale-while-revalidate=86400`
+        # let a browser keep rendering day-old bytes for a full day after a
+        # deploy, which is exactly how a shipped stylesheet fix kept showing as
+        # the old blank sidebar. Serve `no-cache` everywhere: the browser may
+        # store the file, but it must ask before using it. The ETag below makes
+        # that question cost one 304 with no body, so the fresh copy is never in
+        # doubt and the bandwidth is still a fraction of a cold fetch.
+        cache = "no-cache"
         common = {
             "Cache-Control": cache,
             "ETag": asset["etag"],

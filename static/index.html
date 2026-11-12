@@ -101,12 +101,16 @@
           <strong data-i18n="app.name">ELTARANISI ERP</strong>
           <small id="company-name">—</small>
         </div>
-        <button class="icon-btn sidebar-toggle" id="sidebar-toggle" title="طي القائمة"><svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M14 6l-6 6 6 6"/></svg></button>
       </div>
       <nav class="nav" id="nav"></nav>
       <div class="sidebar-foot">
         <div class="userchip" id="userchip"></div>
-        <button class="btn btn-ghost btn-sm" id="logout-btn" data-i18n="nav.logout">تسجيل الخروج</button>
+        <button class="btn btn-ghost btn-sm" id="logout-btn" data-i18n-title="nav.logout"
+                title="تسجيل الخروج" aria-label="تسجيل الخروج">
+          <svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+               stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+          <span data-i18n="nav.logout">تسجيل الخروج</span>
+        </button>
       </div>
     </aside>
 
