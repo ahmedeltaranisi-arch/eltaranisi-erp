@@ -300,7 +300,7 @@
           ${card(t("dash.recent"), renderTable([
             { key: "entry_no", label: L("الرمز التعريفي", "Reference ID"), render: r => `<a href="#/journal/${r.id}">${ESC(r.entry_no)}</a>` },
             { key: "entry_date", label: t("common.date"), render: r => fmtDate(r.entry_date) },
-            { key: "memo", label: t("common.description"), cls: "wrap", render: r => `<span title="${ESC(r.memo)}">${ESC(r.memo.slice(0, 34))}${r.memo.length > 34 ? "…" : ""}</span>` },
+            { key: "memo", label: t("common.description"), cls: "wrap", render: r => `<span title="${ESC(humanText(r.memo))}">${ESC(humanText(r.memo).slice(0, 34))}${r.memo.length > 34 ? "…" : ""}</span>` },
             { key: "total_debit_cents", label: t("common.amount"), cls: "num", render: r => fmtMoney(r.total_debit_cents) },
             { key: "status", label: t("common.status"), render: r => statusBadge(r.status) },
           ], d.recent_entries, { compact: true }), `<a class="btn btn-sm btn-ghost" href="#/journal">${ESC(t("common.viewAll"))}</a>`)}
@@ -405,7 +405,7 @@
         ${renderTable([
           { key: "entry_date", label: t("common.date") },
           { key: "entry_no", label: L("الرمز التعريفي", "Reference ID") },
-          { key: "description", label: t("common.description") },
+          { key: "description", label: t("common.description"), render: r => ESC(humanText(r.description)) },
           { key: "debit_cents", label: t("common.debit"), cls: "num", render: r => r.debit_cents ? fmtMoney(r.debit_cents) : "" },
           { key: "credit_cents", label: t("common.credit"), cls: "num", render: r => r.credit_cents ? fmtMoney(r.credit_cents) : "" },
           { key: "running_cents", label: t("common.balance"), cls: "num", render: r => fmtMoney(r.running_cents) },
@@ -447,7 +447,7 @@
         $("#je-table").innerHTML = renderTable([
           { key: "entry_no", label: L("الرمز التعريفي", "Reference ID"), render: r => `<a href="#/journal/${r.id}"><strong>${ESC(r.entry_no)}</strong></a>` },
           { key: "entry_date", label: t("common.date"), render: r => fmtDate(r.entry_date) },
-          { key: "memo", label: t("common.description"), cls: "wrap", render: r => `<span title="${ESC(r.memo)}">${ESC(r.memo.slice(0, 52))}${r.memo.length > 52 ? "…" : ""}</span>` },
+          { key: "memo", label: t("common.description"), cls: "wrap", render: r => `<span title="${ESC(humanText(r.memo))}">${ESC(humanText(r.memo).slice(0, 52))}${r.memo.length > 52 ? "…" : ""}</span>` },
           { key: "entry_type", label: t("journal.type"), render: r => `<span class="pill">${ESC(r.entry_type)}</span>` },
           { key: "total_debit_cents", label: t("common.debit"), cls: "num", render: r => fmtMoney(r.total_debit_cents) },
           { key: "status", label: t("common.status"), render: r => statusBadge(r.status) },
@@ -518,7 +518,7 @@
             { key: "line_no", label: L("الرمز التعريفي", "Reference ID"), cls: "num" },
             { key: "account_code", label: t("common.code"), render: r => `<span class="mono">${ESC(r.account_code)}</span>` },
             { key: "account_ar", label: t("common.account"), render: r => ESC(APP.lang === "ar" ? r.account_ar : r.account_en) },
-            { key: "description", label: t("common.description") },
+            { key: "description", label: t("common.description"), render: r => ESC(humanText(r.description)) },
             { key: "debit_cents", label: t("common.debit"), cls: "num", render: r => r.debit_cents ? fmtMoney(r.debit_cents) : "" },
             { key: "credit_cents", label: t("common.credit"), cls: "num", render: r => r.credit_cents ? fmtMoney(r.credit_cents) : "" },
           ], data.lines, {
@@ -1843,7 +1843,14 @@
             <div class="stat-line"><span>${ESC(L("عدد الموردين المدينة", "Vendors with balance"))}</span>
               <strong>${data.vendors.filter(v => v.outstanding_cents > 0).length}</strong></div>
             <div class="stat-line"><span>${ESC(L("أقرب استحقاق", "Earliest due"))}</span>
-              <strong>${(data.vendors.filter(v => v.next_due_date).sort((a, b) => a.next_due_date.localeCompare(b.next_due_date))[0] || {}).next_due_date || "—"}</strong></div>
+              <strong>${(() => {
+                /* this printed the ISO string straight from the API, so the one
+                   date on the page the user cares most about was the only one
+                   in 2026-08-26 form. */
+                const soonest = data.vendors.filter(v => v.next_due_date)
+                  .sort((a, b) => a.next_due_date.localeCompare(b.next_due_date))[0];
+                return soonest ? fmtDate(soonest.next_due_date) : "—";
+              })()}</strong></div>
             <p class="field-hint" style="margin-top:8px">${T.reconciles
               ? ESC(L("مطابقة: رصيد الأستاذ + الدفعات غير المخصّصة = رصيد الموردين.",
                      "Reconciled: GL balance + unallocated payments = vendor subledger."))
@@ -1893,7 +1900,7 @@
         ${renderTable([
           { key: "invoice_no", label: L("الرمز التعريفي", "Reference ID") },
           { key: "invoice_date", label: t("common.date") },
-          { key: "due_date", label: t("common.dueDate") },
+          { key: "due_date", label: t("common.dueDate"), render: r => ESC(fmtDate(r.due_date)) },
           { key: "total_cents", label: t("common.total"), cls: "num", render: r => fmtMoney(r.total_cents) },
           { key: "paid_cents", label: t("common.paid"), cls: "num", render: r => fmtMoney(r.paid_cents) },
           { key: "remaining", label: t("common.remaining"), cls: "num", render: r => fmtMoney(r.total_cents - r.paid_cents) },
@@ -1944,7 +1951,7 @@
         ${card("", renderTable([
           { key: "invoice_no", label: L("الرمز التعريفي", "Reference ID") },
           { key: "party_ar", label: t("common.customer"), cls: "wrap" },
-          { key: "due_date", label: t("common.dueDate") },
+          { key: "due_date", label: t("common.dueDate"), render: r => ESC(fmtDate(r.due_date)) },
           { key: "remaining_cents", label: t("common.remaining"), cls: "num", render: r => fmtMoney(r.remaining_cents) },
           { key: "days_overdue", label: t("reports.daysOverdue"), cls: "num", render: r => r.days_overdue > 0 ? `<span class="neg">${r.days_overdue}</span>` : "—" },
           { key: "bucket", label: t("payables.aging"), render: r => `<span class="badge ${r.bucket === "current" ? "green" : r.bucket === "over_90" ? "red" : "amber"}">${ESC(t("reports.bucket." + r.bucket))}</span>` },
@@ -2252,7 +2259,7 @@
         ], stock))}
         <div class="section-title"><span>${ESC(t("inventory.movements"))}</span><span class="line"></span></div>
         ${card("", renderTable([
-          { key: "move_date", label: t("common.date") },
+          { key: "move_date", label: t("common.date"), render: r => ESC(fmtDate(r.move_date)) },
           { key: "sku", label: t("common.code") },
           { key: "product_ar", label: L("الصنف", "Product") },
           { key: "warehouse_ar", label: t("common.warehouse") },
@@ -2332,9 +2339,9 @@
         <div class="section-title"><span>${ESC(t("banks.transactions"))}</span><span class="line"></span>
           <span class="small muted">${unreconciled.length} ${ESC(t("banks.unreconciled"))}</span></div>
         ${card("", renderTable([
-          { key: "txn_date", label: t("common.date") },
+          { key: "txn_date", label: t("common.date"), render: r => ESC(fmtDate(r.txn_date)) },
           { key: "bank_name", label: t("common.account") },
-          { key: "description", label: t("common.description"), render: r => ESC(r.description) },
+          { key: "description", label: t("common.description"), render: r => ESC(humanText(r.description)) },
           { key: "statement_ref", label: L("مرجع", "Ref"), render: r => ESC(r.statement_ref || "—") },
           { key: "debit_cents", label: t("common.debit"), cls: "num", render: r => r.debit_cents ? fmtMoney(r.debit_cents) : "" },
           { key: "credit_cents", label: t("common.credit"), cls: "num", render: r => r.credit_cents ? fmtMoney(r.credit_cents) : "" },
@@ -2789,7 +2796,7 @@
         if (tab === "trial-balance") {
           $("#r-export").innerHTML = reportExports("trial-balance", { from: f, to: t2 });
           const d = await api(`/api/reports/trial-balance?from=${f}&to=${t2}`);
-          body.innerHTML = `${card(`${t("reports.trialBalance")} — ${f} → ${t2}`, renderTable([
+          body.innerHTML = `${card(`${t("reports.trialBalance")} — ${fmtDate(f)} → ${fmtDate(t2)}`, renderTable([
             { key: "code", label: t("common.code") },
             { key: "name_ar", label: t("common.account"), render: r => ESC(APP.lang === "ar" ? r.name_ar : r.name_en) },
             { key: "opening", label: t("reports.opening"), cls: "num", render: r => fmtMoney(r.opening) },
@@ -2843,7 +2850,7 @@
           ${card(t("reports.cashFlow"), renderTable([
             { key: "entry_date", label: t("common.date") },
             { key: "entry_no", label: L("الرمز التعريفي", "Reference ID") },
-            { key: "description", label: t("common.description") },
+            { key: "description", label: t("common.description"), render: r => ESC(humanText(r.description)) },
             { key: "d", label: t("common.debit"), cls: "num", render: r => fmtMoney(r.d) },
             { key: "c", label: t("common.credit"), cls: "num", render: r => fmtMoney(r.c) },
           ], d.rows, { compact: true }), `<span class="muted small">${ESC(L("الطريقة غير المباشرة — من حركات حسابات البنوك والصناديق", "Indirect view — from cash & bank GL movements"))}</span>`)}`;
@@ -2868,7 +2875,7 @@
               { key: "invoice_no", label: L("الرمز التعريفي", "Reference ID") },
               { key: "party_ar", label: kind === "sales" ? t("common.customer") : t("common.vendor") },
               { key: "invoice_date", label: t("common.date") },
-              { key: "due_date", label: t("common.dueDate") },
+              { key: "due_date", label: t("common.dueDate"), render: r => ESC(fmtDate(r.due_date)) },
               { key: "total_cents", label: t("common.total"), cls: "num", render: r => fmtMoney(r.total_cents) },
               { key: "remaining_cents", label: t("common.remaining"), cls: "num", render: r => fmtMoney(r.remaining_cents) },
               { key: "days_overdue", label: t("reports.daysOverdue"), cls: "num", render: r => r.days_overdue > 0 ? `<span class="neg">${r.days_overdue}</span>` : "—" },
@@ -3044,6 +3051,12 @@
       if (isPoint) { $from.closest(".field").style.display = "none"; }
       const body = $("#stmt-body");
 
+      /* The router can replace #view while a statement request is still in
+         flight (switching statement kind, or any other navigation). Writing
+         into detached nodes then throws "Cannot set properties of null", so
+         every async step below re-checks that this render is still mounted. */
+      const alive = () => body.isConnected && $("#st-exports") !== null;
+
       const load = async () => {
         const f = dateVal($from.value) || from;
         const t2 = dateVal($to.value) || to;
@@ -3051,6 +3064,7 @@
         if ($cmp.checked && kind === "income-statement") params.set("compare", "1");
         body.innerHTML = `<div class="skeleton"></div><div class="skeleton"></div>`;
         const res = await api(`/api/statements/${kind}?${params.toString()}`);
+        if (!alive()) return;
         $("#st-exports").innerHTML = `
           <details class="export-menu"><summary>${icon("download")} ${ESC(L("تصدير", "Export"))} <span class="caret">${icon("chevron")}</span></summary>
             <div class="menu">
@@ -3070,6 +3084,7 @@
             `${kind}-${f}_${t2}.${fmt}`);
         }
       });
+        if (!alive()) return;
         body.innerHTML = this.renderDoc(res);
         wireStmtInteractions(body);
         wireExports(body);
@@ -3107,7 +3122,7 @@
       const cogs = S.cost_of_sales || { lines: [], total_cents: 0 };
       const opex = (S.operating_expenses || []);
       const ar = (x) => (APP.lang === "ar" ? x.name_ar : (x.name_en || x.name_ar));
-      const line = (l, lvl = 1) => stmtRow(`${l.code} — ${ESC(ar(l))}`, money2(l.amount_cents), { level: lvl });
+      const line = (l, lvl = 1) => stmtRow(`${l.code} — ${ar(l)}`, money2(l.amount_cents), { level: lvl });
       const opexRows = opex.map(sec => `
         <div class="stmt-subsection">${ESC(APP.lang === "ar" ? sec.name_ar : sec.name_en)}</div>
         ${sec.lines.map(l => line(l, 2)).join("")}
@@ -3204,7 +3219,7 @@
         ${renderTable([
           { key: "entry_date", label: t("common.date"), render: r => fmtDate(r.entry_date) },
           { key: "entry_no", label: t("stat.entry") },
-          { key: "memo", label: t("common.description"), cls: "wrap" },
+          { key: "memo", label: t("common.description"), cls: "wrap", render: r => ESC(humanText(r.memo)) },
           { key: "activity", label: t("stat.activity"), render: r => `<span class="pill">${ESC(t("stat." + r.activity))}</span>` },
           { key: "counter_account", label: t("stat.counterAccount"), cls: "wrap" },
           { key: "amount_cents", label: t("common.amount"), cls: "num", render: r => money2(r.amount_cents) },
@@ -3245,7 +3260,7 @@
         { label: t("stat.totalCredits"), value: d.totals.period_credit },
         { label: t("stat.balanced"), value: d.balanced ? (APP.lang === "ar" ? "نعم" : "Yes") : (APP.lang === "ar" ? "لا" : "No"),
           raw: true, tone: d.balanced ? "ok" : "danger" },
-        { label: t("common.accounts") || t("stat.account"), value: d.rows.length, raw: true },
+        { label: t("stat.account"), value: d.rows.length, raw: true },
       ])}
       <div class="stmt-sheet">
         ${renderTable([
@@ -3269,7 +3284,7 @@
     doc_tb_balance_sheet(d) {
       const col = (rows, label, total) => `<div class="stmt-sheet">
         <div class="stmt-section-head">${ESC(label)}</div>
-        ${rows.map(l => stmtRow(`${l.code} — ${ESC(APP.lang === "ar" ? l.name_ar : (l.name_en || l.name_ar))}`, money2(l.amount_cents), { level: 1 })).join("")}
+        ${rows.map(l => stmtRow(`${l.code} — ${APP.lang === "ar" ? l.name_ar : (l.name_en || l.name_ar)}`, money2(l.amount_cents), { level: 1 })).join("")}
         ${stmtRow(t("common.total"), money2(total), { total: true, strong: true })}
       </div>`;
       return `${stmtKpis([
@@ -3308,7 +3323,7 @@
           ${renderTable([
             { key: "entry_date", label: t("common.date"), render: r => fmtDate(r.entry_date) },
             { key: "entry_no", label: t("stat.entry") },
-            { key: "description", label: t("common.description"), cls: "wrap" },
+            { key: "description", label: t("common.description"), cls: "wrap", render: r => ESC(humanText(r.description)) },
             { key: "debit_cents", label: t("common.debit"), cls: "num", render: r => r.debit_cents ? money2(r.debit_cents) : "—" },
             { key: "credit_cents", label: t("common.credit"), cls: "num", render: r => r.credit_cents ? money2(r.credit_cents) : "—" },
             { key: "running_cents", label: t("reports.closing"), cls: "num", render: r => money2(r.running_cents) },
@@ -3323,7 +3338,7 @@
         ${renderTable([
           { key: "entry_date", label: t("common.date"), render: r => fmtDate(r.entry_date) },
           { key: "entry_no", label: t("stat.entry"), render: r => `<a href="#/journal/${r.id}">${ESC(r.entry_no)}</a>` },
-          { key: "memo", label: t("common.description"), cls: "wrap" },
+          { key: "memo", label: t("common.description"), cls: "wrap", render: r => ESC(humanText(r.memo)) },
           { key: "lines", label: L("عدد البنود", "Lines"), cls: "num", render: r => r.lines.length },
           { key: "total_debit_cents", label: t("common.amount"), cls: "num", render: r => money2(r.total_debit_cents) },
         ], d.entries, { compact: true, empty: t("stat.empty") })}
@@ -3398,7 +3413,7 @@
           { key: "username", label: t("users.username"), render: r => `<strong>${ESC(r.username)}</strong>` },
           { key: "full_name_ar", label: t("common.name"), render: r => `${ESC(APP.lang === "ar" ? r.full_name_ar : r.full_name_en)}<br><small class="muted">${ESC(r.email || "")}</small>` },
           { key: "role_code", label: t("users.role"), render: r => `<span class="badge violet">${ESC(APP.lang === "ar" ? r.role_ar : r.role_en)}</span>` },
-          { key: "last_login_at", label: t("users.lastLogin"), render: r => r.last_login_at ? `<span dir="ltr">${ESC(r.last_login_at)}</span>` : "—" },
+          { key: "last_login_at", label: t("users.lastLogin"), render: r => r.last_login_at ? `<span dir="ltr">${ESC(fmtDateTime(r.last_login_at))}</span>` : "—" },
           { key: "is_active", label: t("common.status"), render: r => statusBadge(r.is_active ? "active" : "inactive") },
           { key: "act", cls: "act", label: t("common.actions"), render: r => `<button class="btn btn-sm btn-ghost" data-perm="${r.role_code}">${ESC(t("users.permissions"))}</button>` },
         ], data.users))}
@@ -3485,6 +3500,126 @@
   /* ==================================================================
      AUDIT LOG
      ================================================================== */
+  /* Audit log actions arrive as stable machine codes ("sales_invoice.post").
+     They are shown in the reader's language while the code stays available as
+     the tooltip, so nothing is lost for anyone debugging. Unknown codes fall
+     back to a readable form of the code itself rather than disappearing. */
+  const AUDIT_ACTION_AR = {
+    auth: { login: "تسجيل دخول", locked: "حساب مقفل", change_password: "تغيير كلمة المرور" },
+    users: { create: "إضافة مستخدم", update: "تعديل مستخدم" },
+    accounts: { create: "إضافة حساب", update: "تعديل حساب", delete: "حذف حساب" },
+    journal: { create: "إنشاء قيد", update: "تعديل قيد", submit: "إرسال قيد للمراجعة", review: "مراجعة قيد",
+               approve: "اعتماد قيد", reject: "رفض قيد", post: "ترحيل قيد", reverse: "عكس قيد" },
+    journal_entry: { update: "تعديل قيد", delete: "حذف قيد" },
+    sales_invoice: { create: "إنشاء فاتورة بيع", update: "تعديل فاتورة بيع", delete: "حذف فاتورة بيع",
+                     post: "ترحيل فاتورة بيع", pdf: "تصدير فاتورة بيع PDF", xlsx: "تصدير فاتورة بيع Excel" },
+    purchase_invoice: { create: "إنشاء فاتورة شراء", update: "تعديل فاتورة شراء", delete: "حذف فاتورة شراء",
+                        post: "ترحيل فاتورة شراء", pdf: "تصدير فاتورة شراء PDF", xlsx: "تصدير فاتورة شراء Excel" },
+    payment: { post: "ترحيل دفعة", unpost: "إلغاء ترحيل دفعة", update: "تعديل دفعة", delete: "حذف دفعة" },
+    reports: { statement: "عرض قائمة مالية", export: "تصدير تقرير", pdf: "تصدير PDF", xlsx: "تصدير Excel" },
+    period: { close: "إقفال فترة مالية", reopen: "إعادة فتح فترة مالية" },
+    settings: { company: "تعديل بيانات الشركة" },
+    admin: { backup: "نسخة احتياطية", integrity: "فحص سلامة البيانات" },
+    debt_account: { create: "إضافة حساب مديونية", update: "تعديل حساب مديونية", delete: "حذف حساب مديونية" },
+    debt_item: { create: "إضافة بند مديونية", update: "تعديل بند مديونية", delete: "حذف بند مديونية" },
+    debt_payment: { create: "إضافة سداد", update: "تعديل سداد", delete: "حذف سداد" },
+    debt_invoices: { pdf: "تصدير فواتير المديونية PDF", xlsx: "تصدير فواتير المديونية Excel" },
+    debt_statement: { pdf: "تصدير كشف مديونية PDF", xlsx: "تصدير كشف مديونية Excel" },
+    debt_summary: { pdf: "تصدير ملخص مديونية PDF", xlsx: "تصدير ملخص مديونية Excel" },
+    bank_txn: { create: "إضافة حركة بنكية", update: "تعديل حركة بنكية", delete: "حذف حركة بنكية",
+                reconcile: "مطابقة حركة بنكية", unreconcile: "إلغاء مطابقة حركة" },
+    bank_account: { create: "إضافة حساب بنكي", delete: "حذف حساب بنكي" },
+    bank_transaction: { update: "تعديل حركة بنكية", delete: "حذف حركة بنكية" },
+    inventory: { move: "حركة مخزون" },
+    stock_movement: { delete: "حذف حركة مخزون" },
+    customers: { create: "إضافة عميل" },
+    vendors: { create: "إضافة مورد" },
+    employees: { create: "إضافة موظف" },
+    employee: { delete: "حذف موظف" },
+    products: { create: "إضافة صنف" },
+    product: { delete: "حذف صنف" },
+    asset: { delete: "حذف أصل ثابت" },
+    assets: { create: "إضافة أصل ثابت", depreciation: "تشغيل إهلاك" },
+    allowance: { save: "حفظ بدل", create: "إضافة بدل", delete: "حذف بدل", import: "استيراد بدلات",
+                 post: "ترحيل بدلات", pdf: "تصدير بدلات PDF", xlsx: "تصدير بدلات Excel",
+                 person: "إضافة مستحق بدل", window: "تعديل نافذة البدل" },
+    "allowance.person": { active: "تغيير حالة مستحق بدل" },
+    budget: { update: "تعديل موازنة", delete: "حذف موازنة" },
+    budgets: { upsert: "حفظ موازنة" },
+    payroll: { post: "ترحيل مرتبات" },
+    einvoice: { issue: "إصدار فاتورة إلكترونية" },
+    assistant: { ask: "سؤال للمساعد الذكي" },
+    system: { seed: "تهيئة بيانات تجريبية" },
+  };
+  /* Codes carrying more than one dot cannot be split at the last one. */
+  const AUDIT_ACTION_EXACT_AR = {
+    "admin.backup.server": "نسخة احتياطية على الخادم",
+    "allowance.person.active": "تغيير حالة مستحق بدل",
+  };
+
+  function auditActionLabel(code) {
+    const key = String(code || "");
+    const cut = key.lastIndexOf(".");
+    const head = cut < 0 ? "" : key.slice(0, cut);
+    const verb = cut < 0 ? key : key.slice(cut + 1);
+    if (APP.lang === "ar") {
+      if (AUDIT_ACTION_EXACT_AR[key]) return AUDIT_ACTION_EXACT_AR[key];
+      const node = AUDIT_ACTION_AR[head];
+      const hit = node && Object.prototype.hasOwnProperty.call(node, verb) ? node[verb] : null;
+      if (hit) return hit;
+      return key.replace(/[._]/g, " ");
+    }
+    const words = key.replace(/[._]/g, " ").trim();
+    return words ? words.charAt(0).toUpperCase() + words.slice(1) : "—";
+  }
+
+  /* Audit "details" is a JSON blob of machine fields. Printing it verbatim
+     ("{"from": "2026-01-01", "to": "2026-11-12"}") is data, not a reading
+     experience — so known fields get a label and a humanised value while any
+     unknown field still shows through with its raw key. Some entries carry a
+     nested snapshot ({"before": {...}}) which is summarised by its document
+     number or name instead of collapsing to "[object Object]". */
+  const AUDIT_FIELD_AR = {
+    from: "من", to: "إلى", ip: "عنوان الشبكة", compare: "مقارنة", status: "الحالة",
+    username: "المستخدم", company_id: "الشركة", period: "الفترة", file: "الملف",
+    amount_cents: "المبلغ", reason: "السبب", kind: "النوع", path: "المسار",
+    before: "قبل", after: "بعد", invoice: "الفاتورة", payment: "الدفعة",
+    customer: "العميل", vendor: "المورد", employee: "الموظف", failed: "الفاشل",
+  };
+  /* Keys that identify a record to a human, best first. */
+  const AUDIT_SNAPSHOT_KEYS = ["invoice_no", "payment_no", "entry_no", "run_no", "code",
+    "name_ar", "name_en", "username", "title_ar", "description", "ref"];
+
+  function auditSnapshot(obj) {
+    for (const k of AUDIT_SNAPSHOT_KEYS) {
+      const v = obj[k];
+      if (v !== null && v !== undefined && v !== "" && typeof v !== "object") return String(v);
+    }
+    return "";
+  }
+
+  function auditDetails(raw) {
+    const text = String(raw || "").trim();
+    if (!text) return `<span class="muted">—</span>`;
+    let obj = null;
+    try { obj = JSON.parse(text); } catch (e) { obj = null; }
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) {
+      return `<span class="json-cell" dir="ltr" title="${ESC(text)}">${ESC(text.slice(0, 90))}</span>`;
+    }
+    const entries = Object.keys(obj).filter(k => obj[k] !== null && obj[k] !== "" && obj[k] !== undefined);
+    if (!entries.length) return `<span class="muted">—</span>`;
+    return `<span class="audit-fields" dir="ltr">${entries.slice(0, 4).map(k => {
+      const label = APP.lang === "ar" ? (AUDIT_FIELD_AR[k] || k) : k.replace(/_/g, " ");
+      const v = obj[k];
+      let shown;
+      if (Array.isArray(v)) shown = v.length ? `${v.length}` : "—";
+      else if (v && typeof v === "object") shown = auditSnapshot(v) || "—";
+      else if (typeof v === "boolean") shown = v ? L("نعم", "Yes") : L("لا", "No");
+      else shown = humanText(v);
+      return `<span class="audit-field" title="${ESC(label)}: ${ESC(shown)}"><i>${ESC(label)}</i>${ESC(String(shown).slice(0, 40))}</span>`;
+    }).join("")}${entries.length > 4 ? `<span class="audit-field more">+${entries.length - 4}</span>` : ""}</span>`;
+  }
+
   PAGES.audit = {
     perm: "audit.view",
     async render(view) {
@@ -3492,11 +3627,11 @@
       const data = await api("/api/audit-logs?limit=300");
       view.innerHTML = `${pageHead("audit.title", "audit.subtitle")}
         ${card("", renderTable([
-          { key: "created_at", label: t("audit.time"), render: r => `<span class="mono small" dir="ltr">${ESC(r.created_at)}</span>` },
+          { key: "created_at", label: t("audit.time"), render: r => `<span class="mono small" dir="ltr">${ESC(fmtDateTime(r.created_at))}</span>` },
           { key: "username", label: t("audit.user") },
-          { key: "action", label: t("audit.action"), render: r => `<span class="pill">${ESC(r.action)}</span>` },
+          { key: "action", label: t("audit.action"), render: r => `<span class="pill" title="${ESC(r.action)}">${ESC(auditActionLabel(r.action))}</span>` },
           { key: "entity", label: t("audit.entity"), render: r => `<span class="mono small" dir="ltr">${ESC(r.entity || "—")} #${r.entity_id ?? "—"}</span>` },
-          { key: "details", label: t("audit.details"), render: r => `<span class="json-cell" dir="ltr" title="${ESC(r.details || "")}">${ESC((r.details || "").replace(/\s+/g, " ").slice(0, 90) || "—")}</span>` },
+          { key: "details", label: t("audit.details"), render: r => auditDetails(r.details) },
           { key: "ip", label: "IP", render: r => ESC(r.ip || "—") },
         ], data.logs, { compact: true }))}`;
     }
