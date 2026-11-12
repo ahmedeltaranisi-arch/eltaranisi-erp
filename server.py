@@ -5,6 +5,8 @@ Run:  python3 server.py  →  http://0.0.0.0:8000
 from __future__ import annotations
 
 import csv
+import gzip
+import hashlib
 import io
 import json
 import threading
@@ -39,6 +41,98 @@ from security import (AuthError, PermissionError_, audit, has, issue_token, load
 EPHEMERAL_AUTH = os.environ.get("ERP_EPHEMERAL_AUTH", "").strip().lower() in ("1", "true", "yes", "on")
 
 STATIC_DIR = BASE_DIR / "static"
+
+# ---------------------------------------------------------------------------
+# Static asset compression
+# ---------------------------------------------------------------------------
+# The shell ships ~575 KB of JS/CSS. Served raw that is the single biggest
+# reason a fresh visit feels slow, so the browser gets a compressed copy
+# whenever it advertises support. Everything here is in-process (gzip via the
+# standard library, brotli only if the optional module happens to be present)
+# and cached per file so repeat requests never pay the cost twice.
+COMPRESSIBLE = {".js", ".css", ".html", ".json", ".svg", ".txt", ".webmanifest", ".map"}
+COMPRESS_MIN_BYTES = 1024
+_ASSET_CACHE = {}
+_ASSET_CACHE_LOCK = threading.Lock()
+
+try:  # optional: brotli is ~20% smaller than gzip when it is available
+    import brotli as _brotli  # type: ignore
+except Exception:  # pragma: no cover - absence is the normal case
+    _brotli = None
+
+
+def _accepts(header: str, encoding: str) -> bool:
+    """True when an Accept-Encoding header allows `encoding` (q=0 means no)."""
+    header = (header or "").lower()
+    best = None
+    for part in header.split(","):
+        name, _, params = part.strip().partition(";")
+        name = name.strip()
+        if name in (encoding, "*"):
+            q = 1.0
+            if "q=" in params:
+                try:
+                    q = float(params.split("q=")[1].split(";")[0].strip())
+                except ValueError:
+                    q = 0.0
+            if best is None or q > best:
+                best = q
+    return bool(best)
+
+
+def _variant_for(raw: bytes, suffix: str, encoding: str = ""):
+    """Return (body, encoding) for the strongest encoding the client accepts."""
+    accepts = [e.strip().lower() for e in suffix.split(",")]
+    # `br` and `gzip` may be qualified with q= values; honour an explicit refusal.
+    refuses = {e.split(";")[0].strip() for e in accepts if "q=0" in e.replace(" ", "")}
+    if _brotli is not None and _accepts(suffix, "br") and "br" not in refuses and len(raw) >= COMPRESS_MIN_BYTES:
+        br = _brotli.compress(raw, quality=5)
+        if len(br) < len(raw):
+            return br, "br"
+    if _accepts(suffix, "gzip") and "gzip" not in refuses:
+        gz = gzip.compress(raw, compresslevel=6, mtime=0)
+        if len(gz) < len(raw):
+            return gz, "gzip"
+    return raw, ""
+
+
+def static_asset(path: Path) -> dict:
+    """Return the bytes, ETag and compressed variants for one static file.
+
+    The cache is keyed on a hash of the *content*, not on mtime/size. File
+    timestamps have a coarse granularity, so two writes inside the same clock
+    tick can look identical while holding different bytes — which would serve a
+    stale asset. Hashing costs a fraction of a millisecond and makes the ETag
+    correct by definition: it changes exactly when the bytes do, so a browser
+    holding an old copy is told to refetch.
+    """
+    raw = path.read_bytes()
+    digest = hashlib.blake2b(raw, digest_size=16).hexdigest()
+    key = str(path)
+    with _ASSET_CACHE_LOCK:
+        hit = _ASSET_CACHE.get(key)
+        if hit and hit["digest"] == digest:
+            return hit
+    entry = {
+        "digest": digest,
+        "raw": raw,
+        "etag": '"%s"' % digest,
+        "variants": {},
+    }
+    if path.suffix.lower() in COMPRESSIBLE and len(raw) >= COMPRESS_MIN_BYTES:
+        # Both variants are built up front so any later request is a dict lookup.
+        for enc in ("gzip", "br"):
+            try:
+                body, got = _variant_for(raw, enc)
+            except Exception:
+                continue
+            if got:
+                entry["variants"][got] = body
+    with _ASSET_CACHE_LOCK:
+        _ASSET_CACHE[key] = entry
+    return entry
+
+
 def _pick_backup_dir() -> Path:
     """A writable place for database snapshots (serverless hosts are read-only
     except /tmp, so the directory is probed instead of assumed)."""
@@ -3486,11 +3580,26 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     # ---------------- helpers ----------------
-    def _send(self, status, payload, content_type="application/json; charset=utf-8", extra_headers=None):
+    def _send(self, status, payload, content_type="application/json; charset=utf-8",
+              extra_headers=None, compress=None):
         if isinstance(payload, (dict, list)):
             payload = j(payload)
         if isinstance(payload, str):
             payload = payload.encode("utf-8")
+        headers = dict(extra_headers or {})
+        # JSON API payloads are compressed on the fly: a single dashboard or
+        # audit response is several hundred KB of repeated field names, and a
+        # phone on a slow connection feels every byte. Static files pass
+        # compress=False because their variants are precomputed and cached.
+        if compress is None:
+            compress = (content_type.startswith("application/json")
+                        and "Content-Encoding" not in headers)
+        if compress and len(payload) >= COMPRESS_MIN_BYTES:
+            accepted = self.headers.get("Accept-Encoding", "")
+            if _accepts(accepted, "gzip"):
+                payload = gzip.compress(payload, compresslevel=6, mtime=0)
+                headers["Content-Encoding"] = "gzip"
+                headers.setdefault("Vary", "Accept-Encoding")
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(payload)))
@@ -3504,7 +3613,7 @@ class Handler(BaseHTTPRequestHandler):
                          "frame-ancestors 'self' https://*.e2b.app http://localhost:* http://127.0.0.1:*")
         # (both are kept deliberately: the older header is ignored by browsers that
         # understand the CSP directive, and the CSP one is ignored by older ones)
-        for k, v in (extra_headers or {}).items():
+        for k, v in headers.items():
             self.send_header(k, v)
         if getattr(self, "_diag", False):
             self.send_header("X-D1-Requests", str(_d1_client.requests_count()))
@@ -3669,12 +3778,39 @@ class Handler(BaseHTTPRequestHandler):
         ctype = ctype or "application/octet-stream"
         if ctype.startswith("text/") or ctype in ("application/javascript", "application/json"):
             ctype += "; charset=utf-8"
-        content = target.read_bytes()
-        # assets can be reused for a few minutes (the browser revalidates after
-        # that); the shell (index.html) must always be fresh so a deploy is
-        # picked up immediately.
-        cache = "no-cache" if target.name == "index.html" else "public, max-age=300, stale-while-revalidate=86400"
-        self._send(200, content, ctype, {"Cache-Control": cache})
+        asset = static_asset(target)
+        # The shell (index.html) must always be fresh so a deploy is picked up
+        # immediately; assets never change without a new deploy, so the browser
+        # keeps them for a week and revalidates cheaply afterwards.
+        # A short window plus stale-while-revalidate: while the cached copy is
+        # stale the browser still renders instantly and refreshes in the
+        # background, so a deploy is picked up without ever blocking a load.
+        # (Filenames are not hashed, so a long max-age would pin old code.)
+        cache = ("no-cache" if target.name == "index.html"
+                 else "public, max-age=300, stale-while-revalidate=86400")
+        common = {
+            "Cache-Control": cache,
+            "ETag": asset["etag"],
+            "Vary": "Accept-Encoding",
+        }
+        # A matching ETag means the browser already has this exact file: answer
+        # 304 with no body instead of re-sending the whole asset.
+        inm = self.headers.get("If-None-Match", "")
+        if inm and asset["etag"] in [v.strip() for v in inm.split(",")]:
+            self.send_response(304)
+            for k, v in common.items():
+                self.send_header(k, v)
+            self.end_headers()
+            return
+        body, encoding = asset["raw"], ""
+        # Serve the smallest variant the browser says it can decode.
+        for cand in ("br", "gzip"):
+            if cand in asset["variants"] and _accepts(self.headers.get("Accept-Encoding", ""), cand):
+                body, encoding = asset["variants"][cand], cand
+                break
+        if encoding:
+            common["Content-Encoding"] = encoding
+        self._send(200, body, ctype, common, compress=False)
 
 
 def main():

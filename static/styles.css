@@ -959,6 +959,10 @@ table.data tbody tr:focus-within { background: color-mix(in srgb, var(--brand) 7
   background: #fff; padding: 3px; box-shadow: var(--shadow-sm);
 }
 .brand-mark { display: none; }            /* legacy letter tile — replaced by the logo */
+/* <picture> is the wrapper that lets modern browsers take the WebP logo while
+   older ones fall back to PNG. It must not become an inline box, or the flex
+   rows it sits in lose their baseline alignment. */
+.login-brand picture, .sidebar-head picture { display: contents; }
 .login-logo {
   width: clamp(150px, 15vw, 196px); height: auto; display: block;
   background: #fff; padding: 16px 20px; border-radius: 20px;
