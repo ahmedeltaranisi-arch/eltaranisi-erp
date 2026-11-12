@@ -1250,10 +1250,15 @@ code, .json-cell, .mono { overflow-wrap: anywhere; }
 .chart svg, .spark svg { width: 100%; height: auto; display: block; }
 .inv-preview-head { display: flex; flex-wrap: wrap; gap: 8px; }
 
-/* 9) Export dropdown: opens inside the screen on phones ------------------- */
+/* 9) Export dropdown: opens inside the screen on phones -------------------
+   This used to cap `max-width: calc(100vw - 16px)` at top level, where it beat
+   the deliberate 210–280px panel width at every viewport wider than ~300px: the
+   reports export panel resolved to 1008px on a 1024px screen and stretched
+   across the page. A screen cap only belongs on a screen, so it lives in the
+   query below; everywhere else the panel keeps its designed width. */
 .export-menu .menu {
   min-width: min(220px, calc(100vw - 16px));
-  max-width: calc(100vw - 16px);
+  max-width: min(280px, calc(100vw - 16px));
   overflow-wrap: anywhere;
 }
 @media (max-width: 480px) {
@@ -3044,8 +3049,18 @@ table.data td code, table.data td .mono { font-size: 12.2px; }
   z-index: 6;
 }
 
-/* safety net for any future toolbar not named above */
+/* The safety net has to reach a menu nested inside wrappers, not just a
+   direct child. On the reports page the export control sits in
+   `.rpt-bar > .rpt-bar-end > .export-menu`, so `:has(> .export-menu)` never
+   matched and the bar stayed `static` — the menu opened under the report card
+   and only a sliver showed at the card's edge. A descendant `:has()` lifts
+   whatever block actually holds the menu, however deep it is. */
+.content > *:has(.export-menu),
 *:has(> .export-menu) { position: relative; z-index: 6; }
+
+/* Name the reports control bar explicitly as well: `:has()` is a progressive
+   enhancement and a browser without it would otherwise regress this page. */
+.rpt-bar { position: relative; z-index: 6; }
 
 /* an open dropdown outranks the document it overlaps */
 .export-menu[open] { position: relative; z-index: 9; }
@@ -3057,7 +3072,8 @@ table.data td code, table.data td .mono { font-size: 12.2px; }
 @media print {
   /* irrelevant on paper, and a lifted toolbar would print oddly */
   .stmt-toolbar, .table-toolbar, .doc-toolbar, .filters, .page-head,
-  .card-head, .toolbar, .row-actions, *:has(> .export-menu) {
+  .card-head, .toolbar, .row-actions, .rpt-bar,
+  .content > *:has(.export-menu), *:has(> .export-menu) {
     position: static !important;
     z-index: auto !important;
   }
